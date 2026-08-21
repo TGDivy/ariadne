@@ -3,7 +3,10 @@ name = "ariadne"
 version = "0.1.0"
 description = "A persistent personal AI partner."
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "openai-codex>=0.147.0",
+    "python-telegram-bot>=22.8",
+]
 
 [build-system]
 requires = ["hatchling"]
