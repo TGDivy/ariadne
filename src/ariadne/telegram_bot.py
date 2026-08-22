@@ -113,17 +113,6 @@ class AriadneBot:
             return
         await self.handle_stop(message, self._user_id_from(update))
 
-    async def approve(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-        """Deliver a file batch only after an explicit Telegram command."""
-        message = self._message_from(update)
-        if message is None or not self._is_allowed(self._user_id_from(update)):
-            return
-        arguments = (message.text or "").split(maxsplit=1)
-        if len(arguments) != 2:
-            await self._reply_safely(message, "Usage: /approve <file-delivery-id>")
-            return
-        await self.handle_approve(message, self._user_id_from(update), arguments[1])
-
     async def file_delivery_callback(
         self, update: Update, _context: ContextTypes.DEFAULT_TYPE
     ) -> None:
@@ -147,11 +136,11 @@ class AriadneBot:
             return
         if action != "approve":
             return
-        await self.handle_approve(
+        await self._approve_staged_files(
             message, self._user_id_from(update), approval_id, replace_message=True
         )
 
-    async def handle_approve(
+    async def _approve_staged_files(
         self,
         message: Message,
         user_id: int | None,
