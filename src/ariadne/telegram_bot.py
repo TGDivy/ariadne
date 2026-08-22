@@ -29,11 +29,27 @@ TypingSender = Callable[[], Awaitable[None]]
 
 
 def split_for_telegram(text: str) -> list[str]:
-    """Split a plain-text response into Telegram-sized pieces."""
-    return [
-        text[start : start + TELEGRAM_MESSAGE_LIMIT]
-        for start in range(0, len(text), TELEGRAM_MESSAGE_LIMIT)
-    ]
+    """Split plain text at readable boundaries within Telegram's message limit."""
+    chunks: list[str] = []
+    remaining = text
+
+    while len(remaining) > TELEGRAM_MESSAGE_LIMIT:
+        split_at = _telegram_split_point(remaining)
+        chunks.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _telegram_split_point(text: str) -> int:
+    """Find a readable boundary without creating a tiny first message."""
+    for separator in ("\n\n", "\n", " "):
+        split_at = text.rfind(separator, 0, TELEGRAM_MESSAGE_LIMIT)
+        if split_at >= TELEGRAM_MESSAGE_LIMIT // 2:
+            return split_at + len(separator)
+    return TELEGRAM_MESSAGE_LIMIT
 
 
 class AriadneBot:

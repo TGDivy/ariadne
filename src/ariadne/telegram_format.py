@@ -13,7 +13,7 @@ PARSER = MarkdownIt("commonmark", {"html": False}).enable("strikethrough")
 def render_telegram_html(markdown: str) -> str:
     """Return safe Telegram HTML for an Ariadne Markdown response."""
     parts: list[str] = []
-    list_depth = 0
+    list_markers: list[int | None] = []
     list_item_depth = 0
 
     for token in PARSER.parse(markdown):
@@ -23,15 +23,24 @@ def render_telegram_html(markdown: str) -> str:
             parts.append("</b>\n\n")
         elif token.type == "paragraph_close":
             parts.append("\n" if list_item_depth else "\n\n")
-        elif token.type in {"bullet_list_open", "ordered_list_open"}:
-            list_depth += 1
+        elif token.type == "bullet_list_open":
+            list_markers.append(None)
+        elif token.type == "ordered_list_open":
+            start = token.attrGet("start")
+            list_markers.append(int(start) if start is not None else 1)
         elif token.type in {"bullet_list_close", "ordered_list_close"}:
-            list_depth -= 1
-            if list_depth == 0:
+            list_markers.pop()
+            if not list_markers:
                 parts.append("\n")
         elif token.type == "list_item_open":
             list_item_depth += 1
-            parts.append(f"{'  ' * (list_depth - 1)}• ")
+            marker = list_markers[-1]
+            if marker is None:
+                prefix = "• "
+            else:
+                prefix = f"{marker}. "
+                list_markers[-1] = marker + 1
+            parts.append(f"{'  ' * (len(list_markers) - 1)}{prefix}")
         elif token.type == "list_item_close":
             list_item_depth -= 1
             if not parts or not parts[-1].endswith("\n"):

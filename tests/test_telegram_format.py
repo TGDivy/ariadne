@@ -25,3 +25,9 @@ def test_fenced_code_blocks_preserve_the_language_and_escape_contents() -> None:
     assert rendered == (
         '<pre><code class="language-cpp">std::vector&lt;int&gt; values;\n</code></pre>'
     )
+
+
+def test_ordered_lists_keep_their_markdown_numbering() -> None:
+    rendered = render_telegram_html("3. Research\n4. Practice")
+
+    assert rendered == "3. Research\n4. Practice"

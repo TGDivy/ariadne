@@ -14,6 +14,7 @@ from ariadne.telegram_bot import (
     PLACEHOLDER_TEXT,
     TELEGRAM_MESSAGE_LIMIT,
     AriadneBot,
+    split_for_telegram,
 )
 
 
@@ -238,6 +239,27 @@ async def test_long_responses_are_split_at_telegrams_limit(
 
     assert message.edits[-1] == "x" * TELEGRAM_MESSAGE_LIMIT
     assert message.replies == [PLACEHOLDER_TEXT, "x"]
+
+
+@pytest.mark.parametrize("separator", ["\n\n", "\n", " "])
+def test_long_text_prefers_readable_telegram_split_boundaries(separator: str) -> None:
+    suffix = "y" * 25
+    response = "x" * (TELEGRAM_MESSAGE_LIMIT - 20 - len(separator)) + separator + suffix
+
+    chunks = split_for_telegram(response)
+
+    assert chunks == [response[: -len(suffix)], suffix]
+    assert "".join(chunks) == response
+    assert all(len(chunk) <= TELEGRAM_MESSAGE_LIMIT for chunk in chunks)
+
+
+def test_long_text_avoids_a_tiny_telegram_message_before_a_hard_split() -> None:
+    response = "intro\n\n" + "x" * TELEGRAM_MESSAGE_LIMIT
+
+    chunks = split_for_telegram(response)
+
+    assert chunks[0] == response[:TELEGRAM_MESSAGE_LIMIT]
+    assert "".join(chunks) == response
 
 
 async def test_failed_turn_replies_and_allows_the_next_turn(
