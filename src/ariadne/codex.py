@@ -12,12 +12,14 @@ from openai_codex.generated.v2_all import (
     TurnCompletedNotification,
 )
 
+from .the_thread import build_developer_instructions
+
 
 class CodexConversation:
     """Reuse one Codex client and one thread for the lifetime of the process."""
 
-    def __init__(self, workspace: Path, *, client: AsyncCodex | None = None) -> None:
-        self._workspace = workspace
+    def __init__(self, vault: Path, *, client: AsyncCodex | None = None) -> None:
+        self._vault = vault
         self._client = client if client is not None else AsyncCodex()
         self._thread: AsyncThread | None = None
 
@@ -26,7 +28,7 @@ class CodexConversation:
         thread = await self._thread_for_conversation()
         turn = await thread.turn(
             message,
-            cwd=str(self._workspace),
+            cwd=str(self._vault),
             sandbox=Sandbox.workspace_write,
         )
 
@@ -62,10 +64,15 @@ class CodexConversation:
         """Release the process-wide Codex client during shutdown."""
         await self._client.close()
 
+    def reset(self) -> None:
+        """Discard the in-memory thread while retaining The Thread vault."""
+        self._thread = None
+
     async def _thread_for_conversation(self) -> AsyncThread:
         if self._thread is None:
             self._thread = await self._client.thread_start(
-                cwd=str(self._workspace),
+                cwd=str(self._vault),
+                developer_instructions=build_developer_instructions(self._vault),
                 sandbox=Sandbox.workspace_write,
             )
         return self._thread

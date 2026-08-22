@@ -4,24 +4,35 @@
 
 Ariadne is a persistent personal AI partner.
 
+Current status: **Milestone 2 — The Thread foundation**.
+
 ## Run
 
 1. Create a Telegram bot with BotFather and note its token.
-2. Copy the example configuration and fill in your values:
+2. Clone your private The Thread vault locally:
+
+   ```bash
+   git clone https://github.com/TGDivy/ariadne-thread.git ~/ariadne-thread
+   ```
+
+3. Copy the example configuration and fill in your values:
 
    ```bash
    cp .env.example .env
    $EDITOR .env
    ```
 
-   `ARIADNE_WORKSPACE` is where Codex works: its current directory and
-   workspace-write sandbox. The example uses `.`, meaning this Ariadne checkout
-   when you run the command from the repository root. Use an absolute path there
-   to work in a different project.
+   `ARIADNE_VAULT` must point to that local Git clone. It is Codex's working
+   directory and workspace-write sandbox.
 
-3. Ensure Codex is already authenticated on this machine.
-4. Run:
+4. Ensure Codex is already authenticated on this machine.
+5. Run:
 
    ```bash
    uv run --env-file .env python -m ariadne
    ```
+
+On a new session, Ariadne reads `Ariadne/Identity.md`, `Ariadne/Mission.md`,
+and `Ariadne/OperatingRules.md` from The Thread when they exist. Send `/new`
+to start a fresh Codex conversation while retaining the vault. Create those
+files in the vault to define Ariadne's identity, mission, and operating rules.

@@ -8,6 +8,7 @@ from ariadne.codex import CodexConversation
 from ariadne.telegram_bot import (
     BUSY_MESSAGE,
     FAILURE_MESSAGE,
+    NEW_CONVERSATION_MESSAGE,
     PLACEHOLDER_TEXT,
     TELEGRAM_MESSAGE_LIMIT,
     AriadneBot,
@@ -33,6 +34,7 @@ class FakeConversation:
         self._responses = responses
         self._failures = failures
         self.prompts: list[str] = []
+        self.reset_calls = 0
 
     async def stream_reply(self, prompt: str):
         self.prompts.append(prompt)
@@ -42,17 +44,24 @@ class FakeConversation:
         for response in self._responses:
             yield response
 
+    def reset(self) -> None:
+        self.reset_calls += 1
+
 
 class BlockingConversation:
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.reset_calls = 0
 
     async def stream_reply(self, _: str):
         self.started.set()
         yield "Working"
         await self.release.wait()
         yield "Finished"
+
+    def reset(self) -> None:
+        self.reset_calls += 1
 
 
 class FakeTyping:
@@ -94,6 +103,16 @@ async def test_streamed_reply_replaces_the_placeholder_with_the_final_answer(
     assert message.edits[-1] == "Hello, Ariadne!"
 
 
+async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
+    conversation = FakeConversation([])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_new(cast(Message, message), 7)
+
+    assert conversation.reset_calls == 1
+    assert message.replies == [NEW_CONVERSATION_MESSAGE]
+
+
 async def test_busy_turn_receives_a_deterministic_reply() -> None:
     conversation = BlockingConversation()
     bot = AriadneBot(7, cast(CodexConversation, conversation))
@@ -109,6 +128,24 @@ async def test_busy_turn_receives_a_deterministic_reply() -> None:
     await first_turn
 
     assert second_message.replies == [BUSY_MESSAGE]
+
+
+async def test_new_does_not_interrupt_an_active_turn() -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    active_message = FakeMessage()
+    new_message = FakeMessage()
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, active_message), 7, "First")
+    )
+    await conversation.started.wait()
+    await bot.handle_new(cast(Message, new_message), 7)
+    conversation.release.set()
+    await turn
+
+    assert conversation.reset_calls == 0
+    assert new_message.replies == [BUSY_MESSAGE]
 
 
 async def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward(

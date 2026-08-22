@@ -20,6 +20,7 @@ STREAM_EDIT_INTERVAL_SECONDS = 1.0
 TYPING_REFRESH_INTERVAL_SECONDS = 4.0
 PLACEHOLDER_TEXT = "Thinking…"
 READY_MESSAGE = "Ariadne is ready."
+NEW_CONVERSATION_MESSAGE = "Started a new conversation. The Thread is still available."
 BUSY_MESSAGE = "I'm still working on your previous message."
 FAILURE_MESSAGE = "I ran into a problem while working on that. Please try again."
 
@@ -43,11 +44,18 @@ class AriadneBot:
         self._busy = False
 
     async def start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle the sole supported command."""
+        """Handle /start."""
         message = self._message_from(update)
         if message is None:
             return
         await self.handle_start(message, self._user_id_from(update))
+
+    async def new(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /new."""
+        message = self._message_from(update)
+        if message is None:
+            return
+        await self.handle_new(message, self._user_id_from(update))
 
     async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle a normal Telegram text message."""
@@ -74,6 +82,17 @@ class AriadneBot:
         if not self._is_allowed(user_id):
             return
         await self._reply_safely(message, READY_MESSAGE)
+
+    async def handle_new(self, message: Message, user_id: int | None) -> None:
+        """Start a fresh Codex session without changing The Thread."""
+        if not self._is_allowed(user_id):
+            return
+        if self._busy:
+            await self._reply_safely(message, BUSY_MESSAGE)
+            return
+
+        self._conversation.reset()
+        await self._reply_safely(message, NEW_CONVERSATION_MESSAGE)
 
     async def handle_text(
         self,
