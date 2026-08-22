@@ -23,12 +23,12 @@ class Settings(BaseSettings):
     )
     vault: DirectoryPath = Field(validation_alias="ARIADNE_VAULT")
     codex_model: str = Field(
-        default="gpt-5.6-sol",
+        default="gpt-5.6-luna",
         min_length=1,
         validation_alias="ARIADNE_CODEX_MODEL",
     )
     reasoning_effort: ReasoningEffort = Field(
-        default=ReasoningEffort.medium,
+        default=ReasoningEffort.low,
         validation_alias="ARIADNE_REASONING_EFFORT",
     )
     web_search: WebSearchSetting = Field(

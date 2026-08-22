@@ -24,8 +24,8 @@ def test_settings_loads_a_valid_git_vault(settings_environment: Path) -> None:
     assert settings.allowed_user_id == 12345
     assert settings.vault == settings_environment.resolve()
     assert settings.codex_turn_settings == CodexTurnSettings(
-        model="gpt-5.6-sol",
-        effort=ReasoningEffort.medium,
+        model="gpt-5.6-luna",
+        effort=ReasoningEffort.low,
         web_search="disabled",
     )
 

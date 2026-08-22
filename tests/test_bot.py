@@ -28,15 +28,15 @@ from ariadne.telegram_bot import (
 )
 
 DEFAULT_SETTINGS = CodexTurnSettings(
-    model="gpt-5.6-sol",
-    effort=ReasoningEffort.medium,
+    model="gpt-5.6-luna",
+    effort=ReasoningEffort.low,
     web_search="disabled",
 )
 DEFAULT_MODELS = (
     CodexModel(
-        identifier="gpt-5.6-sol",
-        display_name="GPT-5.6 Sol",
-        default_effort=ReasoningEffort.medium,
+        identifier="gpt-5.6-luna",
+        display_name="GPT-5.6 Luna",
+        default_effort=ReasoningEffort.low,
         supported_efforts=(ReasoningEffort.low, ReasoningEffort.medium),
     ),
 )

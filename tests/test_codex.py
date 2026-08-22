@@ -23,8 +23,8 @@ from ariadne.codex import CodexConversation, CodexTurnSettings, TurnInterrupted
 from ariadne.the_thread import build_developer_instructions
 
 DEFAULT_SETTINGS = CodexTurnSettings(
-    model="gpt-5.6-sol",
-    effort=ReasoningEffort.medium,
+    model="gpt-5.6-luna",
+    effort=ReasoningEffort.low,
     web_search="disabled",
 )
 
@@ -154,7 +154,7 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
         {
             "approval_mode": ApprovalMode.auto_review,
             "config": {
-                "model_reasoning_effort": "medium",
+                "model_reasoning_effort": "low",
                 "web_search": "disabled",
             },
             "cwd": str(tmp_path),
@@ -164,7 +164,7 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
                 "Live web search is disabled. Do not claim to have searched, "
                 "researched,\nchecked, or verified current information on the web."
             ),
-            "model": "gpt-5.6-sol",
+            "model": "gpt-5.6-luna",
             "sandbox": Sandbox.workspace_write,
         }
     ]
@@ -172,15 +172,15 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
         {
             "approval_mode": ApprovalMode.auto_review,
             "cwd": str(tmp_path),
-            "effort": ReasoningEffort.medium,
-            "model": "gpt-5.6-sol",
+            "effort": ReasoningEffort.low,
+            "model": "gpt-5.6-luna",
             "sandbox": Sandbox.workspace_write,
         },
         {
             "approval_mode": ApprovalMode.auto_review,
             "cwd": str(tmp_path),
-            "effort": ReasoningEffort.medium,
-            "model": "gpt-5.6-sol",
+            "effort": ReasoningEffort.low,
+            "model": "gpt-5.6-luna",
             "sandbox": Sandbox.workspace_write,
         },
     ]
