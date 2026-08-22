@@ -78,7 +78,20 @@ contains, what was kept, and what was dropped.
 
 ## Local capabilities
 
-Ariadne exposes two local MCP capabilities to Codex: runtime status and
-preparing files from the configured user's home directory. Prepared files are
-not sent immediately: Ariadne sends a short-lived Telegram approval card that
-lists the exact files and has Approve and Reject buttons.
+Ariadne exposes local MCP capabilities to Codex: runtime status, speaking in
+Telegram, and preparing files from the configured user's home directory.
+Prepared files are not sent immediately: Ariadne sends a short-lived Telegram
+approval card that lists the exact files and has Approve and Reject buttons.
+
+## Speaking
+
+Two separate things reach the chat. While a turn runs, Ariadne streams Iris's
+developing response into a Telegram draft — ephemeral, animated in place, and
+gone within thirty seconds of the last update, so it leaves no trail of
+intermediate messages. What persists is what Iris chose to send: `send_message`
+and `react` put a message or an emoji in the chat the moment she calls them, and
+her final response is delivered when the turn ends.
+
+Each incoming message is tagged with its Telegram message id so Iris can reply
+or react to it. If her final response repeats something she already sent
+herself, Ariadne does not send it twice.

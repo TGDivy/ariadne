@@ -25,19 +25,17 @@ from telegram.ext import ContextTypes
 
 from .codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
 from .file_delivery import FileDelivery, FileDeliveryError
-from .telegram_format import render_telegram_html
+from .telegram_format import split_for_telegram, telegram_messages
 
 LOGGER = logging.getLogger(__name__)
 
-TELEGRAM_MESSAGE_LIMIT = 4096
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENT_BYTES = int(FileSizeLimit.FILESIZE_DOWNLOAD)
 ATTACHMENT_ROOT = Path.home() / ".ariadne" / "attachments"
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
-STREAM_EDIT_INTERVAL_SECONDS = 1.0
-TYPING_REFRESH_INTERVAL_SECONDS = 4.0
+DRAFT_INTERVAL_SECONDS = 1.0
+TURN_REFRESH_INTERVAL_SECONDS = 4.0
 ALBUM_DEBOUNCE_SECONDS = 1.0
-PLACEHOLDER_TEXT = "Thinking…"
 READY_MESSAGE = "Ariadne is ready."
 NEW_CONVERSATION_MESSAGE = "Started a new conversation. The Thread is still available."
 BUSY_MESSAGE = "I'm still working on your previous message."
@@ -71,19 +69,15 @@ SETTINGS_BACK_CALLBACK = "settings:back"
 TypingSender = Callable[[], Awaitable[None]]
 
 
-def split_for_telegram(text: str) -> list[str]:
-    """Split plain text at readable boundaries within Telegram's message limit."""
-    chunks: list[str] = []
-    remaining = text
+def turn_text(text: str, message_id: int) -> str:
+    """Tag one Telegram message with the id Iris needs to reply or react to it."""
+    return f"{text}\n\nTelegram message id: {message_id}"
 
-    while len(remaining) > TELEGRAM_MESSAGE_LIMIT:
-        split_at = _telegram_split_point(remaining)
-        chunks.append(remaining[:split_at])
-        remaining = remaining[split_at:]
 
-    if remaining:
-        chunks.append(remaining)
-    return chunks
+def _already_said(response: str, spoken: Sequence[str]) -> bool:
+    """Return whether Iris has already sent this exact text herself."""
+    normalized = " ".join(response.split())
+    return any(" ".join(said.split()) == normalized for said in spoken)
 
 
 def _document_filename(document: Document) -> str:
@@ -132,13 +126,34 @@ def document_message(
     return "\n\n".join([caption or default, *lines])
 
 
-def _telegram_split_point(text: str) -> int:
-    """Find a readable boundary without creating a tiny first message."""
-    for separator in ("\n\n", "\n", " "):
-        split_at = text.rfind(separator, 0, TELEGRAM_MESSAGE_LIMIT)
-        if split_at >= TELEGRAM_MESSAGE_LIMIT // 2:
-            return split_at + len(separator)
-    return TELEGRAM_MESSAGE_LIMIT
+class _Draft:
+    """Telegram's ephemeral preview of the reply Iris is still forming.
+
+    A draft leaves no message behind: it animates in place while the turn runs
+    and expires by itself, so only what Iris deliberately sends is permanent.
+    """
+
+    def __init__(self, message: Message) -> None:
+        self._message = message
+        self._text: str | None = None
+        self._sent_at = 0.0
+
+    async def show(self, text: str | None) -> None:
+        """Show newly streamed text, no faster than Telegram wants to animate."""
+        if text == self._text:
+            return
+        if time.monotonic() - self._sent_at < DRAFT_INTERVAL_SECONDS:
+            return
+        self._text = text
+        await self.keep_alive()
+
+    async def keep_alive(self) -> None:
+        """Re-send the preview, which Telegram drops after thirty seconds."""
+        self._sent_at = time.monotonic()
+        try:
+            await self._message.reply_text_draft(self._message.message_id, self._text)
+        except TelegramError:
+            LOGGER.exception("Telegram draft update failed")
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +185,7 @@ class AriadneBot:
         self._conversation = conversation
         self._busy = False
         self._stopping = False
-        self._active_placeholder: Message | None = None
+        self._stop_notice: Message | None = None
         self._file_delivery = FileDelivery()
         self._albums: dict[str, _Album] = {}
 
@@ -442,17 +457,14 @@ class AriadneBot:
             return
 
         self._stopping = True
-        placeholder = self._active_placeholder
-        if placeholder is not None:
-            await self._edit_safely(placeholder, STOPPING_MESSAGE)
-        else:
-            await self._reply_safely(message, STOPPING_MESSAGE)
+        self._stop_notice = await self._reply_safely(message, STOPPING_MESSAGE)
 
         try:
             if not await self._conversation.interrupt():
                 LOGGER.info("Stop requested before the Codex turn started")
         except Exception:
             self._stopping = False
+            self._stop_notice = None
             LOGGER.exception("Codex turn interruption failed")
             await self._reply_safely(
                 message,
@@ -676,42 +688,33 @@ class AriadneBot:
         if not self._is_allowed(user_id):
             return
 
+        prompt = turn_text(text, message.message_id)
         if self._busy:
-            await self._steer_active_turn(message, text, image_paths)
+            await self._steer_active_turn(message, prompt, image_paths)
             return
 
         self._busy = True
-        typing_task = (
-            asyncio.create_task(self._refresh_typing(send_typing))
-            if send_typing is not None
-            else None
-        )
-        placeholder: Message | None = None
+        draft = _Draft(message)
+        await draft.keep_alive()
+        live_turn = asyncio.create_task(self._keep_turn_alive(draft, send_typing))
         try:
-            placeholder = await self._reply_safely(message, PLACEHOLDER_TEXT)
-            if placeholder is None:
-                return
-            self._active_placeholder = placeholder
-
             if self._stopping:
-                await self._send_stopped(message, placeholder)
+                await self._send_stopped(message)
                 return
 
             try:
-                await self._stream_response(message, placeholder, text, image_paths)
+                await self._stream_response(message, draft, prompt, image_paths)
             except TurnInterrupted:
                 LOGGER.info("Codex turn interrupted")
-                await self._send_stopped(message, placeholder)
+                await self._send_stopped(message)
             except Exception:
                 LOGGER.exception("Codex turn failed")
-                await self._send_failure(message, placeholder)
+                await self._send_failure(message)
         finally:
-            if typing_task is not None:
-                typing_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await typing_task
-            if placeholder is not None and self._active_placeholder is placeholder:
-                self._active_placeholder = None
+            live_turn.cancel()
+            with suppress(asyncio.CancelledError):
+                await live_turn
+            self._stop_notice = None
             self._stopping = False
             self._busy = False
 
@@ -795,138 +798,91 @@ class AriadneBot:
         # The turn is starting but Codex has not accepted it yet.
         await self._reply_safely(message, BUSY_MESSAGE)
 
-    async def _refresh_typing(self, send_typing: TypingSender) -> None:
-        """Keep Telegram's short-lived typing indicator visible for a turn."""
+    async def _keep_turn_alive(
+        self, draft: _Draft, send_typing: TypingSender | None
+    ) -> None:
+        """Hold the typing indicator and the ephemeral draft open for a turn."""
         while True:
-            try:
-                await send_typing()
-            except TimedOut:
-                LOGGER.warning("Telegram typing indicator timed out; will retry.")
-            except TelegramError:
-                LOGGER.exception("Telegram typing indicator failed")
-            await asyncio.sleep(TYPING_REFRESH_INTERVAL_SECONDS)
+            if send_typing is not None:
+                try:
+                    await send_typing()
+                except TimedOut:
+                    LOGGER.warning("Telegram typing indicator timed out; will retry.")
+                except TelegramError:
+                    LOGGER.exception("Telegram typing indicator failed")
+            await asyncio.sleep(TURN_REFRESH_INTERVAL_SECONDS)
+            await draft.keep_alive()
 
     async def _stream_response(
         self,
         message: Message,
-        placeholder: Message,
+        draft: _Draft,
         prompt: str,
         image_paths: tuple[Path, ...] = (),
     ) -> None:
         final_response = ""
-        last_edit_at = 0.0
-        last_rendered_text = PLACEHOLDER_TEXT
+        spoken: list[str] = []
 
         async def show_activity(activity: str) -> None:
-            nonlocal last_edit_at, last_rendered_text
             if final_response or self._stopping:
                 return
-            now = time.monotonic()
-            if (
-                activity != last_rendered_text
-                and now - last_edit_at >= STREAM_EDIT_INTERVAL_SECONDS
-                and await self._edit_safely(placeholder, activity)
-            ):
-                last_edit_at = now
-                last_rendered_text = activity
+            await draft.show(activity)
 
         async for response in self._conversation.stream_reply(
             prompt,
             image_paths=image_paths,
             activity=show_activity,
+            spoken=spoken.append,
             stop_requested=lambda: self._stopping,
         ):
             final_response = response
-            if self._stopping:
-                continue
-            preview = split_for_telegram(response)[0]
-            now = time.monotonic()
-            if (
-                preview != last_rendered_text
-                and now - last_edit_at >= STREAM_EDIT_INTERVAL_SECONDS
-                and await self._edit_safely(placeholder, preview)
-            ):
-                last_edit_at = now
-                last_rendered_text = preview
+            if not self._stopping:
+                await draft.show(split_for_telegram(response)[0])
 
         if not final_response:
             raise RuntimeError("Codex completed without an agent response.")
 
-        await self._send_final_response(
-            message,
-            placeholder,
-            final_response,
-            last_rendered_text,
-        )
+        if _already_said(final_response, spoken):
+            LOGGER.info("Iris already sent her answer herself; not repeating it")
+            return
 
-    async def _send_final_response(
-        self,
-        message: Message,
-        placeholder: Message,
-        response: str,
-        last_rendered_text: str,
-    ) -> None:
-        try:
-            formatted_response = render_telegram_html(response)
-        except Exception:
-            LOGGER.exception("Telegram response formatting failed")
-        else:
-            if formatted_response and len(formatted_response) <= TELEGRAM_MESSAGE_LIMIT:
-                if formatted_response == last_rendered_text:
-                    return
-                if await self._edit_safely(
-                    placeholder,
-                    formatted_response,
-                    parse_mode=ParseMode.HTML,
-                ):
-                    return
-                await self._reply_safely(message, response)
+        await self._send_final_response(message, final_response)
+
+    async def _send_final_response(self, message: Message, response: str) -> None:
+        """Persist Iris's answer, the way she would have sent it herself."""
+        messages, is_html = telegram_messages(response)
+        if is_html:
+            sent = await self._reply_safely(
+                message, messages[0], parse_mode=ParseMode.HTML
+            )
+            if sent is not None:
                 return
+            messages = split_for_telegram(response)
 
-        await self._send_plain_final_response(
-            message,
-            placeholder,
-            response,
-            last_rendered_text,
-        )
-
-    async def _send_plain_final_response(
-        self,
-        message: Message,
-        placeholder: Message,
-        response: str,
-        last_rendered_text: str,
-    ) -> None:
-        chunks = split_for_telegram(response)
-        first_chunk_is_visible = chunks[0] == last_rendered_text
-        if not first_chunk_is_visible:
-            first_chunk_is_visible = await self._edit_safely(placeholder, chunks[0])
-
-        if first_chunk_is_visible:
-            remaining_chunks = chunks[1:]
-        else:
-            remaining_chunks = chunks
-
-        for chunk in remaining_chunks:
+        for chunk in messages:
             await self._reply_safely(message, chunk)
 
-    async def _send_failure(self, message: Message, placeholder: Message) -> None:
-        if not await self._edit_safely(placeholder, FAILURE_MESSAGE):
-            await self._reply_safely(message, FAILURE_MESSAGE)
+    async def _send_failure(self, message: Message) -> None:
+        await self._reply_safely(message, FAILURE_MESSAGE)
 
-    async def _send_stopped(self, message: Message, placeholder: Message) -> None:
-        if not await self._edit_safely(placeholder, STOPPED_MESSAGE):
-            await self._reply_safely(message, STOPPED_MESSAGE)
+    async def _send_stopped(self, message: Message) -> None:
+        notice = self._stop_notice
+        if notice is not None and await self._edit_safely(notice, STOPPED_MESSAGE):
+            return
+        await self._reply_safely(message, STOPPED_MESSAGE)
 
     async def _reply_safely(
         self,
         message: Message,
         text: str,
         *,
+        parse_mode: ParseMode | None = None,
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> Message | None:
         try:
-            return await message.reply_text(text, reply_markup=reply_markup)
+            return await message.reply_text(
+                text, parse_mode=parse_mode, reply_markup=reply_markup
+            )
         except TelegramError:
             LOGGER.exception("Telegram reply failed")
             return None

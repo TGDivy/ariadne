@@ -1,10 +1,12 @@
 """Run Ariadne's Milestone 1 Telegram conversation loop."""
 
 import logging
+from typing import Any
 
 from pydantic import ValidationError
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
     CallbackQueryHandler,
     CommandHandler,
@@ -17,6 +19,22 @@ from .config import Settings
 from .telegram_bot import AriadneBot
 
 LOGGER = logging.getLogger(__name__)
+
+AriadneApplication = Application[Any, Any, Any, Any, Any, Any]
+
+COMMANDS = (
+    BotCommand("new", "Start a fresh conversation"),
+    BotCommand("stop", "Interrupt the turn Ariadne is working on"),
+    BotCommand("settings", "Model, reasoning effort, and web research"),
+)
+
+
+async def publish_commands(application: AriadneApplication) -> None:
+    """Put Ariadne's commands in Telegram's menu so they can be found."""
+    try:
+        await application.bot.set_my_commands(COMMANDS)
+    except Exception:
+        LOGGER.exception("Telegram command menu could not be published")
 
 
 def configure_logging() -> None:
@@ -56,6 +74,7 @@ def main() -> None:
         ApplicationBuilder()
         .token(settings.telegram_bot_token)
         .concurrent_updates(True)
+        .post_init(publish_commands)
         .post_shutdown(close_codex)
         .build()
     )

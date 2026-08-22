@@ -1,5 +1,6 @@
 """Render a small Markdown subset as Telegram-supported HTML."""
 
+import logging
 from html import escape
 from re import fullmatch
 from urllib.parse import urlparse
@@ -7,7 +8,51 @@ from urllib.parse import urlparse
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
+LOGGER = logging.getLogger(__name__)
+
 PARSER = MarkdownIt("commonmark", {"html": False}).enable("strikethrough")
+
+TELEGRAM_MESSAGE_LIMIT = 4096
+
+
+def telegram_messages(text: str) -> tuple[list[str], bool]:
+    """Return the messages one Iris response becomes, and whether they are HTML.
+
+    Rich formatting only survives while a response fits in a single Telegram
+    message, so anything longer is sent as plain text split at readable points.
+    """
+    try:
+        formatted = render_telegram_html(text)
+    except Exception:
+        LOGGER.exception("Telegram response formatting failed")
+    else:
+        if formatted and len(formatted) <= TELEGRAM_MESSAGE_LIMIT:
+            return [formatted], True
+    return split_for_telegram(text), False
+
+
+def split_for_telegram(text: str) -> list[str]:
+    """Split plain text at readable boundaries within Telegram's message limit."""
+    chunks: list[str] = []
+    remaining = text
+
+    while len(remaining) > TELEGRAM_MESSAGE_LIMIT:
+        split_at = _telegram_split_point(remaining)
+        chunks.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _telegram_split_point(text: str) -> int:
+    """Find a readable boundary without creating a tiny first message."""
+    for separator in ("\n\n", "\n", " "):
+        split_at = text.rfind(separator, 0, TELEGRAM_MESSAGE_LIMIT)
+        if split_at >= TELEGRAM_MESSAGE_LIMIT // 2:
+            return split_at + len(separator)
+    return TELEGRAM_MESSAGE_LIMIT
 
 
 def render_telegram_html(markdown: str) -> str:

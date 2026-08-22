@@ -7,15 +7,28 @@ from typing import Any
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from telegram import Bot, ReplyParameters
+from telegram.constants import ParseMode, ReactionEmoji
+from telegram.error import BadRequest, TelegramError
 
+from .codex import MCP_TOOLS
 from .file_delivery import FileDelivery, FileDeliveryError
+from .telegram_format import split_for_telegram, telegram_messages
 
 mcp = FastMCP(
     "Ariadne",
-    instructions="Local runtime inspection and explicitly approved Telegram delivery.",
+    instructions=(
+        "Local runtime inspection, speaking in Telegram, "
+        "and explicitly approved Telegram delivery."
+    ),
     version="0.1.0",
     strict_input_validation=True,
 )
+
+VARIATION_SELECTOR = "\ufe0f"
+REACTIONS = {
+    emoji.value.replace(VARIATION_SELECTOR, ""): emoji.value for emoji in ReactionEmoji
+}
 
 
 def _git_status(vault: Path) -> dict[str, Any] | None:
@@ -70,8 +83,94 @@ def runtime_status() -> dict[str, Any]:
             "current": _process(os.getpid()),
             "parent": _process(os.getppid()),
         },
-        "capabilities": ["runtime_status", "prepare_files"],
+        "capabilities": list(MCP_TOOLS),
     }
+
+
+def _telegram_chat() -> tuple[str, int]:
+    """Return the credentials for the one private chat Ariadne speaks in."""
+    try:
+        return os.environ["TELEGRAM_BOT_TOKEN"], int(
+            os.environ["TELEGRAM_ALLOWED_USER_ID"]
+        )
+    except (KeyError, ValueError) as error:
+        raise ToolError("Telegram is not reachable from this runtime.") from error
+
+
+async def _send_chunks(
+    bot: Bot,
+    chat_id: int,
+    chunks: list[str],
+    parse_mode: ParseMode | None,
+    reply_to: ReplyParameters | None,
+) -> list[int]:
+    sent: list[int] = []
+    for chunk in chunks:
+        message = await bot.send_message(
+            chat_id=chat_id,
+            text=chunk,
+            parse_mode=parse_mode,
+            reply_parameters=reply_to if not sent else None,
+        )
+        sent.append(message.message_id)
+    return sent
+
+
+@mcp.tool
+async def send_message(text: str, reply_to_message_id: int | None = None) -> list[int]:
+    """Say this in Telegram now, without waiting for the turn to end.
+
+    The message stays in the chat as your own. Write it as you would any other
+    message; Ariadne handles Markdown rendering and Telegram's length limit.
+    """
+    if not text.strip():
+        raise ToolError("A message needs something to say.")
+
+    token, chat_id = _telegram_chat()
+    chunks, is_html = telegram_messages(text)
+    reply_to = (
+        ReplyParameters(reply_to_message_id, allow_sending_without_reply=True)
+        if reply_to_message_id is not None
+        else None
+    )
+    try:
+        async with Bot(token) as bot:
+            try:
+                return await _send_chunks(
+                    bot,
+                    chat_id,
+                    chunks,
+                    ParseMode.HTML if is_html else None,
+                    reply_to,
+                )
+            except BadRequest:
+                if not is_html:
+                    raise
+                return await _send_chunks(
+                    bot, chat_id, split_for_telegram(text), None, reply_to
+                )
+    except TelegramError as error:
+        raise ToolError("Telegram could not deliver that message.") from error
+
+
+@mcp.tool
+async def react(message_id: int, reaction: str) -> None:
+    """React to one Telegram message with a single emoji.
+
+    Passing an empty reaction removes the one already there.
+    """
+    emoji = REACTIONS.get(reaction.replace(VARIATION_SELECTOR, ""))
+    if reaction and emoji is None:
+        raise ToolError(f"Telegram has no {reaction} reaction.")
+
+    token, chat_id = _telegram_chat()
+    try:
+        async with Bot(token) as bot:
+            await bot.set_message_reaction(
+                chat_id=chat_id, message_id=message_id, reaction=emoji
+            )
+    except TelegramError as error:
+        raise ToolError("Telegram could not add that reaction.") from error
 
 
 @mcp.tool
