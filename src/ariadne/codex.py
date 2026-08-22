@@ -91,15 +91,19 @@ class CodexConversation:
     ) -> None:
         self._vault = vault
         self._settings = settings
-        self._client = client if client is not None else AsyncCodex(
-            CodexConfig(
-                config_overrides=(
-                    f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
-                    "mcp_servers.ariadne.args="
-                    + json.dumps(["-m", "ariadne.mcp_server"]),
-                ),
-                cwd=str(vault),
-                env={"ARIADNE_VAULT": str(vault)},
+        self._client = (
+            client
+            if client is not None
+            else AsyncCodex(
+                CodexConfig(
+                    config_overrides=(
+                        f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
+                        "mcp_servers.ariadne.args="
+                        + json.dumps(["-m", "ariadne.mcp_server"]),
+                    ),
+                    cwd=str(vault),
+                    env={"ARIADNE_VAULT": str(vault)},
+                )
             )
         )
         self._thread: AsyncThread | None = None
