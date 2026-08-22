@@ -1,6 +1,8 @@
 """A small in-memory Codex conversation for Ariadne."""
 
+import json
 import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +13,7 @@ from openai_codex import (
     AsyncCodex,
     AsyncThread,
     AsyncTurnHandle,
+    CodexConfig,
     LocalImageInput,
     RunInput,
     Sandbox,
@@ -88,7 +91,17 @@ class CodexConversation:
     ) -> None:
         self._vault = vault
         self._settings = settings
-        self._client = client if client is not None else AsyncCodex()
+        self._client = client if client is not None else AsyncCodex(
+            CodexConfig(
+                config_overrides=(
+                    f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
+                    "mcp_servers.ariadne.args="
+                    + json.dumps(["-m", "ariadne.mcp_server"]),
+                ),
+                cwd=str(vault),
+                env={"ARIADNE_VAULT": str(vault)},
+            )
+        )
         self._thread: AsyncThread | None = None
         self._active_turn: AsyncTurnHandle | None = None
         self._interrupting_turn: AsyncTurnHandle | None = None

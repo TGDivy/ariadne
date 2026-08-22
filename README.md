@@ -42,3 +42,10 @@ Use `/settings` to choose an available model, supported reasoning effort, and
 live web research for the running process. Each change starts a new in-memory
 Codex conversation. Use `/stop` to ask Codex to interrupt the active turn; it
 cannot undo work that already completed.
+
+## Local capabilities
+
+Ariadne exposes two local MCP capabilities to Codex: runtime status and
+preparing files from the configured user's home directory. Prepared files are
+not sent immediately: Ariadne returns an approval ID, and `/approve <id>` sends
+that exact short-lived batch to the current Telegram chat.

@@ -44,6 +44,8 @@ DEFAULT_MODELS = (
 
 class FakeMessage:
     def __init__(self) -> None:
+        self.chat_id = 7
+        self.text: str | None = None
         self.replies: list[str] = []
         self.reply_markups: list[object | None] = []
         self.edits: list[str] = []
@@ -235,6 +237,29 @@ async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
 
     assert conversation.reset_calls == 1
     assert message.replies == [NEW_CONVERSATION_MESSAGE]
+
+
+async def test_approve_delivers_only_a_staged_batch(
+    message: FakeMessage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    conversation = FakeConversation([])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    message.text = "/approve approval-id"
+    delivered = []
+
+    async def approve(
+        approval_id: str, *, token: str, chat_id: int
+    ) -> tuple[object, ...]:
+        delivered.append((approval_id, token, chat_id))
+        return (object(),)
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(bot._file_delivery, "approve", approve)
+
+    await bot.handle_approve(cast(Message, message), 7, "approval-id")
+
+    assert delivered == [("approval-id", "test-token", 7)]
+    assert message.replies == ["Sent 1 file."]
 
 
 async def test_busy_turn_receives_a_deterministic_reply() -> None:

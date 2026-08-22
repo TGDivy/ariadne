@@ -58,6 +58,7 @@ def main() -> None:
     application.add_handler(CommandHandler("start", ariadne.start))
     application.add_handler(CommandHandler("new", ariadne.new))
     application.add_handler(CommandHandler("stop", ariadne.stop))
+    application.add_handler(CommandHandler("approve", ariadne.approve))
     application.add_handler(CommandHandler("settings", ariadne.settings))
     application.add_handler(
         CallbackQueryHandler(ariadne.settings_callback, pattern=r"^settings:")

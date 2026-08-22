@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -23,6 +24,7 @@ from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
 from .codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
+from .file_delivery import FileDelivery, FileDeliveryError
 from .telegram_format import render_telegram_html
 
 LOGGER = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ class AriadneBot:
         self._busy = False
         self._stopping = False
         self._active_placeholder: Message | None = None
+        self._file_delivery = FileDelivery()
 
     async def start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start."""
@@ -109,6 +112,37 @@ class AriadneBot:
         if message is None:
             return
         await self.handle_stop(message, self._user_id_from(update))
+
+    async def approve(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """Deliver a file batch only after an explicit Telegram command."""
+        message = self._message_from(update)
+        if message is None or not self._is_allowed(self._user_id_from(update)):
+            return
+        arguments = (message.text or "").split(maxsplit=1)
+        if len(arguments) != 2:
+            await self._reply_safely(message, "Usage: /approve <file-delivery-id>")
+            return
+        await self.handle_approve(message, self._user_id_from(update), arguments[1])
+
+    async def handle_approve(
+        self, message: Message, user_id: int | None, approval_id: str
+    ) -> None:
+        """Deliver one staged batch after validating the Telegram user."""
+        if not self._is_allowed(user_id):
+            return
+        try:
+            files = await self._file_delivery.approve(
+                approval_id,
+                token=os.environ["TELEGRAM_BOT_TOKEN"],
+                chat_id=message.chat_id,
+            )
+        except (FileDeliveryError, KeyError):
+            await self._reply_safely(
+                message, "I couldn't deliver that staged file batch."
+            )
+            return
+        noun = "file" if len(files) == 1 else "files"
+        await self._reply_safely(message, f"Sent {len(files)} {noun}.")
 
     async def settings(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /settings."""
