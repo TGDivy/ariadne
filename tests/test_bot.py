@@ -20,6 +20,8 @@ from ariadne.telegram_bot import (
     NOTHING_TO_STOP_MESSAGE,
     PLACEHOLDER_TEXT,
     SETTINGS_BUSY_MESSAGE,
+    STEERED_MESSAGE,
+    STEERING_FAILED_MESSAGE,
     STOPPED_MESSAGE,
     STOPPING_MESSAGE,
     TELEGRAM_MESSAGE_LIMIT,
@@ -128,6 +130,9 @@ class BlockingConversation:
         self.interrupt_calls = 0
         self.settings = DEFAULT_SETTINGS
         self.reset_calls = 0
+        self.steered: list[str] = []
+        self.steer_error: Exception | None = None
+        self.steer_accepted = True
 
     async def stream_reply(
         self, _: str, *, image_paths=(), activity=None, stop_requested=None
@@ -148,6 +153,14 @@ class BlockingConversation:
 
     async def available_models(self) -> tuple[CodexModel, ...]:
         return DEFAULT_MODELS
+
+    async def steer(self, text: str, *, image_paths=()) -> bool:
+        if self.steer_error is not None:
+            raise self.steer_error
+        if not self.steer_accepted:
+            return False
+        self.steered.append(text)
+        return True
 
     async def interrupt(self) -> bool:
         self.interrupt_calls += 1
@@ -239,21 +252,68 @@ async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
     assert message.replies == [NEW_CONVERSATION_MESSAGE]
 
 
-async def test_busy_turn_receives_a_deterministic_reply() -> None:
+async def test_message_during_an_active_turn_steers_it_instead_of_being_rejected() -> (
+    None
+):
     conversation = BlockingConversation()
     bot = AriadneBot(7, cast(CodexConversation, conversation))
     first_message = FakeMessage()
     second_message = FakeMessage()
 
     first_turn = asyncio.create_task(
-        bot.handle_text(cast(Message, first_message), 7, "First")
+        bot.handle_text(cast(Message, first_message), 7, "Review the vault")
     )
     await conversation.started.wait()
-    await bot.handle_text(cast(Message, second_message), 7, "Second")
+    await bot.handle_text(
+        cast(Message, second_message), 7, "Actually check the other file too"
+    )
     conversation.release.set()
     await first_turn
 
+    assert conversation.steered == ["Actually check the other file too"]
+    assert conversation.interrupt_calls == 0
+    assert second_message.replies == [STEERED_MESSAGE]
+    assert first_message.replies == [PLACEHOLDER_TEXT]
+    assert first_message.edits[-1] == "Finished"
+
+
+async def test_steering_failure_leaves_the_active_turn_running() -> None:
+    conversation = BlockingConversation()
+    conversation.steer_error = RuntimeError("Codex refused the steering input")
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    first_message = FakeMessage()
+    second_message = FakeMessage()
+
+    first_turn = asyncio.create_task(
+        bot.handle_text(cast(Message, first_message), 7, "Review the vault")
+    )
+    await conversation.started.wait()
+    await bot.handle_text(cast(Message, second_message), 7, "One more thing")
+    conversation.release.set()
+    await first_turn
+
+    assert second_message.replies == [STEERING_FAILED_MESSAGE]
+    assert first_message.edits[-1] == "Finished"
+
+
+async def test_message_sent_before_codex_accepts_the_turn_says_it_is_busy() -> None:
+    conversation = BlockingConversation()
+    conversation.steer_accepted = False
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    first_message = FakeMessage()
+    second_message = FakeMessage()
+
+    first_turn = asyncio.create_task(
+        bot.handle_text(cast(Message, first_message), 7, "Review the vault")
+    )
+    await conversation.started.wait()
+    await bot.handle_text(cast(Message, second_message), 7, "One more thing")
+    conversation.release.set()
+    await first_turn
+
+    assert conversation.steered == []
     assert second_message.replies == [BUSY_MESSAGE]
+    assert first_message.edits[-1] == "Finished"
 
 
 async def test_new_does_not_interrupt_an_active_turn() -> None:

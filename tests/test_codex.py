@@ -117,10 +117,14 @@ class InterruptibleTurn:
         self.started = asyncio.Event()
         self._interrupted = asyncio.Event()
         self.interrupt_calls = 0
+        self.steer_inputs: list[RunInput] = []
 
     async def interrupt(self) -> None:
         self.interrupt_calls += 1
         self._interrupted.set()
+
+    async def steer(self, input: RunInput) -> None:
+        self.steer_inputs.append(input)
 
     async def stream(self):
         self.started.set()
@@ -343,6 +347,65 @@ async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(
         await task
     assert turn.interrupt_calls == 1
     assert await conversation.interrupt() is False
+
+
+async def test_codex_conversation_steers_the_turn_it_is_already_running(
+    tmp_path: Path,
+) -> None:
+    turn = InterruptibleTurn()
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
+    )
+
+    assert await conversation.steer("Nothing is running yet") is False
+
+    async def consume_turn() -> None:
+        _ = [text async for text in conversation.stream_reply("Review the vault")]
+
+    task = asyncio.create_task(consume_turn())
+    await turn.started.wait()
+
+    assert await conversation.steer("Actually check the other file too") is True
+    assert turn.steer_inputs == ["Actually check the other file too"]
+    assert turn.interrupt_calls == 0
+
+    await conversation.interrupt()
+    with pytest.raises(TurnInterrupted):
+        await task
+
+    assert await conversation.steer("The turn is over") is False
+
+
+async def test_codex_conversation_steers_with_a_local_image_attachment(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "screenshot.png"
+    image_path.write_bytes(b"not a real image")
+    turn = InterruptibleTurn()
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
+    )
+
+    async def consume_turn() -> None:
+        _ = [text async for text in conversation.stream_reply("Review the vault")]
+
+    task = asyncio.create_task(consume_turn())
+    await turn.started.wait()
+
+    steered = await conversation.steer("Look at this too", image_paths=(image_path,))
+
+    assert steered is True
+    assert turn.steer_inputs == [
+        [TextInput("Look at this too"), LocalImageInput(str(image_path))]
+    ]
+
+    await conversation.interrupt()
+    with pytest.raises(TurnInterrupted):
+        await task
 
 
 async def test_codex_conversation_interrupts_a_turn_that_starts_after_stop_request(

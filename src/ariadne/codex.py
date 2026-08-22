@@ -87,6 +87,16 @@ def _activity_message(item: object) -> str | None:
     return None
 
 
+def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:
+    """Build Codex turn input from a message and any local image attachments."""
+    if not image_paths:
+        return message
+    return cast(
+        RunInput,
+        [TextInput(message)] + [LocalImageInput(str(path)) for path in image_paths],
+    )
+
+
 def _mcp_config_overrides(vault: Path) -> tuple[str, ...]:
     """Return the local Ariadne MCP server configuration for Codex."""
     overrides = [
@@ -174,6 +184,19 @@ class CodexConversation:
             raise
         return True
 
+    async def steer(
+        self,
+        message: str,
+        *,
+        image_paths: tuple[Path, ...] = (),
+    ) -> bool:
+        """Add a follow-up message to the active turn, if one has started."""
+        turn = self._active_turn
+        if turn is None:
+            return False
+        await turn.steer(_turn_input(message, image_paths))
+        return True
+
     async def stream_reply(
         self,
         message: str,
@@ -184,15 +207,8 @@ class CodexConversation:
     ) -> AsyncIterator[str]:
         """Yield the complete accumulated agent message as each delta arrives."""
         thread = await self._thread_for_conversation()
-        turn_input: RunInput = message
-        if image_paths:
-            turn_input = cast(
-                RunInput,
-                [TextInput(message)]
-                + [LocalImageInput(str(path)) for path in image_paths],
-            )
         turn = await thread.turn(
-            turn_input,
+            _turn_input(message, image_paths),
             approval_mode=ApprovalMode.auto_review,
             cwd=str(self._vault),
             effort=self._settings.effort,
