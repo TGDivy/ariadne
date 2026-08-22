@@ -2,73 +2,152 @@ import asyncio
 from typing import cast
 
 import pytest
+from openai_codex.generated.v2_all import ReasoningEffort
 from telegram import Message
 from telegram.constants import ParseMode
 from telegram.error import TimedOut
 
-from ariadne.codex import CodexConversation
+from ariadne.codex import (
+    CodexConversation,
+    CodexModel,
+    CodexTurnSettings,
+    TurnInterrupted,
+)
 from ariadne.telegram_bot import (
     BUSY_MESSAGE,
     FAILURE_MESSAGE,
     NEW_CONVERSATION_MESSAGE,
+    NOTHING_TO_STOP_MESSAGE,
     PLACEHOLDER_TEXT,
+    SETTINGS_BUSY_MESSAGE,
+    STOPPED_MESSAGE,
+    STOPPING_MESSAGE,
     TELEGRAM_MESSAGE_LIMIT,
     AriadneBot,
     split_for_telegram,
+)
+
+DEFAULT_SETTINGS = CodexTurnSettings(
+    model="gpt-5.6-luna",
+    effort=ReasoningEffort.low,
+    web_search="disabled",
+)
+DEFAULT_MODELS = (
+    CodexModel(
+        identifier="gpt-5.6-luna",
+        display_name="GPT-5.6 Luna",
+        default_effort=ReasoningEffort.low,
+        supported_efforts=(ReasoningEffort.low, ReasoningEffort.medium),
+    ),
 )
 
 
 class FakeMessage:
     def __init__(self) -> None:
         self.replies: list[str] = []
+        self.reply_markups: list[object | None] = []
         self.edits: list[str] = []
         self.edit_parse_modes: list[ParseMode | None] = []
+        self.edit_markups: list[object | None] = []
 
-    async def reply_text(self, text: str) -> "FakeMessage":
+    async def reply_text(
+        self, text: str, *, reply_markup: object | None = None
+    ) -> "FakeMessage":
         self.replies.append(text)
+        self.reply_markups.append(reply_markup)
         return self
 
     async def edit_text(
-        self, text: str, *, parse_mode: ParseMode | None = None
+        self,
+        text: str,
+        *,
+        parse_mode: ParseMode | None = None,
+        reply_markup: object | None = None,
     ) -> "FakeMessage":
         self.edits.append(text)
         self.edit_parse_modes.append(parse_mode)
+        self.edit_markups.append(reply_markup)
         return self
 
 
 class FakeConversation:
-    def __init__(self, responses: list[str], *, failures: int = 0) -> None:
+    def __init__(
+        self,
+        responses: list[str],
+        *,
+        failures: int = 0,
+        activities: list[str] | None = None,
+        models: tuple[CodexModel, ...] = DEFAULT_MODELS,
+    ) -> None:
         self._responses = responses
         self._failures = failures
+        self._activities = activities or []
+        self._models = models
+        self.settings = DEFAULT_SETTINGS
         self.prompts: list[str] = []
         self.reset_calls = 0
+        self.set_settings_calls = 0
+        self.interrupt_calls = 0
 
-    async def stream_reply(self, prompt: str):
+    async def stream_reply(self, prompt: str, *, activity=None, stop_requested=None):
         self.prompts.append(prompt)
         if self._failures:
             self._failures -= 1
             raise RuntimeError("Codex failed")
+        if activity is not None:
+            for update in self._activities:
+                await activity(update)
         for response in self._responses:
             yield response
 
     def reset(self) -> None:
         self.reset_calls += 1
 
+    def set_settings(self, settings: CodexTurnSettings) -> None:
+        self.settings = settings
+        self.set_settings_calls += 1
+        self.reset()
+
+    async def available_models(self) -> tuple[CodexModel, ...]:
+        return self._models
+
+    async def interrupt(self) -> bool:
+        self.interrupt_calls += 1
+        return False
+
 
 class BlockingConversation:
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.interrupted = False
+        self.interrupt_calls = 0
+        self.settings = DEFAULT_SETTINGS
         self.reset_calls = 0
 
-    async def stream_reply(self, _: str):
+    async def stream_reply(self, _: str, *, activity=None, stop_requested=None):
         self.started.set()
         yield "Working"
         await self.release.wait()
+        if self.interrupted:
+            raise TurnInterrupted()
         yield "Finished"
 
     def reset(self) -> None:
         self.reset_calls += 1
+
+    def set_settings(self, settings: CodexTurnSettings) -> None:
+        self.settings = settings
+        self.reset()
+
+    async def available_models(self) -> tuple[CodexModel, ...]:
+        return DEFAULT_MODELS
+
+    async def interrupt(self) -> bool:
+        self.interrupt_calls += 1
+        self.interrupted = True
+        self.release.set()
+        return True
 
 
 class FakeTyping:
@@ -129,6 +208,21 @@ async def test_final_response_uses_rich_telegram_formatting(
     assert message.edit_parse_modes[-1] == ParseMode.HTML
 
 
+async def test_safe_activity_status_is_shown_before_the_answer(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation(
+        ["The answer"],
+        activities=["Searching the web…"],
+    )
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_text(cast(Message, message), 7, "Research this")
+
+    assert "Searching the web…" in message.edits
+    assert message.edits[-1] == "The answer"
+
+
 async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
     conversation = FakeConversation([])
     bot = AriadneBot(7, cast(CodexConversation, conversation))
@@ -172,6 +266,102 @@ async def test_new_does_not_interrupt_an_active_turn() -> None:
 
     assert conversation.reset_calls == 0
     assert new_message.replies == [BUSY_MESSAGE]
+
+
+async def test_stop_interrupts_the_active_turn_and_frees_the_conversation() -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    active_message = FakeMessage()
+    stop_message = FakeMessage()
+    new_message = FakeMessage()
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, active_message), 7, "First")
+    )
+    await conversation.started.wait()
+    await bot.handle_stop(cast(Message, stop_message), 7)
+    await turn
+    await bot.handle_new(cast(Message, new_message), 7)
+
+    assert conversation.interrupt_calls == 1
+    assert STOPPING_MESSAGE in active_message.edits
+    assert active_message.edits[-1] == STOPPED_MESSAGE
+    assert new_message.replies == [NEW_CONVERSATION_MESSAGE]
+
+
+async def test_stop_when_idle_has_a_clear_response(message: FakeMessage) -> None:
+    bot = AriadneBot(7, cast(CodexConversation, FakeConversation([])))
+
+    await bot.handle_stop(cast(Message, message), 7)
+
+    assert message.replies == [NOTHING_TO_STOP_MESSAGE]
+
+
+async def test_settings_change_model_effort_and_web_mode(message: FakeMessage) -> None:
+    fast_model = CodexModel(
+        identifier="gpt-fast",
+        display_name="GPT Fast",
+        default_effort=ReasoningEffort.low,
+        supported_efforts=(ReasoningEffort.low,),
+    )
+    thorough_model = CodexModel(
+        identifier="gpt-thorough",
+        display_name="GPT Thorough",
+        default_effort=ReasoningEffort.high,
+        supported_efforts=(ReasoningEffort.medium, ReasoningEffort.high),
+    )
+    conversation = FakeConversation([], models=(fast_model, thorough_model))
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_settings(cast(Message, message), 7)
+    await bot.handle_settings_callback(
+        cast(Message, message),
+        7,
+        "settings:model:gpt-thorough",
+    )
+    await bot.handle_settings_callback(
+        cast(Message, message),
+        7,
+        "settings:effort:high",
+    )
+    await bot.handle_settings_callback(
+        cast(Message, message),
+        7,
+        "settings:web:live",
+    )
+
+    assert message.replies[0].startswith("Ariadne settings")
+    assert message.reply_markups[0] is not None
+    assert conversation.settings == CodexTurnSettings(
+        model="gpt-thorough",
+        effort=ReasoningEffort.high,
+        web_search="live",
+    )
+    assert conversation.set_settings_calls == 3
+    assert conversation.reset_calls == 3
+    assert "Web research: Live" in message.edits[-1]
+
+
+async def test_settings_rejects_changes_during_an_active_turn() -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    active_message = FakeMessage()
+    settings_message = FakeMessage()
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, active_message), 7, "First")
+    )
+    await conversation.started.wait()
+    await bot.handle_settings_callback(
+        cast(Message, settings_message),
+        7,
+        "settings:web:live",
+    )
+    conversation.release.set()
+    await turn
+
+    assert conversation.settings.web_search == "disabled"
+    assert settings_message.edits == [SETTINGS_BUSY_MESSAGE]
 
 
 async def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward(

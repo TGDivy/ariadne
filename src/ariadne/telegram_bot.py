@@ -5,13 +5,20 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import replace
 
-from telegram import Message, Update
+from telegram import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    Update,
+)
 from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
-from .codex import CodexConversation
+from .codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
 from .telegram_format import render_telegram_html
 
 LOGGER = logging.getLogger(__name__)
@@ -24,6 +31,19 @@ READY_MESSAGE = "Ariadne is ready."
 NEW_CONVERSATION_MESSAGE = "Started a new conversation. The Thread is still available."
 BUSY_MESSAGE = "I'm still working on your previous message."
 FAILURE_MESSAGE = "I ran into a problem while working on that. Please try again."
+STOPPING_MESSAGE = "Stopping…"
+STOPPED_MESSAGE = "Stopped."
+NOTHING_TO_STOP_MESSAGE = "There isn't an active turn to stop."
+SETTINGS_UNAVAILABLE_MESSAGE = (
+    "I couldn't load the available Codex settings. Please try again."
+)
+SETTINGS_BUSY_MESSAGE = "Settings can't change while Ariadne is working."
+
+SETTINGS_CALLBACK_PREFIX = "settings:"
+SETTINGS_MODELS_CALLBACK = "settings:models"
+SETTINGS_EFFORT_CALLBACK = "settings:effort"
+SETTINGS_WEB_CALLBACK = "settings:web"
+SETTINGS_BACK_CALLBACK = "settings:back"
 
 TypingSender = Callable[[], Awaitable[None]]
 
@@ -59,6 +79,8 @@ class AriadneBot:
         self._allowed_user_id = allowed_user_id
         self._conversation = conversation
         self._busy = False
+        self._stopping = False
+        self._active_placeholder: Message | None = None
 
     async def start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start."""
@@ -73,6 +95,41 @@ class AriadneBot:
         if message is None:
             return
         await self.handle_new(message, self._user_id_from(update))
+
+    async def stop(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /stop."""
+        message = self._message_from(update)
+        if message is None:
+            return
+        await self.handle_stop(message, self._user_id_from(update))
+
+    async def settings(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /settings."""
+        message = self._message_from(update)
+        if message is None:
+            return
+        await self.handle_settings(message, self._user_id_from(update))
+
+    async def settings_callback(
+        self, update: Update, _: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle a button press from Ariadne's settings panel."""
+        query = update.callback_query
+        if not isinstance(query, CallbackQuery):
+            return
+
+        await self._answer_callback_safely(query)
+        if not self._is_allowed(self._user_id_from(update)):
+            return
+
+        message = query.message
+        if not isinstance(message, Message) or not isinstance(query.data, str):
+            return
+        await self.handle_settings_callback(
+            message,
+            self._user_id_from(update),
+            query.data,
+        )
 
     async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle a normal Telegram text message."""
@@ -111,6 +168,239 @@ class AriadneBot:
         self._conversation.reset()
         await self._reply_safely(message, NEW_CONVERSATION_MESSAGE)
 
+    async def handle_stop(self, message: Message, user_id: int | None) -> None:
+        """Request that Codex stop the one active Ariadne turn."""
+        if not self._is_allowed(user_id):
+            return
+        if not self._busy:
+            await self._reply_safely(message, NOTHING_TO_STOP_MESSAGE)
+            return
+        if self._stopping:
+            await self._reply_safely(message, STOPPING_MESSAGE)
+            return
+
+        self._stopping = True
+        placeholder = self._active_placeholder
+        if placeholder is not None:
+            await self._edit_safely(placeholder, STOPPING_MESSAGE)
+        else:
+            await self._reply_safely(message, STOPPING_MESSAGE)
+
+        try:
+            if not await self._conversation.interrupt():
+                LOGGER.info("Stop requested before the Codex turn started")
+        except Exception:
+            self._stopping = False
+            LOGGER.exception("Codex turn interruption failed")
+            await self._reply_safely(
+                message,
+                "I couldn't stop the active turn. Please try again.",
+            )
+
+    async def handle_settings(self, message: Message, user_id: int | None) -> None:
+        """Show the process-local Codex settings panel."""
+        if not self._is_allowed(user_id):
+            return
+        await self._reply_safely(
+            message,
+            self._settings_text(),
+            reply_markup=self._settings_keyboard(),
+        )
+
+    async def handle_settings_callback(
+        self,
+        message: Message,
+        user_id: int | None,
+        data: str,
+    ) -> None:
+        """Apply a validated settings-panel selection."""
+        if not self._is_allowed(user_id) or not data.startswith(
+            SETTINGS_CALLBACK_PREFIX
+        ):
+            return
+
+        if data == SETTINGS_BACK_CALLBACK:
+            await self._show_settings(message)
+        elif data == SETTINGS_MODELS_CALLBACK:
+            await self._show_model_choices(message)
+        elif data == SETTINGS_EFFORT_CALLBACK:
+            await self._show_effort_choices(message)
+        elif data == SETTINGS_WEB_CALLBACK:
+            await self._show_web_choices(message)
+        elif data.startswith("settings:model:"):
+            await self._select_model(message, data.removeprefix("settings:model:"))
+        elif data.startswith("settings:effort:"):
+            await self._select_effort(message, data.removeprefix("settings:effort:"))
+        elif data.startswith("settings:web:"):
+            await self._select_web_mode(message, data.removeprefix("settings:web:"))
+
+    async def _show_settings(self, message: Message) -> None:
+        await self._edit_safely(
+            message,
+            self._settings_text(),
+            reply_markup=self._settings_keyboard(),
+        )
+
+    async def _show_model_choices(self, message: Message) -> None:
+        models = await self._available_models(message)
+        if models is None:
+            return
+
+        await self._edit_safely(
+            message,
+            "Choose a Codex model.",
+            reply_markup=self._models_keyboard(models),
+        )
+
+    async def _show_effort_choices(self, message: Message) -> None:
+        model = await self._current_model(message)
+        if model is None:
+            return
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    self._effort_button_text(effort.value),
+                    callback_data=f"settings:effort:{effort.value}",
+                )
+            ]
+            for effort in model.supported_efforts
+        ]
+        keyboard.append(
+            [InlineKeyboardButton("Back", callback_data=SETTINGS_BACK_CALLBACK)]
+        )
+        await self._edit_safely(
+            message,
+            f"Choose reasoning effort for {model.display_name}.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    async def _show_web_choices(self, message: Message) -> None:
+        settings = self._conversation.settings
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    self._selected_button_text(
+                        "Off", settings.web_search == "disabled"
+                    ),
+                    callback_data="settings:web:disabled",
+                ),
+                InlineKeyboardButton(
+                    self._selected_button_text("Live", settings.web_search == "live"),
+                    callback_data="settings:web:live",
+                ),
+            ],
+            [InlineKeyboardButton("Back", callback_data=SETTINGS_BACK_CALLBACK)],
+        ]
+        await self._edit_safely(
+            message,
+            "Choose web research mode.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
+    async def _select_model(self, message: Message, identifier: str) -> None:
+        if not await self._settings_can_change(message):
+            return
+        models = await self._available_models(message)
+        if models is None:
+            return
+        model = next(
+            (model for model in models if model.identifier == identifier), None
+        )
+        if model is None:
+            await self._show_settings(message)
+            return
+
+        settings = self._conversation.settings
+        effort = (
+            settings.effort
+            if settings.effort in model.supported_efforts
+            else model.default_effort
+        )
+        self._conversation.set_settings(
+            replace(settings, model=model.identifier, effort=effort)
+        )
+        await self._show_settings(message)
+
+    async def _select_effort(self, message: Message, value: str) -> None:
+        if not await self._settings_can_change(message):
+            return
+        model = await self._current_model(message)
+        if model is None:
+            return
+        effort = next(
+            (effort for effort in model.supported_efforts if effort.value == value),
+            None,
+        )
+        if effort is None:
+            await self._show_effort_choices(message)
+            return
+
+        self._conversation.set_settings(
+            replace(self._conversation.settings, effort=effort)
+        )
+        await self._show_settings(message)
+
+    async def _select_web_mode(self, message: Message, value: str) -> None:
+        if not await self._settings_can_change(message):
+            return
+        if value == "disabled":
+            web_search: WebSearchSetting = "disabled"
+        elif value == "live":
+            web_search = "live"
+        else:
+            await self._show_web_choices(message)
+            return
+
+        self._conversation.set_settings(
+            replace(self._conversation.settings, web_search=web_search)
+        )
+        await self._show_settings(message)
+
+    async def _settings_can_change(self, message: Message) -> bool:
+        if not self._busy:
+            return True
+        await self._edit_safely(message, SETTINGS_BUSY_MESSAGE)
+        return False
+
+    async def _available_models(
+        self, message: Message
+    ) -> tuple[CodexModel, ...] | None:
+        try:
+            models = await self._conversation.available_models()
+        except Exception:
+            LOGGER.exception("Codex model list failed")
+            await self._edit_safely(message, SETTINGS_UNAVAILABLE_MESSAGE)
+            return None
+        if models:
+            return models
+
+        LOGGER.error("Codex model list returned no selectable models")
+        await self._edit_safely(message, SETTINGS_UNAVAILABLE_MESSAGE)
+        return None
+
+    async def _current_model(self, message: Message) -> CodexModel | None:
+        models = await self._available_models(message)
+        if models is None:
+            return None
+        model = next(
+            (
+                model
+                for model in models
+                if model.identifier == self._conversation.settings.model
+            ),
+            None,
+        )
+        if model is not None:
+            return model
+
+        await self._edit_safely(
+            message,
+            "The selected model is no longer available. Choose a new model.",
+            reply_markup=self._models_keyboard(models),
+        )
+        return None
+
     async def handle_text(
         self,
         message: Message,
@@ -133,13 +423,22 @@ class AriadneBot:
             if send_typing is not None
             else None
         )
+        placeholder: Message | None = None
         try:
             placeholder = await self._reply_safely(message, PLACEHOLDER_TEXT)
             if placeholder is None:
                 return
+            self._active_placeholder = placeholder
+
+            if self._stopping:
+                await self._send_stopped(message, placeholder)
+                return
 
             try:
                 await self._stream_response(message, placeholder, text)
+            except TurnInterrupted:
+                LOGGER.info("Codex turn interrupted")
+                await self._send_stopped(message, placeholder)
             except Exception:
                 LOGGER.exception("Codex turn failed")
                 await self._send_failure(message, placeholder)
@@ -148,6 +447,9 @@ class AriadneBot:
                 typing_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await typing_task
+            if placeholder is not None and self._active_placeholder is placeholder:
+                self._active_placeholder = None
+            self._stopping = False
             self._busy = False
 
     async def _refresh_typing(self, send_typing: TypingSender) -> None:
@@ -168,8 +470,27 @@ class AriadneBot:
         last_edit_at = 0.0
         last_rendered_text = PLACEHOLDER_TEXT
 
-        async for response in self._conversation.stream_reply(prompt):
+        async def show_activity(activity: str) -> None:
+            nonlocal last_edit_at, last_rendered_text
+            if final_response or self._stopping:
+                return
+            now = time.monotonic()
+            if (
+                activity != last_rendered_text
+                and now - last_edit_at >= STREAM_EDIT_INTERVAL_SECONDS
+                and await self._edit_safely(placeholder, activity)
+            ):
+                last_edit_at = now
+                last_rendered_text = activity
+
+        async for response in self._conversation.stream_reply(
+            prompt,
+            activity=show_activity,
+            stop_requested=lambda: self._stopping,
+        ):
             final_response = response
+            if self._stopping:
+                continue
             preview = split_for_telegram(response)[0]
             now = time.monotonic()
             if (
@@ -245,9 +566,19 @@ class AriadneBot:
         if not await self._edit_safely(placeholder, FAILURE_MESSAGE):
             await self._reply_safely(message, FAILURE_MESSAGE)
 
-    async def _reply_safely(self, message: Message, text: str) -> Message | None:
+    async def _send_stopped(self, message: Message, placeholder: Message) -> None:
+        if not await self._edit_safely(placeholder, STOPPED_MESSAGE):
+            await self._reply_safely(message, STOPPED_MESSAGE)
+
+    async def _reply_safely(
+        self,
+        message: Message,
+        text: str,
+        *,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | None:
         try:
-            return await message.reply_text(text)
+            return await message.reply_text(text, reply_markup=reply_markup)
         except TelegramError:
             LOGGER.exception("Telegram reply failed")
             return None
@@ -258,13 +589,90 @@ class AriadneBot:
         text: str,
         *,
         parse_mode: ParseMode | None = None,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> bool:
         try:
-            await message.edit_text(text, parse_mode=parse_mode)
+            await message.edit_text(
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+            )
         except TelegramError:
             LOGGER.exception("Telegram message update failed")
             return False
         return True
+
+    async def _answer_callback_safely(self, query: CallbackQuery) -> None:
+        try:
+            await query.answer()
+        except TelegramError:
+            LOGGER.exception("Telegram settings callback acknowledgement failed")
+
+    def _settings_text(self) -> str:
+        settings = self._conversation.settings
+        web_search = "Live" if settings.web_search == "live" else "Off"
+        return (
+            "Ariadne settings\n\n"
+            f"Model: {settings.model}\n"
+            f"Reasoning: {settings.effort.value}\n"
+            f"Web research: {web_search}\n\n"
+            "Changes start a new in-memory Codex conversation."
+        )
+
+    def _settings_keyboard(self) -> InlineKeyboardMarkup:
+        settings = self._conversation.settings
+        web_search = "Live" if settings.web_search == "live" else "Off"
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        f"Model: {settings.model}",
+                        callback_data=SETTINGS_MODELS_CALLBACK,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        f"Reasoning: {settings.effort.value}",
+                        callback_data=SETTINGS_EFFORT_CALLBACK,
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        f"Web research: {web_search}",
+                        callback_data=SETTINGS_WEB_CALLBACK,
+                    )
+                ],
+            ]
+        )
+
+    def _models_keyboard(self, models: tuple[CodexModel, ...]) -> InlineKeyboardMarkup:
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    self._model_button_text(model),
+                    callback_data=f"settings:model:{model.identifier}",
+                )
+            ]
+            for model in models
+        ]
+        keyboard.append(
+            [InlineKeyboardButton("Back", callback_data=SETTINGS_BACK_CALLBACK)]
+        )
+        return InlineKeyboardMarkup(keyboard)
+
+    def _model_button_text(self, model: CodexModel) -> str:
+        return self._selected_button_text(
+            model.display_name,
+            self._conversation.settings.model == model.identifier,
+        )
+
+    @staticmethod
+    def _effort_button_text(effort: str) -> str:
+        return effort.capitalize()
+
+    @staticmethod
+    def _selected_button_text(text: str, selected: bool) -> str:
+        return f"✓ {text}" if selected else text
 
     def _is_allowed(self, user_id: int | None) -> bool:
         if user_id == self._allowed_user_id:
