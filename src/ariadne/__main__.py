@@ -2,11 +2,12 @@
 
 import logging
 
+from pydantic import ValidationError
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
 from .codex import CodexConversation
-from .config import ConfigurationError, Settings
+from .config import Settings
 from .telegram_bot import AriadneBot
 
 LOGGER = logging.getLogger(__name__)
@@ -27,8 +28,8 @@ def main() -> None:
     configure_logging()
 
     try:
-        settings = Settings.from_environment()
-    except ConfigurationError as error:
+        settings = Settings()
+    except ValidationError as error:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
 

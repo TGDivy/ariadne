@@ -5,6 +5,8 @@ description = "A persistent personal AI partner."
 requires-python = ">=3.13"
 dependencies = [
     "openai-codex>=0.147.0",
+    "pydantic>=2.13.4",
+    "pydantic-settings>=2.15.0",
     "python-telegram-bot>=22.8",
 ]
 
@@ -26,12 +28,15 @@ default = true
 dev = [
     "mypy>=2.3.1",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.16.4",
 ]
 
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.mypy]
 python_version = "3.13"
+plugins = ["pydantic.mypy"]
 strict = true

@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -71,44 +70,38 @@ class FakeCodex:
         return None
 
 
-def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
+async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
     tmp_path: Path,
 ) -> None:
-    async def exercise() -> None:
-        thread = FakeThread()
-        client = FakeCodex(thread)
-        conversation = CodexConversation(
-            tmp_path,
-            client=cast(AsyncCodex, client),
-        )
+    thread = FakeThread()
+    client = FakeCodex(thread)
+    conversation = CodexConversation(
+        tmp_path,
+        client=cast(AsyncCodex, client),
+    )
 
-        first = [text async for text in conversation.stream_reply("First message")]
-        second = [text async for text in conversation.stream_reply("Follow-up")]
+    first = [text async for text in conversation.stream_reply("First message")]
+    second = [text async for text in conversation.stream_reply("Follow-up")]
 
-        assert first == ["Hello", "Hello world"]
-        assert second == ["Hello", "Hello world"]
-        assert thread.inputs == ["First message", "Follow-up"]
-        assert client.thread_start_options == [
-            {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write}
-        ]
-        assert thread.turn_options == [
-            {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write},
-            {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write},
-        ]
-
-    asyncio.run(exercise())
+    assert first == ["Hello", "Hello world"]
+    assert second == ["Hello", "Hello world"]
+    assert thread.inputs == ["First message", "Follow-up"]
+    assert client.thread_start_options == [
+        {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write}
+    ]
+    assert thread.turn_options == [
+        {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write},
+        {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write},
+    ]
 
 
-def test_codex_conversation_uses_the_final_agent_answer(tmp_path: Path) -> None:
-    async def exercise() -> None:
-        thread = FakeThread(final_answer="The final answer.")
-        conversation = CodexConversation(
-            tmp_path,
-            client=cast(AsyncCodex, FakeCodex(thread)),
-        )
+async def test_codex_conversation_uses_the_final_agent_answer(tmp_path: Path) -> None:
+    thread = FakeThread(final_answer="The final answer.")
+    conversation = CodexConversation(
+        tmp_path,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
 
-        responses = [text async for text in conversation.stream_reply("Question")]
+    responses = [text async for text in conversation.stream_reply("Question")]
 
-        assert responses == ["Hello", "Hello world", "The final answer."]
-
-    asyncio.run(exercise())
+    assert responses == ["Hello", "Hello world", "The final answer."]

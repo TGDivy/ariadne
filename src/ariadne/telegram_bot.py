@@ -26,11 +26,6 @@ FAILURE_MESSAGE = "I ran into a problem while working on that. Please try again.
 TypingSender = Callable[[], Awaitable[None]]
 
 
-def is_allowed_user(user_id: int | None, allowed_user_id: int) -> bool:
-    """Return whether a Telegram user may use this single-user bot."""
-    return user_id == allowed_user_id
-
-
 def split_for_telegram(text: str) -> list[str]:
     """Split a plain-text response into Telegram-sized pieces."""
     return [
@@ -197,7 +192,7 @@ class AriadneBot:
         return True
 
     def _is_allowed(self, user_id: int | None) -> bool:
-        if is_allowed_user(user_id, self._allowed_user_id):
+        if user_id == self._allowed_user_id:
             return True
         LOGGER.warning(
             "Ignoring message from unauthorized Telegram user id=%s", user_id

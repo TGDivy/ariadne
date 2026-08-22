@@ -1,15 +1,16 @@
 import asyncio
 from typing import cast
 
+import pytest
 from telegram import Message
 
 from ariadne.codex import CodexConversation
 from ariadne.telegram_bot import (
     BUSY_MESSAGE,
+    FAILURE_MESSAGE,
     PLACEHOLDER_TEXT,
     TELEGRAM_MESSAGE_LIMIT,
     AriadneBot,
-    is_allowed_user,
 )
 
 
@@ -28,12 +29,16 @@ class FakeMessage:
 
 
 class FakeConversation:
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str], *, failures: int = 0) -> None:
         self._responses = responses
+        self._failures = failures
         self.prompts: list[str] = []
 
     async def stream_reply(self, prompt: str):
         self.prompts.append(prompt)
+        if self._failures:
+            self._failures -= 1
+            raise RuntimeError("Codex failed")
         for response in self._responses:
             yield response
 
@@ -60,85 +65,103 @@ class FakeTyping:
         self.started.set()
 
 
-def test_allowed_user_filter() -> None:
-    assert is_allowed_user(7, 7)
-    assert not is_allowed_user(8, 7)
-    assert not is_allowed_user(None, 7)
+@pytest.fixture
+def message() -> FakeMessage:
+    return FakeMessage()
 
 
-def test_streamed_reply_replaces_the_placeholder_with_the_final_answer() -> None:
-    async def exercise() -> None:
-        conversation = FakeConversation(["Hello", "Hello, Ariadne!"])
-        bot = AriadneBot(7, cast(CodexConversation, conversation))
-        message = FakeMessage()
+async def test_unauthorized_message_is_ignored(message: FakeMessage, caplog) -> None:
+    conversation = FakeConversation(["This should not be sent"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
 
-        await bot.handle_text(cast(Message, message), 7, "Say hello")
+    await bot.handle_text(cast(Message, message), 8, "Hello")
 
-        assert conversation.prompts == ["Say hello"]
-        assert message.replies == [PLACEHOLDER_TEXT]
-        assert message.edits[-1] == "Hello, Ariadne!"
-
-    asyncio.run(exercise())
+    assert conversation.prompts == []
+    assert message.replies == []
+    assert "Ignoring message from unauthorized Telegram user id=8" in caplog.text
 
 
-def test_busy_turn_receives_a_deterministic_reply() -> None:
-    async def exercise() -> None:
-        conversation = BlockingConversation()
-        bot = AriadneBot(7, cast(CodexConversation, conversation))
-        first_message = FakeMessage()
-        second_message = FakeMessage()
+async def test_streamed_reply_replaces_the_placeholder_with_the_final_answer(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation(["Hello", "Hello, Ariadne!"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
 
-        first_turn = asyncio.create_task(
-            bot.handle_text(cast(Message, first_message), 7, "First")
+    await bot.handle_text(cast(Message, message), 7, "Say hello")
+
+    assert conversation.prompts == ["Say hello"]
+    assert message.replies == [PLACEHOLDER_TEXT]
+    assert message.edits[-1] == "Hello, Ariadne!"
+
+
+async def test_busy_turn_receives_a_deterministic_reply() -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    first_message = FakeMessage()
+    second_message = FakeMessage()
+
+    first_turn = asyncio.create_task(
+        bot.handle_text(cast(Message, first_message), 7, "First")
+    )
+    await conversation.started.wait()
+    await bot.handle_text(cast(Message, second_message), 7, "Second")
+    conversation.release.set()
+    await first_turn
+
+    assert second_message.replies == [BUSY_MESSAGE]
+
+
+async def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward(
+    message: FakeMessage,
+) -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    typing = FakeTyping()
+
+    turn = asyncio.create_task(
+        bot.handle_text(
+            cast(Message, message),
+            7,
+            "First",
+            send_typing=typing.send,
         )
-        await conversation.started.wait()
-        await bot.handle_text(cast(Message, second_message), 7, "Second")
-        conversation.release.set()
-        await first_turn
+    )
+    await conversation.started.wait()
+    await typing.started.wait()
+    conversation.release.set()
+    await turn
 
-        assert second_message.replies == [BUSY_MESSAGE]
-
-    asyncio.run(exercise())
-
-
-def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward() -> None:
-    async def exercise() -> None:
-        conversation = BlockingConversation()
-        bot = AriadneBot(7, cast(CodexConversation, conversation))
-        message = FakeMessage()
-        typing = FakeTyping()
-
-        turn = asyncio.create_task(
-            bot.handle_text(
-                cast(Message, message),
-                7,
-                "First",
-                send_typing=typing.send,
-            )
-        )
-        await conversation.started.wait()
-        await typing.started.wait()
-        conversation.release.set()
-        await turn
-
-        calls_after_turn = typing.calls
-        await asyncio.sleep(0)
-        assert calls_after_turn == 1
-        assert typing.calls == calls_after_turn
-
-    asyncio.run(exercise())
+    calls_after_turn = typing.calls
+    await asyncio.sleep(0)
+    assert calls_after_turn == 1
+    assert typing.calls == calls_after_turn
 
 
-def test_long_responses_are_split_at_telegrams_limit() -> None:
-    async def exercise() -> None:
-        response = "x" * (TELEGRAM_MESSAGE_LIMIT + 1)
-        conversation = FakeConversation([response])
-        bot = AriadneBot(7, cast(CodexConversation, conversation))
-        message = FakeMessage()
+async def test_long_responses_are_split_at_telegrams_limit(
+    message: FakeMessage,
+) -> None:
+    response = "x" * (TELEGRAM_MESSAGE_LIMIT + 1)
+    conversation = FakeConversation([response])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
 
-        await bot.handle_text(cast(Message, message), 7, "Long answer")
+    await bot.handle_text(cast(Message, message), 7, "Long answer")
 
-        assert message.edits[-1] == "x" * TELEGRAM_MESSAGE_LIMIT
-        assert message.replies == [PLACEHOLDER_TEXT, "x"]
+    assert message.edits[-1] == "x" * TELEGRAM_MESSAGE_LIMIT
+    assert message.replies == [PLACEHOLDER_TEXT, "x"]
 
-    asyncio.run(exercise())
+
+async def test_failed_turn_replies_and_allows_the_next_turn(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation(["Recovered"], failures=1)
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_text(cast(Message, message), 7, "First")
+
+    next_message = FakeMessage()
+    await bot.handle_text(cast(Message, next_message), 7, "Second")
+
+    assert message.replies == [PLACEHOLDER_TEXT]
+    assert message.edits == [FAILURE_MESSAGE]
+    assert next_message.edits[-1] == "Recovered"
+    assert conversation.prompts == ["First", "Second"]

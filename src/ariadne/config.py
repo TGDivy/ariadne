@@ -1,62 +1,44 @@
 """Environment-backed configuration for Ariadne."""
 
-import os
-from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import DirectoryPath, Field, PositiveInt, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-class ConfigurationError(ValueError):
-    """Raised when Ariadne cannot start with the supplied configuration."""
 
-
-@dataclass(frozen=True, slots=True)
-class Settings:
+class Settings(BaseSettings):
     """The small set of configuration values needed for Milestone 1."""
 
-    telegram_bot_token: str
-    allowed_user_id: int
-    workspace: Path
+    model_config = SettingsConfigDict(env_file=None, hide_input_in_errors=True)
 
+    telegram_bot_token: str = Field(
+        min_length=1,
+        validation_alias="TELEGRAM_BOT_TOKEN",
+    )
+    allowed_user_id: PositiveInt = Field(
+        validation_alias="TELEGRAM_ALLOWED_USER_ID",
+    )
+    workspace: DirectoryPath = Field(validation_alias="ARIADNE_WORKSPACE")
+
+    @field_validator("telegram_bot_token", mode="before")
     @classmethod
-    def from_environment(
-        cls, environment: Mapping[str, str] | None = None
-    ) -> "Settings":
-        """Load and validate Ariadne's required environment variables."""
-        values = os.environ if environment is None else environment
-        required_names = (
-            "TELEGRAM_BOT_TOKEN",
-            "TELEGRAM_ALLOWED_USER_ID",
-            "ARIADNE_WORKSPACE",
-        )
-        missing = [name for name in required_names if not values.get(name, "").strip()]
-        if missing:
-            names = ", ".join(missing)
-            raise ConfigurationError(
-                f"Missing required environment variable(s): {names}"
-            )
+    def strip_bot_token(cls, value: object) -> object:
+        """Treat whitespace-only tokens as absent."""
+        return value.strip() if isinstance(value, str) else value
 
-        allowed_user_id_text = values["TELEGRAM_ALLOWED_USER_ID"].strip()
-        try:
-            allowed_user_id = int(allowed_user_id_text)
-        except ValueError:
-            raise ConfigurationError(
-                "TELEGRAM_ALLOWED_USER_ID must be a positive integer."
-            ) from None
+    @field_validator("workspace", mode="before")
+    @classmethod
+    def expand_workspace(cls, value: object) -> object:
+        """Expand a user-relative workspace path before validating it."""
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("Workspace path must not be empty.")
+            return Path(value).expanduser()
+        return value
 
-        if allowed_user_id <= 0:
-            raise ConfigurationError(
-                "TELEGRAM_ALLOWED_USER_ID must be a positive integer."
-            )
-
-        workspace = Path(values["ARIADNE_WORKSPACE"].strip()).expanduser()
-        if not workspace.is_dir():
-            raise ConfigurationError(
-                "ARIADNE_WORKSPACE must point to an existing directory."
-            )
-
-        return cls(
-            telegram_bot_token=values["TELEGRAM_BOT_TOKEN"].strip(),
-            allowed_user_id=allowed_user_id,
-            workspace=workspace.resolve(),
-        )
+    @field_validator("workspace")
+    @classmethod
+    def resolve_workspace(cls, value: Path) -> Path:
+        """Store the workspace as an absolute path."""
+        return value.resolve()
