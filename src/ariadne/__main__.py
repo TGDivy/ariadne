@@ -4,7 +4,13 @@ import logging
 
 from pydantic import ValidationError
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram.ext import (
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
 from .codex import CodexConversation
 from .config import Settings
@@ -33,7 +39,7 @@ def main() -> None:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
 
-    conversation = CodexConversation(settings.vault)
+    conversation = CodexConversation(settings.vault, settings.codex_turn_settings)
     ariadne = AriadneBot(settings.allowed_user_id, conversation)
 
     async def close_codex(_: object) -> None:
@@ -51,6 +57,11 @@ def main() -> None:
     )
     application.add_handler(CommandHandler("start", ariadne.start))
     application.add_handler(CommandHandler("new", ariadne.new))
+    application.add_handler(CommandHandler("stop", ariadne.stop))
+    application.add_handler(CommandHandler("settings", ariadne.settings))
+    application.add_handler(
+        CallbackQueryHandler(ariadne.settings_callback, pattern=r"^settings:")
+    )
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
     )

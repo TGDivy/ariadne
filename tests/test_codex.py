@@ -1,26 +1,67 @@
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
-from openai_codex import AsyncCodex, LocalImageInput, RunInput, Sandbox, TextInput
+import pytest
+from openai_codex import (
+    ApprovalMode,
+    AsyncCodex,
+    LocalImageInput,
+    RunInput,
+    Sandbox,
+    TextInput,
+)
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ItemCompletedNotification,
+    ItemStartedNotification,
     MessagePhase,
+    ReasoningEffort,
     ThreadItem,
+    Turn,
+    TurnCompletedNotification,
+    TurnStatus,
+    WebSearchThreadItem,
 )
 from openai_codex.models import AgentMessageDeltaNotification
 
-from ariadne.codex import CodexConversation
+from ariadne.codex import CodexConversation, CodexTurnSettings, TurnInterrupted
 from ariadne.the_thread import build_developer_instructions
+
+DEFAULT_SETTINGS = CodexTurnSettings(
+    model="gpt-5.6-luna",
+    effort=ReasoningEffort.low,
+    web_search="disabled",
+)
 
 
 class FakeTurn:
-    def __init__(self, deltas: list[str], final_answer: str | None = None) -> None:
+    def __init__(
+        self,
+        deltas: list[str],
+        *,
+        final_answer: str | None = None,
+        started_items: list[ThreadItem] | None = None,
+    ) -> None:
         self._deltas = deltas
         self._final_answer = final_answer
+        self._started_items = started_items or []
+        self.interrupt_calls = 0
+
+    async def interrupt(self) -> None:
+        self.interrupt_calls += 1
 
     async def stream(self):
+        for item in self._started_items:
+            payload = ItemStartedNotification(
+                item=item,
+                startedAtMs=0,
+                threadId="thread",
+                turnId="turn",
+            )
+            yield SimpleNamespace(payload=payload)
+
         for delta in self._deltas:
             payload = AgentMessageDeltaNotification(
                 delta=delta,
@@ -46,16 +87,46 @@ class FakeTurn:
             yield SimpleNamespace(payload=payload)
 
 
+class InterruptibleTurn:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self._interrupted = asyncio.Event()
+        self.interrupt_calls = 0
+
+    async def interrupt(self) -> None:
+        self.interrupt_calls += 1
+        self._interrupted.set()
+
+    async def stream(self):
+        self.started.set()
+        await self._interrupted.wait()
+        payload = TurnCompletedNotification(
+            threadId="thread",
+            turn=Turn(id="turn", items=[], status=TurnStatus.interrupted),
+        )
+        yield SimpleNamespace(payload=payload)
+
+
 class FakeThread:
-    def __init__(self, final_answer: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        final_answer: str | None = None,
+        turn: FakeTurn | InterruptibleTurn | None = None,
+    ) -> None:
         self._final_answer = final_answer
+        self._turn = turn
         self.inputs: list[RunInput] = []
         self.turn_options: list[dict[str, object]] = []
 
-    async def turn(self, input: RunInput, **options: object) -> FakeTurn:
+    async def turn(
+        self, input: RunInput, **options: object
+    ) -> FakeTurn | InterruptibleTurn:
         self.inputs.append(input)
         self.turn_options.append(options)
-        return FakeTurn(["Hello", " world"], self._final_answer)
+        if self._turn is not None:
+            return self._turn
+        return FakeTurn(["Hello", " world"], final_answer=self._final_answer)
 
 
 class FakeCodex:
@@ -78,6 +149,7 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
     client = FakeCodex(thread)
     conversation = CodexConversation(
         tmp_path,
+        DEFAULT_SETTINGS,
         client=cast(AsyncCodex, client),
     )
 
@@ -89,21 +161,154 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
     assert thread.inputs == ["First message", "Follow-up"]
     assert client.thread_start_options == [
         {
+            "approval_mode": ApprovalMode.auto_review,
+            "config": {
+                "model_reasoning_effort": "low",
+                "web_search": "disabled",
+            },
             "cwd": str(tmp_path),
-            "developer_instructions": build_developer_instructions(tmp_path),
+            "developer_instructions": (
+                f"{build_developer_instructions(tmp_path)}\n\n"
+                "## Current information\n\n"
+                "Live web search is disabled. Do not claim to have searched, "
+                "researched,\nchecked, or verified current information on the web."
+            ),
+            "model": "gpt-5.6-luna",
             "sandbox": Sandbox.workspace_write,
         }
     ]
     assert thread.turn_options == [
-        {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write},
-        {"cwd": str(tmp_path), "sandbox": Sandbox.workspace_write},
+        {
+            "approval_mode": ApprovalMode.auto_review,
+            "cwd": str(tmp_path),
+            "effort": ReasoningEffort.low,
+            "model": "gpt-5.6-luna",
+            "sandbox": Sandbox.workspace_write,
+        },
+        {
+            "approval_mode": ApprovalMode.auto_review,
+            "cwd": str(tmp_path),
+            "effort": ReasoningEffort.low,
+            "model": "gpt-5.6-luna",
+            "sandbox": Sandbox.workspace_write,
+        },
     ]
+
+
+async def test_codex_conversation_enables_live_web_search_explicitly(
+    tmp_path: Path,
+) -> None:
+    thread = FakeThread()
+    settings = CodexTurnSettings(
+        model="gpt-5.6-sol",
+        effort=ReasoningEffort.high,
+        web_search="live",
+    )
+    client = FakeCodex(thread)
+    conversation = CodexConversation(
+        tmp_path,
+        settings,
+        client=cast(AsyncCodex, client),
+    )
+
+    _ = [text async for text in conversation.stream_reply("Research this")]
+
+    assert client.thread_start_options[0]["config"] == {
+        "model_reasoning_effort": "high",
+        "web_search": "live",
+        "tools": {"web_search": {"context_size": "medium"}},
+    }
+    assert (
+        "Live web search is enabled."
+        in client.thread_start_options[0]["developer_instructions"]
+    )
+
+
+async def test_codex_conversation_reports_only_safe_activity_messages(
+    tmp_path: Path,
+) -> None:
+    web_search_item = WebSearchThreadItem(
+        id="web",
+        query="a private search query",
+        type="webSearch",
+    )
+    thread = FakeThread(
+        turn=FakeTurn(
+            ["Answer"],
+            started_items=[ThreadItem(root=web_search_item)],
+        )
+    )
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
+    activities: list[str] = []
+
+    async def record_activity(activity: str) -> None:
+        activities.append(activity)
+
+    _ = [
+        text
+        async for text in conversation.stream_reply(
+            "Research", activity=record_activity
+        )
+    ]
+
+    assert activities == ["Searching the web…"]
+    assert "private" not in activities[0]
+
+
+async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(
+    tmp_path: Path,
+) -> None:
+    turn = InterruptibleTurn()
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
+    )
+
+    async def consume_turn() -> None:
+        _ = [text async for text in conversation.stream_reply("Stop me")]
+
+    task = asyncio.create_task(consume_turn())
+    await turn.started.wait()
+
+    assert await conversation.interrupt() is True
+    with pytest.raises(TurnInterrupted):
+        await task
+    assert turn.interrupt_calls == 1
+    assert await conversation.interrupt() is False
+
+
+async def test_codex_conversation_interrupts_a_turn_that_starts_after_stop_request(
+    tmp_path: Path,
+) -> None:
+    turn = InterruptibleTurn()
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
+    )
+
+    with pytest.raises(TurnInterrupted):
+        _ = [
+            text
+            async for text in conversation.stream_reply(
+                "Stop before start",
+                stop_requested=lambda: True,
+            )
+        ]
+
+    assert turn.interrupt_calls == 1
 
 
 async def test_codex_conversation_uses_the_final_agent_answer(tmp_path: Path) -> None:
     thread = FakeThread(final_answer="The final answer.")
     conversation = CodexConversation(
         tmp_path,
+        DEFAULT_SETTINGS,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
 
@@ -120,6 +325,7 @@ async def test_codex_conversation_sends_local_images_with_caption(
     thread = FakeThread()
     conversation = CodexConversation(
         tmp_path,
+        DEFAULT_SETTINGS,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
 
@@ -145,7 +351,11 @@ async def test_codex_conversation_starts_a_new_thread_after_reset(
     first_thread = FakeThread()
     second_thread = FakeThread()
     client = FakeCodex(first_thread, second_thread)
-    conversation = CodexConversation(tmp_path, client=cast(AsyncCodex, client))
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, client),
+    )
 
     _ = [text async for text in conversation.stream_reply("First message")]
     conversation.reset()
