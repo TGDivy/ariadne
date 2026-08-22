@@ -5,19 +5,26 @@ import logging
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
 
-from .bot import AriadneBot
 from .codex import CodexConversation
 from .config import ConfigurationError, Settings
+from .telegram_bot import AriadneBot
 
 LOGGER = logging.getLogger(__name__)
 
 
-def main() -> None:
-    """Start the Telegram long-polling application."""
+def configure_logging() -> None:
+    """Configure Ariadne logs without exposing Telegram request URLs."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def main() -> None:
+    """Start the Telegram long-polling application."""
+    configure_logging()
 
     try:
         settings = Settings.from_environment()

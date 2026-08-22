@@ -1,9 +1,13 @@
-"""Telegram handlers for the Milestone 1 conversation loop."""
+"""Telegram adapter for Ariadne's conversation loop."""
 
+import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
+from contextlib import suppress
 
 from telegram import Message, Update
+from telegram.constants import ChatAction
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
@@ -13,10 +17,13 @@ LOGGER = logging.getLogger(__name__)
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 STREAM_EDIT_INTERVAL_SECONDS = 1.0
+TYPING_REFRESH_INTERVAL_SECONDS = 4.0
 PLACEHOLDER_TEXT = "Thinking…"
 READY_MESSAGE = "Ariadne is ready."
 BUSY_MESSAGE = "I'm still working on your previous message."
 FAILURE_MESSAGE = "I ran into a problem while working on that. Please try again."
+
+TypingSender = Callable[[], Awaitable[None]]
 
 
 def is_allowed_user(user_id: int | None, allowed_user_id: int) -> bool:
@@ -33,7 +40,7 @@ def split_for_telegram(text: str) -> list[str]:
 
 
 class AriadneBot:
-    """Keep Telegram behavior small while delegating work to one Codex thread."""
+    """Translate Telegram updates into one shared Codex conversation."""
 
     def __init__(self, allowed_user_id: int, conversation: CodexConversation) -> None:
         self._allowed_user_id = allowed_user_id
@@ -47,12 +54,25 @@ class AriadneBot:
             return
         await self.handle_start(message, self._user_id_from(update))
 
-    async def text(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+    async def text(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle a normal Telegram text message."""
         message = self._message_from(update)
         if message is None or message.text is None:
             return
-        await self.handle_text(message, self._user_id_from(update), message.text)
+
+        async def send_typing() -> None:
+            await context.bot.send_chat_action(
+                chat_id=message.chat_id,
+                action=ChatAction.TYPING,
+                message_thread_id=message.message_thread_id,
+            )
+
+        await self.handle_text(
+            message,
+            self._user_id_from(update),
+            message.text,
+            send_typing=send_typing,
+        )
 
     async def handle_start(self, message: Message, user_id: int | None) -> None:
         """Respond to an allowed user's /start command."""
@@ -61,7 +81,12 @@ class AriadneBot:
         await self._reply_safely(message, READY_MESSAGE)
 
     async def handle_text(
-        self, message: Message, user_id: int | None, text: str
+        self,
+        message: Message,
+        user_id: int | None,
+        text: str,
+        *,
+        send_typing: TypingSender | None = None,
     ) -> None:
         """Send one user message through Codex and stream its answer back."""
         if not self._is_allowed(user_id):
@@ -72,6 +97,11 @@ class AriadneBot:
             return
 
         self._busy = True
+        typing_task = (
+            asyncio.create_task(self._refresh_typing(send_typing))
+            if send_typing is not None
+            else None
+        )
         try:
             placeholder = await self._reply_safely(message, PLACEHOLDER_TEXT)
             if placeholder is None:
@@ -83,7 +113,20 @@ class AriadneBot:
                 LOGGER.exception("Codex turn failed")
                 await self._send_failure(message, placeholder)
         finally:
+            if typing_task is not None:
+                typing_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await typing_task
             self._busy = False
+
+    async def _refresh_typing(self, send_typing: TypingSender) -> None:
+        """Keep Telegram's short-lived typing indicator visible for a turn."""
+        while True:
+            try:
+                await send_typing()
+            except TelegramError:
+                LOGGER.exception("Telegram typing indicator failed")
+            await asyncio.sleep(TYPING_REFRESH_INTERVAL_SECONDS)
 
     async def _stream_response(
         self, message: Message, placeholder: Message, prompt: str

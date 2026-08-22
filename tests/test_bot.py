@@ -3,14 +3,14 @@ from typing import cast
 
 from telegram import Message
 
-from ariadne.bot import (
+from ariadne.codex import CodexConversation
+from ariadne.telegram_bot import (
     BUSY_MESSAGE,
     PLACEHOLDER_TEXT,
     TELEGRAM_MESSAGE_LIMIT,
     AriadneBot,
     is_allowed_user,
 )
-from ariadne.codex import CodexConversation
 
 
 class FakeMessage:
@@ -50,6 +50,16 @@ class BlockingConversation:
         yield "Finished"
 
 
+class FakeTyping:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.started = asyncio.Event()
+
+    async def send(self) -> None:
+        self.calls += 1
+        self.started.set()
+
+
 def test_allowed_user_filter() -> None:
     assert is_allowed_user(7, 7)
     assert not is_allowed_user(8, 7)
@@ -87,6 +97,34 @@ def test_busy_turn_receives_a_deterministic_reply() -> None:
         await first_turn
 
         assert second_message.replies == [BUSY_MESSAGE]
+
+    asyncio.run(exercise())
+
+
+def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward() -> None:
+    async def exercise() -> None:
+        conversation = BlockingConversation()
+        bot = AriadneBot(7, cast(CodexConversation, conversation))
+        message = FakeMessage()
+        typing = FakeTyping()
+
+        turn = asyncio.create_task(
+            bot.handle_text(
+                cast(Message, message),
+                7,
+                "First",
+                send_typing=typing.send,
+            )
+        )
+        await conversation.started.wait()
+        await typing.started.wait()
+        conversation.release.set()
+        await turn
+
+        calls_after_turn = typing.calls
+        await asyncio.sleep(0)
+        assert calls_after_turn == 1
+        assert typing.calls == calls_after_turn
 
     asyncio.run(exercise())
 
