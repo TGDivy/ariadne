@@ -21,6 +21,7 @@ LOGGER = logging.getLogger(__name__)
 TELEGRAM_MESSAGE_LIMIT = 4096
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 IMAGE_ATTACHMENT_DIRNAME = ".ariadne-attachments"
+SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 STREAM_EDIT_INTERVAL_SECONDS = 1.0
 TYPING_REFRESH_INTERVAL_SECONDS = 4.0
 PLACEHOLDER_TEXT = "Thinking…"
@@ -105,8 +106,21 @@ class AriadneBot:
             return
         if not self._is_allowed(self._user_id_from(update)):
             return
+        if self._busy:
+            await self._reply_safely(message, BUSY_MESSAGE)
+            return
         image = self._image_from(message)
         if image is None:
+            return
+        if (
+            isinstance(image, Document)
+            and image.mime_type not in SUPPORTED_IMAGE_MIME_TYPES
+        ):
+            await self._reply_safely(
+                message,
+                "I support JPEG, PNG, and WebP images. "
+                "Please convert this image and try again.",
+            )
             return
         if image.file_size is not None and image.file_size > MAX_IMAGE_BYTES:
             await self._reply_safely(
@@ -130,13 +144,16 @@ class AriadneBot:
             )
             return
 
-        await self.handle_text(
-            message,
-            self._user_id_from(update),
-            message.caption or "Please inspect the attached image.",
-            image_paths=(path,),
-            send_typing=send_typing,
-        )
+        try:
+            await self.handle_text(
+                message,
+                self._user_id_from(update),
+                message.caption or "Please inspect the attached image.",
+                image_paths=(path,),
+                send_typing=send_typing,
+            )
+        finally:
+            path.unlink(missing_ok=True)
 
     async def handle_start(self, message: Message, user_id: int | None) -> None:
         """Respond to an allowed user's /start command."""
@@ -337,12 +354,9 @@ class AriadneBot:
     def _image_from(message: Message) -> PhotoSize | Document | None:
         if message.photo:
             return message.photo[-1]
-        if message.document and message.document.mime_type in {
-            "image/jpeg",
-            "image/png",
-            "image/webp",
-        }:
-            return message.document
+        if message.document and message.document.mime_type is not None:
+            if message.document.mime_type.startswith("image/"):
+                return message.document
         return None
 
     async def _download_image(
@@ -359,12 +373,15 @@ class AriadneBot:
             if candidate in {".jpg", ".jpeg", ".png", ".webp"}:
                 suffix = candidate
         path = attachment_dir / f"{uuid4().hex}{suffix}"
-        telegram_file = await context.bot.get_file(image.file_id)
-        await telegram_file.download_to_drive(custom_path=path)
-        if path.stat().st_size > MAX_IMAGE_BYTES:
+        try:
+            telegram_file = await context.bot.get_file(image.file_id)
+            await telegram_file.download_to_drive(custom_path=path)
+            if path.stat().st_size > MAX_IMAGE_BYTES:
+                raise OSError("Downloaded image exceeds size limit")
+            return path
+        except (OSError, TelegramError):
             path.unlink(missing_ok=True)
-            raise OSError("Downloaded image exceeds size limit")
-        return path
+            raise
 
     @staticmethod
     def _user_id_from(update: Update) -> int | None:
