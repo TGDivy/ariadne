@@ -33,8 +33,11 @@ from ariadne.codex import (
     CodexTurnSettings,
     TurnInterrupted,
     _mcp_config_overrides,
+    _repository_root,
 )
-from ariadne.the_thread import build_developer_instructions
+from ariadne.instructions import render
+
+HUMAN = "Divy"
 
 DEFAULT_SETTINGS = CodexTurnSettings(
     model="gpt-5.6-luna",
@@ -179,6 +182,7 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, client),
     )
 
@@ -191,13 +195,17 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
     assert client.thread_start_options == [
         {
             "approval_mode": ApprovalMode.auto_review,
+            "base_instructions": (
+                f"{render('base', human=HUMAN)}\n\n{render('telegram', human=HUMAN)}"
+            ),
             "config": {
                 "model_reasoning_effort": "low",
                 "web_search": "disabled",
             },
             "cwd": str(tmp_path),
             "developer_instructions": (
-                f"{build_developer_instructions(tmp_path)}\n\n"
+                f"{render('grounding', human=HUMAN)}\n\n"
+                f"{render('ariadne', human=HUMAN, repo=str(_repository_root()))}\n\n"
                 "## Current information\n\n"
                 "Live web search is disabled. Do not claim to have searched, "
                 "researched,\nchecked, or verified current information on the web."
@@ -237,6 +245,7 @@ async def test_codex_conversation_enables_live_web_search_explicitly(
     conversation = CodexConversation(
         tmp_path,
         settings,
+        human=HUMAN,
         client=cast(AsyncCodex, client),
     )
 
@@ -270,6 +279,7 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
     activities: list[str] = []
@@ -308,6 +318,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
     activities: list[str] = []
@@ -333,6 +344,7 @@ async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
     )
 
@@ -356,6 +368,7 @@ async def test_codex_conversation_steers_the_turn_it_is_already_running(
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
     )
 
@@ -387,6 +400,7 @@ async def test_codex_conversation_steers_with_a_local_image_attachment(
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
     )
 
@@ -415,6 +429,7 @@ async def test_codex_conversation_interrupts_a_turn_that_starts_after_stop_reque
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(FakeThread(turn=turn))),
     )
 
@@ -435,6 +450,7 @@ async def test_codex_conversation_uses_the_final_agent_answer(tmp_path: Path) ->
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
 
@@ -452,6 +468,7 @@ async def test_codex_conversation_sends_local_images_with_caption(
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
 
@@ -470,22 +487,18 @@ async def test_codex_conversation_sends_local_images_with_caption(
 async def test_codex_conversation_starts_a_new_thread_after_reset(
     tmp_path: Path,
 ) -> None:
-    identity = tmp_path / "Ariadne" / "Identity.md"
-    identity.parent.mkdir()
-    identity.write_text("First identity.", encoding="utf-8")
-
     first_thread = FakeThread()
     second_thread = FakeThread()
     client = FakeCodex(first_thread, second_thread)
     conversation = CodexConversation(
         tmp_path,
         DEFAULT_SETTINGS,
+        human=HUMAN,
         client=cast(AsyncCodex, client),
     )
 
     _ = [text async for text in conversation.stream_reply("First message")]
     conversation.reset()
-    identity.write_text("Second identity.", encoding="utf-8")
 
     assert len(client.thread_start_options) == 1
 
@@ -494,7 +507,3 @@ async def test_codex_conversation_starts_a_new_thread_after_reset(
     assert first_thread.inputs == ["First message"]
     assert second_thread.inputs == ["Second message"]
     assert len(client.thread_start_options) == 2
-    assert "First identity." in client.thread_start_options[0]["developer_instructions"]
-    assert (
-        "Second identity." in client.thread_start_options[1]["developer_instructions"]
-    )

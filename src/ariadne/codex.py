@@ -36,7 +36,7 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import JsonObject
 
-from .the_thread import build_developer_instructions
+from .instructions import render
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,6 +48,20 @@ WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_REQUIRED_ENVIRONMENT_VARIABLES = (
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_USER_ID",
+)
+
+PERMISSION_PROFILE = "ariadne"
+NETWORK_DOMAINS = (
+    "github.com",
+    "*.github.com",
+    "*.githubusercontent.com",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "cdn.playwright.dev",
+    "playwright.azureedge.net",
+    "localhost",
+    "127.0.0.1",
 )
 
 
@@ -81,9 +95,9 @@ def _activity_message(item: object) -> str | None:
     if isinstance(item, McpToolCallThreadItem):
         return "Using Ariadne's local capability…"
     if isinstance(item, CommandExecutionThreadItem):
-        return "Working in The Thread…"
+        return "Running a command…"
     if isinstance(item, FileChangeThreadItem):
-        return "Updating The Thread…"
+        return "Editing files…"
     return None
 
 
@@ -94,6 +108,31 @@ def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:
     return cast(
         RunInput,
         [TextInput(message)] + [LocalImageInput(str(path)) for path in image_paths],
+    )
+
+
+def _repository_root() -> Path | None:
+    """Return the Ariadne clone this process runs from, when there is one."""
+    for directory in Path(__file__).resolve().parents:
+        if (directory / ".git").exists():
+            return directory
+    return None
+
+
+def _sandbox_config_overrides() -> tuple[str, ...]:
+    """Return Iris's writable roots and network allowlist.
+
+    The allowlist is enforced by Codex's network proxy, which is off unless
+    the feature is enabled.
+    """
+    domains = ", ".join(f'{json.dumps(domain)}="allow"' for domain in NETWORK_DOMAINS)
+    profile = f"permissions.{PERMISSION_PROFILE}"
+    return (
+        "features.network_proxy=true",
+        f"default_permissions={json.dumps(PERMISSION_PROFILE)}",
+        f'{profile}.filesystem={{{json.dumps(str(Path.home()))}="write"}}',
+        f"{profile}.network.domains={{{domains}}}",
+        f"{profile}.network.allow_local_binding=true",
     )
 
 
@@ -122,16 +161,19 @@ class CodexConversation:
         vault: Path,
         settings: CodexTurnSettings,
         *,
+        human: str,
         client: AsyncCodex | None = None,
     ) -> None:
         self._vault = vault
         self._settings = settings
+        self._human = human
         self._client = (
             client
             if client is not None
             else AsyncCodex(
                 CodexConfig(
-                    config_overrides=_mcp_config_overrides(vault),
+                    config_overrides=_sandbox_config_overrides()
+                    + _mcp_config_overrides(vault),
                     cwd=str(vault),
                 )
             )
@@ -276,6 +318,7 @@ class CodexConversation:
         if self._thread is None:
             self._thread = await self._client.thread_start(
                 approval_mode=ApprovalMode.auto_review,
+                base_instructions=self._base_instructions(),
                 config=self._thread_config(),
                 cwd=str(self._vault),
                 developer_instructions=self._developer_instructions(),
@@ -284,8 +327,18 @@ class CodexConversation:
             )
         return self._thread
 
+    def _base_instructions(self) -> str:
+        """Combine the shared instructions with the rules for this surface."""
+        return "\n\n".join(
+            render(document, human=self._human) for document in ("base", "telegram")
+        )
+
     def _developer_instructions(self) -> str:
-        instructions = build_developer_instructions(self._vault)
+        sections = [render("grounding", human=self._human)]
+        repository = _repository_root()
+        if repository is not None:
+            sections.append(render("ariadne", human=self._human, repo=str(repository)))
+        instructions = "\n\n".join(sections)
         if self._settings.web_search == "live":
             research_instructions = """\
 ## Current information

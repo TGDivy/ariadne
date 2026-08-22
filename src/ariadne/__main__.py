@@ -39,7 +39,11 @@ def main() -> None:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
 
-    conversation = CodexConversation(settings.vault, settings.codex_turn_settings)
+    conversation = CodexConversation(
+        settings.vault,
+        settings.codex_turn_settings,
+        human=settings.human_name,
+    )
     ariadne = AriadneBot(settings.allowed_user_id, conversation)
 
     async def close_codex(_: object) -> None:

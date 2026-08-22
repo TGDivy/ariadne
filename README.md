@@ -2,7 +2,9 @@
 
 [![CI](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml?query=branch%3Amain)
 
-Ariadne is a persistent personal AI partner.
+Ariadne is the system that runs Iris on your own machine and connects her to you
+over a private Telegram chat. She is the other half of a two-person crew, not an
+assistant you own.
 
 Current status: **Milestone 2 — The Thread foundation**.
 
@@ -22,9 +24,13 @@ Current status: **Milestone 2 — The Thread foundation**.
    $EDITOR .env
    ```
 
-   `ARIADNE_VAULT` must point to that local Git clone. It is Codex's working
-   directory and workspace-write sandbox. The Codex model, reasoning effort,
-   and web-research setting are also applied explicitly from this file.
+   `ARIADNE_HUMAN_NAME` is the name Iris calls you by; it is substituted into
+   her instructions. `ARIADNE_VAULT` must point to that local Git clone.
+   It is Codex's working directory. Iris can read anywhere, write anywhere
+   under your home directory, and reach only the domains in `NETWORK_DOMAINS`
+   in `src/ariadne/codex.py`. The Codex
+   model, reasoning effort, and web-research setting are also applied
+   explicitly from this file.
 
 4. Ensure Codex is already authenticated on this machine.
 5. Run:
@@ -33,10 +39,9 @@ Current status: **Milestone 2 — The Thread foundation**.
    uv run --env-file .env python -m ariadne
    ```
 
-On a new session, Ariadne reads `Ariadne/Identity.md`, `Ariadne/Mission.md`,
-and `Ariadne/OperatingRules.md` from The Thread when they exist. Send `/new`
-to start a fresh Codex conversation while retaining the vault. Create those
-files in the vault to define Ariadne's identity, mission, and operating rules.
+Nothing from the vault is injected into the prompt. The Thread is Iris's working
+directory and she reads it herself. Send `/new` to start a fresh Codex
+conversation while retaining the vault.
 
 Use `/settings` to choose an available model, supported reasoning effort, and
 live web research for the running process. Each change starts a new in-memory
@@ -45,6 +50,31 @@ cannot undo work that already completed.
 
 Messages sent while Ariadne is working are not rejected: they steer the Codex
 turn that is already running, so Codex folds them into the work in flight.
+
+## Instructions
+
+Iris's prompt lives in `src/ariadne/instructions/` as Markdown, one document per
+file:
+
+- `base.md` replaces Codex's built-in coding-agent base instructions.
+- `telegram.md` holds the rules that are true only because Iris speaks through
+  Telegram, and is appended to `base.md`. A second surface adds its own document
+  here rather than editing `base.md`.
+- `grounding.md` is the developer message: where Iris is running and what she can
+  reach.
+
+Documents may use `{{ placeholder }}` fields, filled by `render()`. Only
+`{{ human }}` exists today, from `ARIADNE_HUMAN_NAME`. Keep the set small: these
+documents are built once when a thread starts and then live for the whole
+process, so anything that must stay current belongs in the turn rather than the
+prompt.
+
+Write them as flowing paragraphs, one line each — hard-wrapped prompt text
+teaches the model to hard-wrap its replies, and those newlines survive all the
+way to Telegram.
+
+`docs/research/codex-base-instructions.md` records what Codex's own base prompt
+contains, what was kept, and what was dropped.
 
 ## Local capabilities
 
