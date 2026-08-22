@@ -8,7 +8,7 @@ from contextlib import suppress
 
 from telegram import Message, Update
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import TelegramError
+from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
 from .codex import CodexConversation
@@ -139,6 +139,8 @@ class AriadneBot:
         while True:
             try:
                 await send_typing()
+            except TimedOut:
+                LOGGER.warning("Telegram typing indicator timed out; will retry.")
             except TelegramError:
                 LOGGER.exception("Telegram typing indicator failed")
             await asyncio.sleep(TYPING_REFRESH_INTERVAL_SECONDS)

@@ -4,6 +4,7 @@ from typing import cast
 import pytest
 from telegram import Message
 from telegram.constants import ParseMode
+from telegram.error import TimedOut
 
 from ariadne.codex import CodexConversation
 from ariadne.telegram_bot import (
@@ -77,6 +78,13 @@ class FakeTyping:
     async def send(self) -> None:
         self.calls += 1
         self.started.set()
+
+
+class TimedOutTyping(FakeTyping):
+    async def send(self) -> None:
+        self.calls += 1
+        self.started.set()
+        raise TimedOut
 
 
 @pytest.fixture
@@ -189,6 +197,34 @@ async def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward(
     await asyncio.sleep(0)
     assert calls_after_turn == 1
     assert typing.calls == calls_after_turn
+
+
+async def test_typing_timeout_is_logged_without_a_traceback(
+    message: FakeMessage, caplog
+) -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    typing = TimedOutTyping()
+
+    turn = asyncio.create_task(
+        bot.handle_text(
+            cast(Message, message),
+            7,
+            "First",
+            send_typing=typing.send,
+        )
+    )
+    await conversation.started.wait()
+    await typing.started.wait()
+    conversation.release.set()
+    await turn
+
+    timeout_log = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Telegram typing indicator timed out; will retry."
+    )
+    assert timeout_log.exc_info is None
 
 
 async def test_long_responses_are_split_at_telegrams_limit(
