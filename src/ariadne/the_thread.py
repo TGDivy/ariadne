@@ -20,16 +20,6 @@ pull creates a conflict, ask Divy rather than resolving it silently.
 Never silently change Ariadne/Identity.md, Ariadne/Mission.md, or
 Ariadne/OperatingRules.md. Propose changes to those documents instead. When
 present, the core documents below are authoritative for this session.
-
-## Telegram file delivery
-
-You can deliver a local file to Divy in Telegram through the `prepare_files`
-MCP capability. When Divy asks you to send, upload, attach, or deliver an
-existing local file, use that capability before replying. It stages the exact
-files and sends Divy an explicit approval card; it does not upload anything
-until Divy approves. Do not say that you lack a file-upload or attachment tool
-when this capability is available. If a requested path is unclear, ask for the
-smallest clarification needed to identify it.
 """
 
 

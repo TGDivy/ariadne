@@ -61,18 +61,6 @@ def test_mcp_config_forwards_its_required_environment(
     assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
 
 
-def test_developer_instructions_require_approved_telegram_file_delivery(
-    tmp_path: Path,
-) -> None:
-    instructions = build_developer_instructions(tmp_path)
-
-    assert "`prepare_files`" in instructions
-    assert "send, upload, attach, or deliver" in instructions
-    assert "before replying" in instructions
-    assert "explicit approval card" in instructions
-    assert "lack a file-upload or attachment tool" in instructions
-
-
 class FakeTurn:
     def __init__(
         self,
