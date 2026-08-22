@@ -75,20 +75,28 @@ def runtime_status() -> dict[str, Any]:
 
 
 @mcp.tool
-def prepare_files(paths: list[str]) -> dict[str, Any]:
+async def prepare_files(paths: list[str]) -> dict[str, Any]:
     """Stage files under the user's home directory for explicit Telegram approval.
 
-    This tool does not upload files. Its result contains the short-lived approval
-    command needed to deliver the exact staged batch.
+    This tool does not upload files. It sends an explicit Telegram approval card
+    with Approve and Reject buttons for the exact staged batch.
     """
     try:
         approval_id, files = FileDelivery().stage(paths)
     except FileDeliveryError as error:
         raise ToolError(str(error)) from error
+    try:
+        token = os.environ["TELEGRAM_BOT_TOKEN"]
+        chat_id = int(os.environ["TELEGRAM_ALLOWED_USER_ID"])
+        await FileDelivery().request_approval(
+            approval_id, files, token=token, chat_id=chat_id
+        )
+    except (FileDeliveryError, KeyError, ValueError) as error:
+        raise ToolError(str(error)) from error
     return {
         "approval_id": approval_id,
         "expires_in_seconds": 900,
-        "approval_command": f"/approve {approval_id}",
+        "approval_requested": True,
         "files": [
             {
                 "path": str(file.path),

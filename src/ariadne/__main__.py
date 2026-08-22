@@ -64,6 +64,9 @@ def main() -> None:
         CallbackQueryHandler(ariadne.settings_callback, pattern=r"^settings:")
     )
     application.add_handler(
+        CallbackQueryHandler(ariadne.file_delivery_callback, pattern=r"^file-delivery:")
+    )
+    application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
     )
     application.add_handler(

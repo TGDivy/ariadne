@@ -47,5 +47,5 @@ cannot undo work that already completed.
 
 Ariadne exposes two local MCP capabilities to Codex: runtime status and
 preparing files from the configured user's home directory. Prepared files are
-not sent immediately: Ariadne returns an approval ID, and `/approve <id>` sends
-that exact short-lived batch to the current Telegram chat.
+not sent immediately: Ariadne sends a short-lived Telegram approval card that
+lists the exact files and has Approve and Reject buttons.

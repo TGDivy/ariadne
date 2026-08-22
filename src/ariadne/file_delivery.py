@@ -8,7 +8,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
 PENDING_DELIVERY_TTL_SECONDS = 15 * 60
 
@@ -100,6 +100,46 @@ class FileDelivery:
             ) from error
         record_path.unlink(missing_ok=True)
         return files
+
+    def reject(self, approval_id: str) -> None:
+        """Discard a staged batch without sending any files."""
+        self._record_path(approval_id).unlink(missing_ok=True)
+
+    async def request_approval(
+        self,
+        approval_id: str,
+        files: tuple[StagedFile, ...],
+        *,
+        token: str,
+        chat_id: int,
+    ) -> None:
+        """Send the explicit Telegram approval card for one staged batch."""
+        file_list = "\n".join(
+            f"• {file.path.name} ({file.size_bytes:,} bytes)" for file in files
+        )
+        text = f"Ready to send these files:\n\n{file_list}"
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Approve", callback_data=f"file-delivery:approve:{approval_id}"
+                    ),
+                    InlineKeyboardButton(
+                        "Reject", callback_data=f"file-delivery:reject:{approval_id}"
+                    ),
+                ]
+            ]
+        )
+        try:
+            async with Bot(token) as bot:
+                await bot.send_message(
+                    chat_id=chat_id, text=text, reply_markup=keyboard
+                )
+        except Exception as error:
+            self.reject(approval_id)
+            raise FileDeliveryError(
+                "Telegram could not send the file-delivery approval request."
+            ) from error
 
     def _record_path(self, approval_id: str) -> Path:
         allowed = "-_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
