@@ -33,7 +33,7 @@ def main() -> None:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
 
-    conversation = CodexConversation(settings.workspace)
+    conversation = CodexConversation(settings.vault)
     ariadne = AriadneBot(settings.allowed_user_id, conversation)
 
     async def close_codex(_: object) -> None:
@@ -50,11 +50,12 @@ def main() -> None:
         .build()
     )
     application.add_handler(CommandHandler("start", ariadne.start))
+    application.add_handler(CommandHandler("new", ariadne.new))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
     )
 
-    LOGGER.info("Starting Ariadne with workspace %s", settings.workspace)
+    LOGGER.info("Starting Ariadne with The Thread vault %s", settings.vault)
     try:
         application.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception:

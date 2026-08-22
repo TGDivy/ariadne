@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """The small set of configuration values needed for Milestone 1."""
+    """Small validated configuration for Ariadne."""
 
     model_config = SettingsConfigDict(env_file=None, hide_input_in_errors=True)
 
@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     allowed_user_id: PositiveInt = Field(
         validation_alias="TELEGRAM_ALLOWED_USER_ID",
     )
-    workspace: DirectoryPath = Field(validation_alias="ARIADNE_WORKSPACE")
+    vault: DirectoryPath = Field(validation_alias="ARIADNE_VAULT")
 
     @field_validator("telegram_bot_token", mode="before")
     @classmethod
@@ -26,19 +26,22 @@ class Settings(BaseSettings):
         """Treat whitespace-only tokens as absent."""
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("workspace", mode="before")
+    @field_validator("vault", mode="before")
     @classmethod
-    def expand_workspace(cls, value: object) -> object:
-        """Expand a user-relative workspace path before validating it."""
+    def expand_vault(cls, value: object) -> object:
+        """Expand a user-relative vault path before validating it."""
         if isinstance(value, str):
             value = value.strip()
             if not value:
-                raise ValueError("Workspace path must not be empty.")
+                raise ValueError("Vault path must not be empty.")
             return Path(value).expanduser()
         return value
 
-    @field_validator("workspace")
+    @field_validator("vault")
     @classmethod
-    def resolve_workspace(cls, value: Path) -> Path:
-        """Store the workspace as an absolute path."""
-        return value.resolve()
+    def validate_vault(cls, value: Path) -> Path:
+        """Require The Thread to be a local Git repository."""
+        vault = value.resolve()
+        if not (vault / ".git").exists():
+            raise ValueError("ARIADNE_VAULT must point to a Git repository.")
+        return vault
