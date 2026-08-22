@@ -54,6 +54,9 @@ def main() -> None:
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
     )
+    application.add_handler(
+        MessageHandler(filters.PHOTO | filters.Document.IMAGE, ariadne.image)
+    )
 
     LOGGER.info("Starting Ariadne with The Thread vault %s", settings.vault)
     try:

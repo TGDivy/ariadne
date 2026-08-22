@@ -2,8 +2,16 @@
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import cast
 
-from openai_codex import AsyncCodex, AsyncThread, Sandbox
+from openai_codex import (
+    AsyncCodex,
+    AsyncThread,
+    LocalImageInput,
+    RunInput,
+    Sandbox,
+    TextInput,
+)
 from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
@@ -23,11 +31,20 @@ class CodexConversation:
         self._client = client if client is not None else AsyncCodex()
         self._thread: AsyncThread | None = None
 
-    async def stream_reply(self, message: str) -> AsyncIterator[str]:
+    async def stream_reply(
+        self, message: str, *, image_paths: tuple[Path, ...] = ()
+    ) -> AsyncIterator[str]:
         """Yield the complete accumulated agent message as each delta arrives."""
         thread = await self._thread_for_conversation()
+        turn_input: RunInput = message
+        if image_paths:
+            turn_input = cast(
+                RunInput,
+                [TextInput(message)]
+                + [LocalImageInput(str(path)) for path in image_paths],
+            )
         turn = await thread.turn(
-            message,
+            turn_input,
             cwd=str(self._vault),
             sandbox=Sandbox.workspace_write,
         )
