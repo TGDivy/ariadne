@@ -26,6 +26,7 @@ from openai_codex.generated.v2_all import (
     FileChangeThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    McpToolCallThreadItem,
     MessagePhase,
     ReasoningEffort,
     TurnCompletedNotification,
@@ -72,6 +73,8 @@ def _activity_message(item: object) -> str | None:
     """Return a safe, user-facing activity label for a Codex thread item."""
     if isinstance(item, WebSearchThreadItem):
         return "Searching the web…"
+    if isinstance(item, McpToolCallThreadItem):
+        return "Using Ariadne's local capability…"
     if isinstance(item, CommandExecutionThreadItem):
         return "Working in The Thread…"
     if isinstance(item, FileChangeThreadItem):

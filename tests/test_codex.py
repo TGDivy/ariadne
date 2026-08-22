@@ -16,6 +16,8 @@ from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    McpToolCallStatus,
+    McpToolCallThreadItem,
     MessagePhase,
     ReasoningEffort,
     ThreadItem,
@@ -256,6 +258,44 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
     ]
 
     assert activities == ["Searching the web…"]
+    assert "private" not in activities[0]
+
+
+async def test_codex_conversation_reports_mcp_activity_without_tool_details(
+    tmp_path: Path,
+) -> None:
+    mcp_item = McpToolCallThreadItem(
+        arguments={"paths": ["/private/path"]},
+        id="mcp",
+        server="ariadne",
+        status=McpToolCallStatus.in_progress,
+        tool="prepare_files",
+        type="mcpToolCall",
+    )
+    thread = FakeThread(
+        turn=FakeTurn(
+            ["Answer"],
+            started_items=[ThreadItem(root=mcp_item)],
+        )
+    )
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
+    activities: list[str] = []
+
+    async def record_activity(activity: str) -> None:
+        activities.append(activity)
+
+    _ = [
+        text
+        async for text in conversation.stream_reply(
+            "Prepare the file", activity=record_activity
+        )
+    ]
+
+    assert activities == ["Using Ariadne's local capability…"]
     assert "private" not in activities[0]
 
 
