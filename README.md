@@ -6,6 +6,14 @@ Ariadne is a persistent personal AI partner.
 
 Current status: **Milestone 2 — The Thread foundation**.
 
+## GitHub learning webhook
+
+Run `uv run --env-file .env ariadne-webhook`. Configure GitHub to POST `push`,
+`pull_request`, and `workflow_run` events to
+`https://YOUR_PUBLIC_HOST/github/webhook`, using the configured webhook secret.
+Each accepted delivery starts an independent Codex turn against The Thread.
+A public HTTPS endpoint is required before GitHub can deliver real events.
+
 ## GitHub learning webhook foundation
 
 The repository includes pure signature verification and allow-list parsing for

@@ -1,12 +1,22 @@
 """Environment-backed configuration for Ariadne."""
+# ruff: noqa: E501
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from openai_codex.generated.v2_all import ReasoningEffort
-from pydantic import DirectoryPath, Field, PositiveInt, field_validator
+from pydantic import DirectoryPath, Field, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .codex import CodexTurnSettings, WebSearchSetting
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubWebhookSettings:
+    secret: str
+    allowed_repositories: frozenset[str]
+    host: str
+    port: PositiveInt
 
 
 class Settings(BaseSettings):
@@ -35,6 +45,10 @@ class Settings(BaseSettings):
         default="disabled",
         validation_alias="ARIADNE_WEB_SEARCH",
     )
+    github_webhook_secret: SecretStr | None = Field(default=None, validation_alias="ARIADNE_GITHUB_WEBHOOK_SECRET")
+    github_webhook_repositories: str = Field(default="", validation_alias="ARIADNE_GITHUB_WEBHOOK_REPOSITORIES")
+    github_webhook_host: str = Field(default="127.0.0.1", min_length=1, validation_alias="ARIADNE_GITHUB_WEBHOOK_HOST")
+    github_webhook_port: PositiveInt = Field(default=8787, validation_alias="ARIADNE_GITHUB_WEBHOOK_PORT")
 
     @field_validator("telegram_bot_token", mode="before")
     @classmethod
@@ -76,3 +90,13 @@ class Settings(BaseSettings):
             effort=self.reasoning_effort,
             web_search=self.web_search,
         )
+
+    @property
+    def github_webhook_settings(self) -> GitHubWebhookSettings:
+        secret = self.github_webhook_secret.get_secret_value() if self.github_webhook_secret else ""
+        repositories = frozenset(name.strip() for name in self.github_webhook_repositories.split(",") if name.strip())
+        if not secret:
+            raise ValueError("ARIADNE_GITHUB_WEBHOOK_SECRET must be set.")
+        if not repositories:
+            raise ValueError("ARIADNE_GITHUB_WEBHOOK_REPOSITORIES must list a repository.")
+        return GitHubWebhookSettings(secret, repositories, self.github_webhook_host, self.github_webhook_port)
