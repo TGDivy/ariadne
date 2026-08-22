@@ -1,16 +1,16 @@
 import json
 from pathlib import Path
 
-from ariadne.mcp_server import TOOLS, handle_message, runtime_status
+from ariadne.mcp_server import mcp, runtime_status
 
 
-async def test_mcp_lists_runtime_and_staged_file_tools() -> None:
-    response = await handle_message({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+async def test_fastmcp_lists_runtime_and_staged_file_tools() -> None:
+    tools = await mcp.list_tools()
 
-    assert response == {"jsonrpc": "2.0", "id": 1, "result": {"tools": TOOLS}}
+    assert [tool.name for tool in tools] == ["runtime_status", "prepare_files"]
 
 
-async def test_mcp_runtime_status_never_returns_environment_values(
+async def test_runtime_status_never_returns_environment_values(
     tmp_path: Path, monkeypatch
 ) -> None:
     vault = tmp_path / "vault"
@@ -18,16 +18,7 @@ async def test_mcp_runtime_status_never_returns_environment_values(
     monkeypatch.setenv("ARIADNE_VAULT", str(vault))
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "must-not-appear")
 
-    response = await handle_message(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": "runtime_status"},
-        }
-    )
+    payload = runtime_status()
 
-    assert response is not None
-    payload = json.loads(response["result"]["content"][0]["text"])
-    assert payload == runtime_status()
+    assert payload["vault"] == str(vault)
     assert "must-not-appear" not in json.dumps(payload)
