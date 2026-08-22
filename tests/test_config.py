@@ -1,8 +1,10 @@
 from pathlib import Path
 
 import pytest
+from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import ValidationError
 
+from ariadne.codex import CodexTurnSettings
 from ariadne.config import Settings
 
 
@@ -21,6 +23,27 @@ def test_settings_loads_a_valid_git_vault(settings_environment: Path) -> None:
     assert settings.telegram_bot_token == "token"
     assert settings.allowed_user_id == 12345
     assert settings.vault == settings_environment.resolve()
+    assert settings.codex_turn_settings == CodexTurnSettings(
+        model="gpt-5.6-sol",
+        effort=ReasoningEffort.medium,
+        web_search="disabled",
+    )
+
+
+def test_settings_accepts_explicit_codex_defaults(
+    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARIADNE_CODEX_MODEL", "gpt-test")
+    monkeypatch.setenv("ARIADNE_REASONING_EFFORT", "high")
+    monkeypatch.setenv("ARIADNE_WEB_SEARCH", "live")
+
+    settings = Settings()
+
+    assert settings.codex_turn_settings == CodexTurnSettings(
+        model="gpt-test",
+        effort=ReasoningEffort.high,
+        web_search="live",
+    )
 
 
 def test_settings_requires_a_positive_user_id(

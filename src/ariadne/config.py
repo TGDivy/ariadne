@@ -2,8 +2,11 @@
 
 from pathlib import Path
 
+from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import DirectoryPath, Field, PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .codex import CodexTurnSettings, WebSearchSetting
 
 
 class Settings(BaseSettings):
@@ -19,11 +22,30 @@ class Settings(BaseSettings):
         validation_alias="TELEGRAM_ALLOWED_USER_ID",
     )
     vault: DirectoryPath = Field(validation_alias="ARIADNE_VAULT")
+    codex_model: str = Field(
+        default="gpt-5.6-sol",
+        min_length=1,
+        validation_alias="ARIADNE_CODEX_MODEL",
+    )
+    reasoning_effort: ReasoningEffort = Field(
+        default=ReasoningEffort.medium,
+        validation_alias="ARIADNE_REASONING_EFFORT",
+    )
+    web_search: WebSearchSetting = Field(
+        default="disabled",
+        validation_alias="ARIADNE_WEB_SEARCH",
+    )
 
     @field_validator("telegram_bot_token", mode="before")
     @classmethod
     def strip_bot_token(cls, value: object) -> object:
         """Treat whitespace-only tokens as absent."""
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("codex_model", mode="before")
+    @classmethod
+    def strip_codex_model(cls, value: object) -> object:
+        """Treat whitespace-only model names as absent."""
         return value.strip() if isinstance(value, str) else value
 
     @field_validator("vault", mode="before")
@@ -45,3 +67,12 @@ class Settings(BaseSettings):
         if not (vault / ".git").exists():
             raise ValueError("ARIADNE_VAULT must point to a Git repository.")
         return vault
+
+    @property
+    def codex_turn_settings(self) -> CodexTurnSettings:
+        """Return the explicit Codex settings for this Ariadne process."""
+        return CodexTurnSettings(
+            model=self.codex_model,
+            effort=self.reasoning_effort,
+            web_search=self.web_search,
+        )
