@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     allowed_user_id: PositiveInt = Field(
         validation_alias="TELEGRAM_ALLOWED_USER_ID",
     )
+    human_name: str = Field(
+        min_length=1,
+        validation_alias="ARIADNE_HUMAN_NAME",
+    )
     vault: DirectoryPath = Field(validation_alias="ARIADNE_VAULT")
     codex_model: str = Field(
         default="gpt-5.6-luna",
@@ -46,6 +50,12 @@ class Settings(BaseSettings):
     @classmethod
     def strip_codex_model(cls, value: object) -> object:
         """Treat whitespace-only model names as absent."""
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("human_name", mode="before")
+    @classmethod
+    def strip_human_name(cls, value: object) -> object:
+        """Treat a whitespace-only name as absent."""
         return value.strip() if isinstance(value, str) else value
 
     @field_validator("vault", mode="before")

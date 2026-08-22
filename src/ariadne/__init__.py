@@ -1,1 +1,1 @@
-"""Ariadne, a persistent personal AI partner."""
+"""Ariadne, the system Iris lives in."""

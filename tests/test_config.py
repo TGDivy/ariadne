@@ -14,6 +14,7 @@ def settings_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Pat
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "12345")
     monkeypatch.setenv("ARIADNE_VAULT", str(tmp_path))
+    monkeypatch.setenv("ARIADNE_HUMAN_NAME", "Divy")
     return tmp_path
 
 
