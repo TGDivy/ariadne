@@ -57,8 +57,8 @@ def test_mcp_config_forwards_its_required_environment(
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
     assert (
-        'mcp_servers.ariadne.enabled_tools=["runtime_status", "prepare_files"]'
-        in overrides
+        "mcp_servers.ariadne.enabled_tools="
+        '["runtime_status", "send_message", "react", "prepare_files"]' in overrides
     )
     assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
     assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
@@ -71,10 +71,12 @@ class FakeTurn:
         *,
         final_answer: str | None = None,
         started_items: list[ThreadItem] | None = None,
+        completed_items: list[ThreadItem] | None = None,
     ) -> None:
         self._deltas = deltas
         self._final_answer = final_answer
         self._started_items = started_items or []
+        self._completed_items = completed_items or []
         self.interrupt_calls = 0
 
     async def interrupt(self) -> None:
@@ -85,6 +87,15 @@ class FakeTurn:
             payload = ItemStartedNotification(
                 item=item,
                 startedAtMs=0,
+                threadId="thread",
+                turnId="turn",
+            )
+            yield SimpleNamespace(payload=payload)
+
+        for item in self._completed_items:
+            payload = ItemCompletedNotification(
+                completedAtMs=0,
+                item=item,
                 threadId="thread",
                 turnId="turn",
             )
@@ -335,6 +346,47 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
 
     assert activities == ["Using Ariadne's local capability…"]
     assert "private" not in activities[0]
+
+
+async def test_codex_conversation_reports_what_iris_said_in_telegram_herself(
+    tmp_path: Path,
+) -> None:
+    def spoke(tool: str, arguments: object) -> ThreadItem:
+        return ThreadItem(
+            root=McpToolCallThreadItem(
+                arguments=arguments,
+                id=tool,
+                server="ariadne",
+                status=McpToolCallStatus.completed,
+                tool=tool,
+                type="mcpToolCall",
+            )
+        )
+
+    thread = FakeThread(
+        turn=FakeTurn(
+            ["Done"],
+            completed_items=[
+                spoke("send_message", {"text": "Found the repo."}),
+                spoke("send_message", '{"text": "This is the latest one."}'),
+                spoke("prepare_files", {"paths": ["/home/iris/cv.pdf"]}),
+            ],
+        )
+    )
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        human=HUMAN,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
+    spoken: list[str] = []
+
+    _ = [
+        text
+        async for text in conversation.stream_reply("Find my CV", spoken=spoken.append)
+    ]
+
+    assert spoken == ["Found the repo.", "This is the latest one."]
 
 
 async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(

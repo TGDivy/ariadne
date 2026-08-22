@@ -27,6 +27,7 @@ from openai_codex.generated.v2_all import (
     FileChangeThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
     ReasoningEffort,
@@ -42,9 +43,13 @@ LOGGER = logging.getLogger(__name__)
 
 WebSearchSetting = Literal["disabled", "live"]
 ActivityCallback = Callable[[str], Awaitable[None]]
+SpokenCallback = Callable[[str], None]
 StopRequested = Callable[[], bool]
 
 WEB_SEARCH_CONTEXT_SIZE = "medium"
+MCP_SERVER_NAME = "ariadne"
+MCP_TOOLS = ("runtime_status", "send_message", "react", "prepare_files")
+TELEGRAM_MESSAGE_TOOL = "send_message"
 MCP_REQUIRED_ENVIRONMENT_VARIABLES = (
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_USER_ID",
@@ -101,6 +106,27 @@ def _activity_message(item: object) -> str | None:
     return None
 
 
+def _spoken_text(item: object) -> str | None:
+    """Return the text of a message Iris just sent to Telegram herself."""
+    if not isinstance(item, McpToolCallThreadItem):
+        return None
+    if item.server != MCP_SERVER_NAME or item.tool != TELEGRAM_MESSAGE_TOOL:
+        return None
+    if item.status != McpToolCallStatus.completed:
+        return None
+
+    arguments = item.arguments
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(arguments, dict):
+        return None
+    text = arguments.get("text")
+    return text if isinstance(text, str) else None
+
+
 def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:
     """Build Codex turn input from a message and any local image attachments."""
     if not image_paths:
@@ -143,8 +169,7 @@ def _mcp_config_overrides(vault: Path) -> tuple[str, ...]:
         "mcp_servers.ariadne.args=" + json.dumps(["-m", "ariadne.mcp_server"]),
         "mcp_servers.ariadne.env.ARIADNE_VAULT=" + json.dumps(str(vault)),
         "mcp_servers.ariadne.enabled=true",
-        "mcp_servers.ariadne.enabled_tools="
-        + json.dumps(["runtime_status", "prepare_files"]),
+        "mcp_servers.ariadne.enabled_tools=" + json.dumps(list(MCP_TOOLS)),
     ]
     for variable in MCP_REQUIRED_ENVIRONMENT_VARIABLES:
         value = os.environ.get(variable)
@@ -245,9 +270,14 @@ class CodexConversation:
         *,
         image_paths: tuple[Path, ...] = (),
         activity: ActivityCallback | None = None,
+        spoken: SpokenCallback | None = None,
         stop_requested: StopRequested | None = None,
     ) -> AsyncIterator[str]:
-        """Yield the complete accumulated agent message as each delta arrives."""
+        """Yield the complete accumulated agent message as each delta arrives.
+
+        `spoken` receives every message Iris sends to Telegram herself during
+        the turn, so Ariadne knows what has already reached the chat.
+        """
         thread = await self._thread_for_conversation()
         turn = await thread.turn(
             _turn_input(message, image_paths),
@@ -283,6 +313,9 @@ class CodexConversation:
                         and item.phase == MessagePhase.final_answer
                     ):
                         final_answer = item.text
+                    spoken_text = _spoken_text(item)
+                    if spoken_text is not None and spoken is not None:
+                        spoken(spoken_text)
                 elif isinstance(event.payload, TurnCompletedNotification):
                     if event.payload.turn.status == TurnStatus.interrupted:
                         raise TurnInterrupted()
