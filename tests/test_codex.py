@@ -52,6 +52,11 @@ def test_mcp_config_forwards_its_required_environment(
     overrides = _mcp_config_overrides(tmp_path)
 
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
+    assert "mcp_servers.ariadne.enabled=true" in overrides
+    assert (
+        'mcp_servers.ariadne.enabled_tools=["runtime_status", "prepare_files"]'
+        in overrides
+    )
     assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
     assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
 
