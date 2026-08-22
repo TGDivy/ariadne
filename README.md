@@ -33,7 +33,18 @@ Current status: **Milestone 2 — The Thread foundation**.
    explicitly from this file.
 
 4. Ensure Codex is already authenticated on this machine.
-5. Run:
+5. Optionally, give the bot its name, descriptions, and profile photo — set
+   any of `ARIADNE_BOT_NAME`, `ARIADNE_BOT_DESCRIPTION`,
+   `ARIADNE_BOT_SHORT_DESCRIPTION`, and `ARIADNE_BOT_PROFILE_PHOTO` in `.env`
+   and run once:
+
+   ```bash
+   uv run --env-file .env python -m ariadne.bot_profile
+   ```
+
+   This talks to Telegram directly and changes the bot itself, not the running
+   process; it only needs to be run again when one of these should change.
+6. Run:
 
    ```bash
    uv run --env-file .env python -m ariadne
