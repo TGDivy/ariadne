@@ -1,5 +1,7 @@
 # Ariadne
 
+[![CI](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml?query=branch%3Amain)
+
 Ariadne is a persistent personal AI partner.
 
 ## Run
