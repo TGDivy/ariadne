@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -44,6 +45,10 @@ ActivityCallback = Callable[[str], Awaitable[None]]
 StopRequested = Callable[[], bool]
 
 WEB_SEARCH_CONTEXT_SIZE = "medium"
+MCP_REQUIRED_ENVIRONMENT_VARIABLES = (
+    "TELEGRAM_BOT_TOKEN",
+    "TELEGRAM_ALLOWED_USER_ID",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +87,20 @@ def _activity_message(item: object) -> str | None:
     return None
 
 
+def _mcp_config_overrides(vault: Path) -> tuple[str, ...]:
+    """Return the local Ariadne MCP server configuration for Codex."""
+    overrides = [
+        f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
+        "mcp_servers.ariadne.args=" + json.dumps(["-m", "ariadne.mcp_server"]),
+        "mcp_servers.ariadne.env.ARIADNE_VAULT=" + json.dumps(str(vault)),
+    ]
+    for variable in MCP_REQUIRED_ENVIRONMENT_VARIABLES:
+        value = os.environ.get(variable)
+        if value is not None:
+            overrides.append(f"mcp_servers.ariadne.env.{variable}={json.dumps(value)}")
+    return tuple(overrides)
+
+
 class CodexConversation:
     """Reuse one Codex client and one thread for the lifetime of the process."""
 
@@ -99,13 +118,8 @@ class CodexConversation:
             if client is not None
             else AsyncCodex(
                 CodexConfig(
-                    config_overrides=(
-                        f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
-                        "mcp_servers.ariadne.args="
-                        + json.dumps(["-m", "ariadne.mcp_server"]),
-                    ),
+                    config_overrides=_mcp_config_overrides(vault),
                     cwd=str(vault),
-                    env={"ARIADNE_VAULT": str(vault)},
                 )
             )
         )

@@ -28,7 +28,12 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import AgentMessageDeltaNotification
 
-from ariadne.codex import CodexConversation, CodexTurnSettings, TurnInterrupted
+from ariadne.codex import (
+    CodexConversation,
+    CodexTurnSettings,
+    TurnInterrupted,
+    _mcp_config_overrides,
+)
 from ariadne.the_thread import build_developer_instructions
 
 DEFAULT_SETTINGS = CodexTurnSettings(
@@ -36,6 +41,19 @@ DEFAULT_SETTINGS = CodexTurnSettings(
     effort=ReasoningEffort.low,
     web_search="disabled",
 )
+
+
+def test_mcp_config_forwards_its_required_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "123")
+
+    overrides = _mcp_config_overrides(tmp_path)
+
+    assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
+    assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
+    assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
 
 
 class FakeTurn:
