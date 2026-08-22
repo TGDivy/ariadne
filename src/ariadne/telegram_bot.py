@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -23,6 +24,7 @@ from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
 from .codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
+from .file_delivery import FileDelivery, FileDeliveryError
 from .telegram_format import render_telegram_html
 
 LOGGER = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ class AriadneBot:
         self._busy = False
         self._stopping = False
         self._active_placeholder: Message | None = None
+        self._file_delivery = FileDelivery()
 
     async def start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start."""
@@ -109,6 +112,67 @@ class AriadneBot:
         if message is None:
             return
         await self.handle_stop(message, self._user_id_from(update))
+
+    async def file_delivery_callback(
+        self, update: Update, _context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Apply an explicit Telegram file-delivery button selection."""
+        query = update.callback_query
+        if not isinstance(query, CallbackQuery):
+            return
+        await self._answer_callback_safely(query)
+        message = query.message
+        if not isinstance(message, Message) or not isinstance(query.data, str):
+            return
+        if not self._is_allowed(self._user_id_from(update)):
+            return
+        parts = query.data.split(":", maxsplit=2)
+        if len(parts) != 3:
+            return
+        _prefix, action, approval_id = parts
+        if action == "reject":
+            self._file_delivery.reject(approval_id)
+            await self._edit_safely(message, "File delivery cancelled.")
+            return
+        if action != "approve":
+            return
+        await self._approve_staged_files(
+            message, self._user_id_from(update), approval_id, replace_message=True
+        )
+
+    async def _approve_staged_files(
+        self,
+        message: Message,
+        user_id: int | None,
+        approval_id: str,
+        *,
+        replace_message: bool = False,
+    ) -> None:
+        """Deliver one staged batch after validating the Telegram user."""
+        if not self._is_allowed(user_id):
+            return
+        try:
+            files = await self._file_delivery.approve(
+                approval_id,
+                token=os.environ["TELEGRAM_BOT_TOKEN"],
+                chat_id=message.chat_id,
+            )
+        except (FileDeliveryError, KeyError):
+            await self._delivery_result(
+                message, "I couldn't deliver that staged file batch.", replace_message
+            )
+            return
+        noun = "file" if len(files) == 1 else "files"
+        await self._delivery_result(
+            message, f"Sent {len(files)} {noun}.", replace_message
+        )
+
+    async def _delivery_result(
+        self, message: Message, text: str, replace_message: bool
+    ) -> None:
+        if replace_message and await self._edit_safely(message, text):
+            return
+        await self._reply_safely(message, text)
 
     async def settings(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /settings."""

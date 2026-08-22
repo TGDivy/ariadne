@@ -44,6 +44,8 @@ DEFAULT_MODELS = (
 
 class FakeMessage:
     def __init__(self) -> None:
+        self.chat_id = 7
+        self.text: str | None = None
         self.replies: list[str] = []
         self.reply_markups: list[object | None] = []
         self.edits: list[str] = []
