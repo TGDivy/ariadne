@@ -6,12 +6,16 @@ import time
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import replace
+from pathlib import Path
+from uuid import uuid4
 
 from telegram import (
     CallbackQuery,
+    Document,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    PhotoSize,
     Update,
 )
 from telegram.constants import ChatAction, ParseMode
@@ -24,6 +28,9 @@ from .telegram_format import render_telegram_html
 LOGGER = logging.getLogger(__name__)
 
 TELEGRAM_MESSAGE_LIMIT = 4096
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+IMAGE_ATTACHMENT_DIRNAME = ".ariadne-attachments"
+SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 STREAM_EDIT_INTERVAL_SECONDS = 1.0
 TYPING_REFRESH_INTERVAL_SECONDS = 4.0
 PLACEHOLDER_TEXT = "Thinking…"
@@ -150,6 +157,62 @@ class AriadneBot:
             message.text,
             send_typing=send_typing,
         )
+
+    async def image(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Download an image message and send it to Codex with its caption."""
+        message = self._message_from(update)
+        if message is None:
+            return
+        if not self._is_allowed(self._user_id_from(update)):
+            return
+        if self._busy:
+            await self._reply_safely(message, BUSY_MESSAGE)
+            return
+        image = self._image_from(message)
+        if image is None:
+            return
+        if (
+            isinstance(image, Document)
+            and image.mime_type not in SUPPORTED_IMAGE_MIME_TYPES
+        ):
+            await self._reply_safely(
+                message,
+                "I support JPEG, PNG, and WebP images. "
+                "Please convert this image and try again.",
+            )
+            return
+        if image.file_size is not None and image.file_size > MAX_IMAGE_BYTES:
+            await self._reply_safely(
+                message, "That image is too large; the limit is 10 MB."
+            )
+            return
+
+        async def send_typing() -> None:
+            await context.bot.send_chat_action(
+                chat_id=message.chat_id,
+                action=ChatAction.TYPING,
+                message_thread_id=message.message_thread_id,
+            )
+
+        try:
+            path = await self._download_image(message, context, image)
+        except (OSError, TelegramError):
+            LOGGER.exception("Image download failed")
+            await self._reply_safely(
+                message, "I couldn't download that image. Please try again."
+            )
+            return
+
+        try:
+            await self.handle_text(
+                message,
+                self._user_id_from(update),
+                message.caption or "Please inspect the attached image.",
+                image_paths=(path,),
+                send_typing=send_typing,
+            )
+        finally:
+            path.unlink(missing_ok=True)
 
     async def handle_start(self, message: Message, user_id: int | None) -> None:
         """Respond to an allowed user's /start command."""
@@ -406,6 +469,7 @@ class AriadneBot:
         message: Message,
         user_id: int | None,
         text: str,
+        image_paths: tuple[Path, ...] = (),
         *,
         send_typing: TypingSender | None = None,
     ) -> None:
@@ -435,7 +499,7 @@ class AriadneBot:
                 return
 
             try:
-                await self._stream_response(message, placeholder, text)
+                await self._stream_response(message, placeholder, text, image_paths)
             except TurnInterrupted:
                 LOGGER.info("Codex turn interrupted")
                 await self._send_stopped(message, placeholder)
@@ -464,7 +528,11 @@ class AriadneBot:
             await asyncio.sleep(TYPING_REFRESH_INTERVAL_SECONDS)
 
     async def _stream_response(
-        self, message: Message, placeholder: Message, prompt: str
+        self,
+        message: Message,
+        placeholder: Message,
+        prompt: str,
+        image_paths: tuple[Path, ...] = (),
     ) -> None:
         final_response = ""
         last_edit_at = 0.0
@@ -485,6 +553,7 @@ class AriadneBot:
 
         async for response in self._conversation.stream_reply(
             prompt,
+            image_paths=image_paths,
             activity=show_activity,
             stop_requested=lambda: self._stopping,
         ):
@@ -686,6 +755,39 @@ class AriadneBot:
     def _message_from(update: Update) -> Message | None:
         message = update.effective_message
         return message if isinstance(message, Message) else None
+
+    @staticmethod
+    def _image_from(message: Message) -> PhotoSize | Document | None:
+        if message.photo:
+            return message.photo[-1]
+        if message.document and message.document.mime_type is not None:
+            if message.document.mime_type.startswith("image/"):
+                return message.document
+        return None
+
+    async def _download_image(
+        self,
+        message: Message,
+        context: ContextTypes.DEFAULT_TYPE,
+        image: PhotoSize | Document,
+    ) -> Path:
+        attachment_dir = Path.cwd() / IMAGE_ATTACHMENT_DIRNAME
+        attachment_dir.mkdir(mode=0o700, exist_ok=True)
+        suffix = ".jpg"
+        if isinstance(image, Document) and image.file_name:
+            candidate = Path(image.file_name).suffix.lower()
+            if candidate in {".jpg", ".jpeg", ".png", ".webp"}:
+                suffix = candidate
+        path = attachment_dir / f"{uuid4().hex}{suffix}"
+        try:
+            telegram_file = await context.bot.get_file(image.file_id)
+            await telegram_file.download_to_drive(custom_path=path)
+            if path.stat().st_size > MAX_IMAGE_BYTES:
+                raise OSError("Downloaded image exceeds size limit")
+            return path
+        except (OSError, TelegramError):
+            path.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def _user_id_from(update: Update) -> int | None:

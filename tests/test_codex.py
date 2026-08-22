@@ -4,7 +4,14 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from openai_codex import ApprovalMode, AsyncCodex, Sandbox
+from openai_codex import (
+    ApprovalMode,
+    AsyncCodex,
+    LocalImageInput,
+    RunInput,
+    Sandbox,
+    TextInput,
+)
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ItemCompletedNotification,
@@ -109,10 +116,12 @@ class FakeThread:
     ) -> None:
         self._final_answer = final_answer
         self._turn = turn
-        self.inputs: list[str] = []
+        self.inputs: list[RunInput] = []
         self.turn_options: list[dict[str, object]] = []
 
-    async def turn(self, input: str, **options: object) -> FakeTurn | InterruptibleTurn:
+    async def turn(
+        self, input: RunInput, **options: object
+    ) -> FakeTurn | InterruptibleTurn:
         self.inputs.append(input)
         self.turn_options.append(options)
         if self._turn is not None:
@@ -306,6 +315,30 @@ async def test_codex_conversation_uses_the_final_agent_answer(tmp_path: Path) ->
     responses = [text async for text in conversation.stream_reply("Question")]
 
     assert responses == ["Hello", "Hello world", "The final answer."]
+
+
+async def test_codex_conversation_sends_local_images_with_caption(
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "screenshot.png"
+    image_path.write_bytes(b"not a real image")
+    thread = FakeThread()
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
+
+    _ = [
+        text
+        async for text in conversation.stream_reply(
+            "What is shown here?", image_paths=(image_path,)
+        )
+    ]
+
+    assert thread.inputs == [
+        [TextInput("What is shown here?"), LocalImageInput(str(image_path))]
+    ]
 
 
 async def test_codex_conversation_starts_a_new_thread_after_reset(

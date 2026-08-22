@@ -4,14 +4,17 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from openai_codex import (
     ApprovalMode,
     AsyncCodex,
     AsyncThread,
     AsyncTurnHandle,
+    LocalImageInput,
+    RunInput,
     Sandbox,
+    TextInput,
 )
 from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
@@ -138,13 +141,21 @@ class CodexConversation:
         self,
         message: str,
         *,
+        image_paths: tuple[Path, ...] = (),
         activity: ActivityCallback | None = None,
         stop_requested: StopRequested | None = None,
     ) -> AsyncIterator[str]:
         """Yield the complete accumulated agent message as each delta arrives."""
         thread = await self._thread_for_conversation()
+        turn_input: RunInput = message
+        if image_paths:
+            turn_input = cast(
+                RunInput,
+                [TextInput(message)]
+                + [LocalImageInput(str(path)) for path in image_paths],
+            )
         turn = await thread.turn(
-            message,
+            turn_input,
             approval_mode=ApprovalMode.auto_review,
             cwd=str(self._vault),
             effort=self._settings.effort,

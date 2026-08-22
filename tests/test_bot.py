@@ -89,7 +89,9 @@ class FakeConversation:
         self.set_settings_calls = 0
         self.interrupt_calls = 0
 
-    async def stream_reply(self, prompt: str, *, activity=None, stop_requested=None):
+    async def stream_reply(
+        self, prompt: str, *, image_paths=(), activity=None, stop_requested=None
+    ):
         self.prompts.append(prompt)
         if self._failures:
             self._failures -= 1
@@ -125,7 +127,9 @@ class BlockingConversation:
         self.settings = DEFAULT_SETTINGS
         self.reset_calls = 0
 
-    async def stream_reply(self, _: str, *, activity=None, stop_requested=None):
+    async def stream_reply(
+        self, _: str, *, image_paths=(), activity=None, stop_requested=None
+    ):
         self.started.set()
         yield "Working"
         await self.release.wait()
