@@ -6,6 +6,14 @@ Ariadne is a persistent personal AI partner.
 
 Current status: **Milestone 2 — The Thread foundation**.
 
+## GitHub learning webhook foundation
+
+The repository includes pure signature verification and allow-list parsing for
+future GitHub learning webhooks. It does not expose an HTTP endpoint, connect a
+GitHub App, receive events, create assignments, or send proactive Telegram
+messages. Those operational capabilities require an explicit, separately
+reviewed deployment and opt-in policy.
+
 ## Run
 
 1. Create a Telegram bot with BotFather and note its token.
