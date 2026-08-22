@@ -45,7 +45,7 @@ async def configure() -> None:
 
 
 def main() -> None:
-    """Run once: `uv run --env-file .env python -m ariadne.bot_profile`."""
+    """Run once: `uv run --env-file .env python -m ariadne.scripts.bot_profile`."""
     asyncio.run(configure())
 
 

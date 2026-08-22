@@ -4,8 +4,8 @@ from typing import Any
 import pytest
 from telegram import InputProfilePhotoStatic
 
-from ariadne import bot_profile
-from ariadne.bot_profile import configure
+from ariadne.scripts import bot_profile
+from ariadne.scripts.bot_profile import configure
 
 
 class FakeBot:
