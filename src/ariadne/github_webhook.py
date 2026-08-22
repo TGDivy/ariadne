@@ -37,9 +37,7 @@ def verify_signature(body: bytes, signature: str | None, secret: str) -> None:
     if signature is None or not signature.startswith("sha256="):
         raise WebhookRejectedError("Missing or malformed webhook signature.")
 
-    expected = "sha256=" + hmac.new(
-        secret.encode(), body, hashlib.sha256
-    ).hexdigest()
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature):
         raise WebhookRejectedError("Webhook signature did not match.")
 

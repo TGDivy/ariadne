@@ -8,19 +8,27 @@ Current status: **Milestone 2 — The Thread foundation**.
 
 ## GitHub learning webhook
 
-Run `uv run --env-file .env ariadne-webhook`. Configure GitHub to POST `push`,
-`pull_request`, and `workflow_run` events to
-`https://YOUR_PUBLIC_HOST/github/webhook`, using the configured webhook secret.
-Each accepted delivery starts an independent Codex turn against The Thread.
-A public HTTPS endpoint is required before GitHub can deliver real events.
+Run `uv run --env-file .env ariadne-webhook`. Each accepted delivery starts an
+independent Codex turn against The Thread.
 
-## GitHub learning webhook foundation
+### Local development with Tailscale Funnel
 
-The repository includes pure signature verification and allow-list parsing for
-future GitHub learning webhooks. It does not expose an HTTP endpoint, connect a
-GitHub App, receive events, create assignments, or send proactive Telegram
-messages. Those operational capabilities require an explicit, separately
-reviewed deployment and opt-in policy.
+Start the listener on loopback, then expose it from a Tailscale-connected
+machine:
+
+```bash
+uv run --env-file .env ariadne-webhook
+tailscale funnel --bg 8787
+tailscale funnel status
+```
+
+Use the reported `https://YOUR_MACHINE.YOUR_TAILNET.ts.net/github/webhook` URL
+when creating the repository webhook. A public HTTPS endpoint is required
+before GitHub can deliver real events.
+
+For a first test, subscribe only to `push` events. Add pull-request and
+workflow events after the event volume is useful. Configure JSON content type
+and use the same secret as `ARIADNE_GITHUB_WEBHOOK_SECRET`.
 
 ## Run
 
