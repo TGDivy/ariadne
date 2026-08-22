@@ -16,6 +16,8 @@ from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    McpToolCallStatus,
+    McpToolCallThreadItem,
     MessagePhase,
     ReasoningEffort,
     ThreadItem,
@@ -26,7 +28,12 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import AgentMessageDeltaNotification
 
-from ariadne.codex import CodexConversation, CodexTurnSettings, TurnInterrupted
+from ariadne.codex import (
+    CodexConversation,
+    CodexTurnSettings,
+    TurnInterrupted,
+    _mcp_config_overrides,
+)
 from ariadne.the_thread import build_developer_instructions
 
 DEFAULT_SETTINGS = CodexTurnSettings(
@@ -34,6 +41,19 @@ DEFAULT_SETTINGS = CodexTurnSettings(
     effort=ReasoningEffort.low,
     web_search="disabled",
 )
+
+
+def test_mcp_config_forwards_its_required_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "123")
+
+    overrides = _mcp_config_overrides(tmp_path)
+
+    assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
+    assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
+    assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
 
 
 class FakeTurn:
@@ -256,6 +276,44 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
     ]
 
     assert activities == ["Searching the web…"]
+    assert "private" not in activities[0]
+
+
+async def test_codex_conversation_reports_mcp_activity_without_tool_details(
+    tmp_path: Path,
+) -> None:
+    mcp_item = McpToolCallThreadItem(
+        arguments={"paths": ["/private/path"]},
+        id="mcp",
+        server="ariadne",
+        status=McpToolCallStatus.in_progress,
+        tool="prepare_files",
+        type="mcpToolCall",
+    )
+    thread = FakeThread(
+        turn=FakeTurn(
+            ["Answer"],
+            started_items=[ThreadItem(root=mcp_item)],
+        )
+    )
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
+    activities: list[str] = []
+
+    async def record_activity(activity: str) -> None:
+        activities.append(activity)
+
+    _ = [
+        text
+        async for text in conversation.stream_reply(
+            "Prepare the file", activity=record_activity
+        )
+    ]
+
+    assert activities == ["Using Ariadne's local capability…"]
     assert "private" not in activities[0]
 
 
