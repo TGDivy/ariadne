@@ -4,11 +4,11 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime
 from pathlib import Path
-from uuid import uuid4
 
 from telegram import (
     CallbackQuery,
@@ -19,7 +19,7 @@ from telegram import (
     PhotoSize,
     Update,
 )
-from telegram.constants import ChatAction, ParseMode
+from telegram.constants import ChatAction, FileSizeLimit, ParseMode
 from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
@@ -31,15 +31,25 @@ LOGGER = logging.getLogger(__name__)
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
-IMAGE_ATTACHMENT_DIRNAME = ".ariadne-attachments"
+MAX_DOCUMENT_BYTES = int(FileSizeLimit.FILESIZE_DOWNLOAD)
+ATTACHMENT_ROOT = Path.home() / ".ariadne" / "attachments"
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 STREAM_EDIT_INTERVAL_SECONDS = 1.0
 TYPING_REFRESH_INTERVAL_SECONDS = 4.0
+ALBUM_DEBOUNCE_SECONDS = 1.0
 PLACEHOLDER_TEXT = "Thinking…"
 READY_MESSAGE = "Ariadne is ready."
 NEW_CONVERSATION_MESSAGE = "Started a new conversation. The Thread is still available."
 BUSY_MESSAGE = "I'm still working on your previous message."
 STEERED_MESSAGE = "Noted — folding that into what I'm working on."
+IMAGE_WITHOUT_CAPTION = "Please inspect the attached image."
+IMAGES_WITHOUT_CAPTION = "Please inspect the attached images."
+DOCUMENT_WITHOUT_CAPTION = "I've sent you a file."
+DOCUMENTS_WITHOUT_CAPTION = "I've sent you some files."
+DOCUMENT_TOO_LARGE_MESSAGE = (
+    "That file is too large; Telegram only lets me download files up to 20 MB."
+)
+DOCUMENT_FAILED_MESSAGE = "I couldn't download that file. Please try again."
 STEERING_FAILED_MESSAGE = (
     "I couldn't add that to the turn I'm working on. Please try again."
 )
@@ -76,6 +86,52 @@ def split_for_telegram(text: str) -> list[str]:
     return chunks
 
 
+def _document_filename(document: Document) -> str:
+    """Return the sender's filename, stripped of any directory component."""
+    name = Path(document.file_name or "").name
+    return name if name not in {"", ".", ".."} else "document"
+
+
+def _attachment_name(media: PhotoSize | Document) -> str:
+    """Return the filename to keep a downloaded attachment under."""
+    if isinstance(media, Document):
+        return _document_filename(media)
+    return f"photo-{datetime.now():%H%M%S}.jpg"
+
+
+def attachment_path(name: str) -> Path:
+    """Reserve a path for a sent file, under a folder for today.
+
+    Attachments are kept rather than deleted, so the name has to stay readable
+    and cannot collide with something sent earlier the same day.
+    """
+    directory = ATTACHMENT_ROOT / date.today().isoformat()
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    candidate = directory / name
+    stem, suffix = candidate.stem, candidate.suffix
+    attempt = 2
+    while candidate.exists():
+        candidate = directory / f"{stem}-{attempt}{suffix}"
+        attempt += 1
+    return candidate
+
+
+def document_message(
+    caption: str | None, documents: Sequence[tuple[Path, str | None]]
+) -> str:
+    """Compose the turn text for the files the user sent."""
+    default = (
+        DOCUMENT_WITHOUT_CAPTION if len(documents) == 1 else DOCUMENTS_WITHOUT_CAPTION
+    )
+    lines = [
+        f"Attached file: {path}"
+        if mime_type is None
+        else f"Attached file: {path} ({mime_type})"
+        for path, mime_type in documents
+    ]
+    return "\n\n".join([caption or default, *lines])
+
+
 def _telegram_split_point(text: str) -> int:
     """Find a readable boundary without creating a tiny first message."""
     for separator in ("\n\n", "\n", " "):
@@ -83,6 +139,27 @@ def _telegram_split_point(text: str) -> int:
         if split_at >= TELEGRAM_MESSAGE_LIMIT // 2:
             return split_at + len(separator)
     return TELEGRAM_MESSAGE_LIMIT
+
+
+@dataclass(frozen=True, slots=True)
+class _Attachment:
+    """One downloaded file waiting to be sent to Codex."""
+
+    path: Path
+    caption: str | None
+    mime_type: str | None
+    is_image: bool
+
+
+@dataclass(slots=True)
+class _Album:
+    """Files from one Telegram message, or one media group, sent together."""
+
+    message: Message
+    user_id: int | None
+    send_typing: "TypingSender | None" = None
+    items: list[_Attachment] = field(default_factory=list)
+    timer: asyncio.Task[None] | None = None
 
 
 class AriadneBot:
@@ -95,6 +172,7 @@ class AriadneBot:
         self._stopping = False
         self._active_placeholder: Message | None = None
         self._file_delivery = FileDelivery()
+        self._albums: dict[str, _Album] = {}
 
     async def start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start."""
@@ -233,9 +311,6 @@ class AriadneBot:
             return
         if not self._is_allowed(self._user_id_from(update)):
             return
-        if self._busy:
-            await self._reply_safely(message, BUSY_MESSAGE)
-            return
         image = self._image_from(message)
         if image is None:
             return
@@ -271,16 +346,72 @@ class AriadneBot:
             )
             return
 
-        try:
-            await self.handle_text(
-                message,
-                self._user_id_from(update),
-                message.caption or "Please inspect the attached image.",
-                image_paths=(path,),
-                send_typing=send_typing,
+        await self._accept_attachment(
+            message,
+            self._user_id_from(update),
+            _Attachment(
+                path,
+                message.caption,
+                image.mime_type if isinstance(image, Document) else None,
+                is_image=True,
+            ),
+            send_typing,
+        )
+
+    async def document(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Download a document message and hand its local path to Codex."""
+        message = self._message_from(update)
+        if message is None:
+            return
+        if not self._is_allowed(self._user_id_from(update)):
+            return
+        document = message.document
+        if document is None:
+            return
+        if document.file_size is not None and document.file_size > MAX_DOCUMENT_BYTES:
+            await self._reply_safely(message, DOCUMENT_TOO_LARGE_MESSAGE)
+            return
+
+        async def send_typing() -> None:
+            await context.bot.send_chat_action(
+                chat_id=message.chat_id,
+                action=ChatAction.TYPING,
+                message_thread_id=message.message_thread_id,
             )
-        finally:
-            path.unlink(missing_ok=True)
+
+        try:
+            path = await self._download_document(context, document)
+        except (OSError, TelegramError):
+            LOGGER.exception("Document download failed")
+            await self._reply_safely(message, DOCUMENT_FAILED_MESSAGE)
+            return
+
+        await self._accept_attachment(
+            message,
+            self._user_id_from(update),
+            _Attachment(path, message.caption, document.mime_type, is_image=False),
+            send_typing,
+        )
+
+    async def handle_document(
+        self,
+        message: Message,
+        user_id: int | None,
+        path: Path,
+        *,
+        caption: str | None = None,
+        mime_type: str | None = None,
+        send_typing: TypingSender | None = None,
+    ) -> None:
+        """Send one downloaded file through Codex as an ordinary message."""
+        await self._accept_attachment(
+            message,
+            user_id,
+            _Attachment(path, caption, mime_type, is_image=False),
+            send_typing,
+        )
 
     async def handle_start(self, message: Message, user_id: int | None) -> None:
         """Respond to an allowed user's /start command."""
@@ -584,6 +715,65 @@ class AriadneBot:
             self._stopping = False
             self._busy = False
 
+    async def _accept_attachment(
+        self,
+        message: Message,
+        user_id: int | None,
+        attachment: _Attachment,
+        send_typing: TypingSender | None,
+    ) -> None:
+        """Send one file to Codex, or hold it for the rest of its media group.
+
+        Telegram delivers an album as one update per file, so a media group is
+        gathered behind a short sliding timer and sent as a single turn.
+        """
+        group = message.media_group_id
+        if group is None:
+            await self._submit_album(
+                _Album(message, user_id, send_typing, [attachment])
+            )
+            return
+
+        album = self._albums.get(group)
+        if album is None:
+            album = _Album(message, user_id, send_typing)
+            self._albums[group] = album
+        album.items.append(attachment)
+        if album.timer is not None:
+            album.timer.cancel()
+        album.timer = asyncio.create_task(self._submit_album_later(group))
+
+    async def _submit_album_later(self, group: str) -> None:
+        """Send a media group once it has stopped growing."""
+        with suppress(asyncio.CancelledError):
+            await asyncio.sleep(ALBUM_DEBOUNCE_SECONDS)
+            album = self._albums.pop(group, None)
+            if album is not None:
+                await self._submit_album(album)
+
+    async def _submit_album(self, album: _Album) -> None:
+        """Turn one message or media group into a single Codex turn."""
+        images = tuple(item.path for item in album.items if item.is_image)
+        documents = [
+            (item.path, item.mime_type) for item in album.items if not item.is_image
+        ]
+        caption = next((item.caption for item in album.items if item.caption), None)
+
+        if documents:
+            text = document_message(caption, documents)
+        elif caption:
+            text = caption
+        else:
+            text = IMAGE_WITHOUT_CAPTION if len(images) == 1 else IMAGES_WITHOUT_CAPTION
+
+        await self.handle_text(
+            album.message,
+            album.user_id,
+            text,
+            image_paths=images,
+            send_typing=album.send_typing,
+        )
+
     async def _steer_active_turn(
         self,
         message: Message,
@@ -860,19 +1050,28 @@ class AriadneBot:
         context: ContextTypes.DEFAULT_TYPE,
         image: PhotoSize | Document,
     ) -> Path:
-        attachment_dir = Path.cwd() / IMAGE_ATTACHMENT_DIRNAME
-        attachment_dir.mkdir(mode=0o700, exist_ok=True)
-        suffix = ".jpg"
-        if isinstance(image, Document) and image.file_name:
-            candidate = Path(image.file_name).suffix.lower()
-            if candidate in {".jpg", ".jpeg", ".png", ".webp"}:
-                suffix = candidate
-        path = attachment_dir / f"{uuid4().hex}{suffix}"
+        return await self._download(context, image, MAX_IMAGE_BYTES)
+
+    async def _download_document(
+        self,
+        context: ContextTypes.DEFAULT_TYPE,
+        document: Document,
+    ) -> Path:
+        return await self._download(context, document, MAX_DOCUMENT_BYTES)
+
+    @staticmethod
+    async def _download(
+        context: ContextTypes.DEFAULT_TYPE,
+        media: PhotoSize | Document,
+        size_limit: int,
+    ) -> Path:
+        """Save one sent file into the attachment archive."""
+        path = attachment_path(_attachment_name(media))
         try:
-            telegram_file = await context.bot.get_file(image.file_id)
+            telegram_file = await context.bot.get_file(media.file_id)
             await telegram_file.download_to_drive(custom_path=path)
-            if path.stat().st_size > MAX_IMAGE_BYTES:
-                raise OSError("Downloaded image exceeds size limit")
+            if path.stat().st_size > size_limit:
+                raise OSError("Downloaded file exceeds size limit")
             return path
         except (OSError, TelegramError):
             path.unlink(missing_ok=True)
