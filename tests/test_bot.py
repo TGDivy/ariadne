@@ -3,6 +3,8 @@ from typing import cast
 
 import pytest
 from telegram import Message
+from telegram.constants import ParseMode
+from telegram.error import TimedOut
 
 from ariadne.codex import CodexConversation
 from ariadne.telegram_bot import (
@@ -12,6 +14,7 @@ from ariadne.telegram_bot import (
     PLACEHOLDER_TEXT,
     TELEGRAM_MESSAGE_LIMIT,
     AriadneBot,
+    split_for_telegram,
 )
 
 
@@ -19,13 +22,17 @@ class FakeMessage:
     def __init__(self) -> None:
         self.replies: list[str] = []
         self.edits: list[str] = []
+        self.edit_parse_modes: list[ParseMode | None] = []
 
     async def reply_text(self, text: str) -> "FakeMessage":
         self.replies.append(text)
         return self
 
-    async def edit_text(self, text: str) -> "FakeMessage":
+    async def edit_text(
+        self, text: str, *, parse_mode: ParseMode | None = None
+    ) -> "FakeMessage":
         self.edits.append(text)
+        self.edit_parse_modes.append(parse_mode)
         return self
 
 
@@ -74,6 +81,13 @@ class FakeTyping:
         self.started.set()
 
 
+class TimedOutTyping(FakeTyping):
+    async def send(self) -> None:
+        self.calls += 1
+        self.started.set()
+        raise TimedOut
+
+
 @pytest.fixture
 def message() -> FakeMessage:
     return FakeMessage()
@@ -101,6 +115,18 @@ async def test_streamed_reply_replaces_the_placeholder_with_the_final_answer(
     assert conversation.prompts == ["Say hello"]
     assert message.replies == [PLACEHOLDER_TEXT]
     assert message.edits[-1] == "Hello, Ariadne!"
+
+
+async def test_final_response_uses_rich_telegram_formatting(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation(["**C++** with `std::vector`"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_text(cast(Message, message), 7, "Format this")
+
+    assert message.edits[-1] == "<b>C++</b> with <code>std::vector</code>"
+    assert message.edit_parse_modes[-1] == ParseMode.HTML
 
 
 async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
@@ -174,6 +200,34 @@ async def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward(
     assert typing.calls == calls_after_turn
 
 
+async def test_typing_timeout_is_logged_without_a_traceback(
+    message: FakeMessage, caplog
+) -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    typing = TimedOutTyping()
+
+    turn = asyncio.create_task(
+        bot.handle_text(
+            cast(Message, message),
+            7,
+            "First",
+            send_typing=typing.send,
+        )
+    )
+    await conversation.started.wait()
+    await typing.started.wait()
+    conversation.release.set()
+    await turn
+
+    timeout_log = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Telegram typing indicator timed out; will retry."
+    )
+    assert timeout_log.exc_info is None
+
+
 async def test_long_responses_are_split_at_telegrams_limit(
     message: FakeMessage,
 ) -> None:
@@ -185,6 +239,27 @@ async def test_long_responses_are_split_at_telegrams_limit(
 
     assert message.edits[-1] == "x" * TELEGRAM_MESSAGE_LIMIT
     assert message.replies == [PLACEHOLDER_TEXT, "x"]
+
+
+@pytest.mark.parametrize("separator", ["\n\n", "\n", " "])
+def test_long_text_prefers_readable_telegram_split_boundaries(separator: str) -> None:
+    suffix = "y" * 25
+    response = "x" * (TELEGRAM_MESSAGE_LIMIT - 20 - len(separator)) + separator + suffix
+
+    chunks = split_for_telegram(response)
+
+    assert chunks == [response[: -len(suffix)], suffix]
+    assert "".join(chunks) == response
+    assert all(len(chunk) <= TELEGRAM_MESSAGE_LIMIT for chunk in chunks)
+
+
+def test_long_text_avoids_a_tiny_telegram_message_before_a_hard_split() -> None:
+    response = "intro\n\n" + "x" * TELEGRAM_MESSAGE_LIMIT
+
+    chunks = split_for_telegram(response)
+
+    assert chunks[0] == response[:TELEGRAM_MESSAGE_LIMIT]
+    assert "".join(chunks) == response
 
 
 async def test_failed_turn_replies_and_allows_the_next_turn(

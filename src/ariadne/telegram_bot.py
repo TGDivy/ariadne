@@ -7,11 +7,12 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 
 from telegram import Message, Update
-from telegram.constants import ChatAction
-from telegram.error import TelegramError
+from telegram.constants import ChatAction, ParseMode
+from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
 from .codex import CodexConversation
+from .telegram_format import render_telegram_html
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,11 +29,27 @@ TypingSender = Callable[[], Awaitable[None]]
 
 
 def split_for_telegram(text: str) -> list[str]:
-    """Split a plain-text response into Telegram-sized pieces."""
-    return [
-        text[start : start + TELEGRAM_MESSAGE_LIMIT]
-        for start in range(0, len(text), TELEGRAM_MESSAGE_LIMIT)
-    ]
+    """Split plain text at readable boundaries within Telegram's message limit."""
+    chunks: list[str] = []
+    remaining = text
+
+    while len(remaining) > TELEGRAM_MESSAGE_LIMIT:
+        split_at = _telegram_split_point(remaining)
+        chunks.append(remaining[:split_at])
+        remaining = remaining[split_at:]
+
+    if remaining:
+        chunks.append(remaining)
+    return chunks
+
+
+def _telegram_split_point(text: str) -> int:
+    """Find a readable boundary without creating a tiny first message."""
+    for separator in ("\n\n", "\n", " "):
+        split_at = text.rfind(separator, 0, TELEGRAM_MESSAGE_LIMIT)
+        if split_at >= TELEGRAM_MESSAGE_LIMIT // 2:
+            return split_at + len(separator)
+    return TELEGRAM_MESSAGE_LIMIT
 
 
 class AriadneBot:
@@ -138,6 +155,8 @@ class AriadneBot:
         while True:
             try:
                 await send_typing()
+            except TimedOut:
+                LOGGER.warning("Telegram typing indicator timed out; will retry.")
             except TelegramError:
                 LOGGER.exception("Telegram typing indicator failed")
             await asyncio.sleep(TYPING_REFRESH_INTERVAL_SECONDS)
@@ -178,6 +197,37 @@ class AriadneBot:
         response: str,
         last_rendered_text: str,
     ) -> None:
+        try:
+            formatted_response = render_telegram_html(response)
+        except Exception:
+            LOGGER.exception("Telegram response formatting failed")
+        else:
+            if formatted_response and len(formatted_response) <= TELEGRAM_MESSAGE_LIMIT:
+                if formatted_response == last_rendered_text:
+                    return
+                if await self._edit_safely(
+                    placeholder,
+                    formatted_response,
+                    parse_mode=ParseMode.HTML,
+                ):
+                    return
+                await self._reply_safely(message, response)
+                return
+
+        await self._send_plain_final_response(
+            message,
+            placeholder,
+            response,
+            last_rendered_text,
+        )
+
+    async def _send_plain_final_response(
+        self,
+        message: Message,
+        placeholder: Message,
+        response: str,
+        last_rendered_text: str,
+    ) -> None:
         chunks = split_for_telegram(response)
         first_chunk_is_visible = chunks[0] == last_rendered_text
         if not first_chunk_is_visible:
@@ -202,9 +252,15 @@ class AriadneBot:
             LOGGER.exception("Telegram reply failed")
             return None
 
-    async def _edit_safely(self, message: Message, text: str) -> bool:
+    async def _edit_safely(
+        self,
+        message: Message,
+        text: str,
+        *,
+        parse_mode: ParseMode | None = None,
+    ) -> bool:
         try:
-            await message.edit_text(text)
+            await message.edit_text(text, parse_mode=parse_mode)
         except TelegramError:
             LOGGER.exception("Telegram message update failed")
             return False
