@@ -39,6 +39,10 @@ PLACEHOLDER_TEXT = "Thinking…"
 READY_MESSAGE = "Ariadne is ready."
 NEW_CONVERSATION_MESSAGE = "Started a new conversation. The Thread is still available."
 BUSY_MESSAGE = "I'm still working on your previous message."
+STEERED_MESSAGE = "Noted — folding that into what I'm working on."
+STEERING_FAILED_MESSAGE = (
+    "I couldn't add that to the turn I'm working on. Please try again."
+)
 FAILURE_MESSAGE = "I ran into a problem while working on that. Please try again."
 STOPPING_MESSAGE = "Stopping…"
 STOPPED_MESSAGE = "Stopped."
@@ -542,7 +546,7 @@ class AriadneBot:
             return
 
         if self._busy:
-            await self._reply_safely(message, BUSY_MESSAGE)
+            await self._steer_active_turn(message, text, image_paths)
             return
 
         self._busy = True
@@ -579,6 +583,27 @@ class AriadneBot:
                 self._active_placeholder = None
             self._stopping = False
             self._busy = False
+
+    async def _steer_active_turn(
+        self,
+        message: Message,
+        text: str,
+        image_paths: tuple[Path, ...],
+    ) -> None:
+        """Feed a follow-up message into the turn Ariadne is already running."""
+        try:
+            steered = await self._conversation.steer(text, image_paths=image_paths)
+        except Exception:
+            LOGGER.exception("Codex turn steering failed")
+            await self._reply_safely(message, STEERING_FAILED_MESSAGE)
+            return
+
+        if steered:
+            await self._reply_safely(message, STEERED_MESSAGE)
+            return
+
+        # The turn is starting but Codex has not accepted it yet.
+        await self._reply_safely(message, BUSY_MESSAGE)
 
     async def _refresh_typing(self, send_typing: TypingSender) -> None:
         """Keep Telegram's short-lived typing indicator visible for a turn."""

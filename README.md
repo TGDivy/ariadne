@@ -43,6 +43,9 @@ live web research for the running process. Each change starts a new in-memory
 Codex conversation. Use `/stop` to ask Codex to interrupt the active turn; it
 cannot undo work that already completed.
 
+Messages sent while Ariadne is working are not rejected: they steer the Codex
+turn that is already running, so Codex folds them into the work in flight.
+
 ## Local capabilities
 
 Ariadne exposes two local MCP capabilities to Codex: runtime status and
