@@ -54,7 +54,7 @@ def test_mcp_config_forwards_its_required_environment(
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
     assert (
-        'mcp_servers.ariadne.enabled_tools=["runtime_status", "prepare_files"]'
+        'mcp_servers.ariadne.enabled_tools=["runtime_status", "send_file_via_telegram"]'
         in overrides
     )
     assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
@@ -292,7 +292,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
         id="mcp",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="prepare_files",
+        tool="send_file_via_telegram",
         type="mcpToolCall",
     )
     thread = FakeThread(

@@ -95,7 +95,7 @@ def _mcp_config_overrides(vault: Path) -> tuple[str, ...]:
         "mcp_servers.ariadne.env.ARIADNE_VAULT=" + json.dumps(str(vault)),
         "mcp_servers.ariadne.enabled=true",
         "mcp_servers.ariadne.enabled_tools="
-        + json.dumps(["runtime_status", "prepare_files"]),
+        + json.dumps(["runtime_status", "send_file_via_telegram"]),
     ]
     for variable in MCP_REQUIRED_ENVIRONMENT_VARIABLES:
         value = os.environ.get(variable)

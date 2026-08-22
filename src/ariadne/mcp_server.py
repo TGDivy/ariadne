@@ -12,7 +12,7 @@ from .file_delivery import FileDelivery, FileDeliveryError
 
 mcp = FastMCP(
     "Ariadne",
-    instructions="Local runtime inspection and explicitly approved Telegram delivery.",
+    instructions="Inspect Ariadne's runtime and send files to Divy via Telegram with explicit approval.",
     version="0.1.0",
     strict_input_validation=True,
 )
@@ -70,16 +70,16 @@ def runtime_status() -> dict[str, Any]:
             "current": _process(os.getpid()),
             "parent": _process(os.getppid()),
         },
-        "capabilities": ["runtime_status", "prepare_files"],
+        "capabilities": ["runtime_status", "send_file_via_telegram"],
     }
 
 
 @mcp.tool
-async def prepare_files(paths: list[str]) -> dict[str, Any]:
-    """Stage files under the user's home directory for explicit Telegram approval.
+async def send_file_via_telegram(paths: list[str]) -> dict[str, Any]:
+    """Send local files to Divy in Telegram after explicit approval.
 
-    This tool does not upload files. It sends an explicit Telegram approval card
-    with Approve and Reject buttons for the exact staged batch.
+    This first sends an approval card; the files are uploaded only after Divy
+    approves the exact staged batch.
     """
     try:
         approval_id, files = FileDelivery().stage(paths)
