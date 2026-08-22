@@ -348,6 +348,41 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     assert "private" not in activities[0]
 
 
+async def test_iris_speaking_for_herself_is_not_announced_as_a_tool(
+    tmp_path: Path,
+) -> None:
+    mcp_item = McpToolCallThreadItem(
+        arguments={"text": "Found the repo."},
+        id="mcp",
+        server="ariadne",
+        status=McpToolCallStatus.in_progress,
+        tool="send_message",
+        type="mcpToolCall",
+    )
+    thread = FakeThread(
+        turn=FakeTurn(["Answer"], started_items=[ThreadItem(root=mcp_item)])
+    )
+    conversation = CodexConversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        human=HUMAN,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
+    activities: list[str] = []
+
+    async def record_activity(activity: str) -> None:
+        activities.append(activity)
+
+    _ = [
+        text
+        async for text in conversation.stream_reply(
+            "Find my CV", activity=record_activity
+        )
+    ]
+
+    assert activities == []
+
+
 async def test_codex_conversation_reports_what_iris_said_in_telegram_herself(
     tmp_path: Path,
 ) -> None:

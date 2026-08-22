@@ -50,6 +50,7 @@ WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_SERVER_NAME = "ariadne"
 MCP_TOOLS = ("runtime_status", "send_message", "react", "prepare_files")
 TELEGRAM_MESSAGE_TOOL = "send_message"
+TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react")
 MCP_REQUIRED_ENVIRONMENT_VARIABLES = (
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_USER_ID",
@@ -98,6 +99,9 @@ def _activity_message(item: object) -> str | None:
     if isinstance(item, WebSearchThreadItem):
         return "Searching the web…"
     if isinstance(item, McpToolCallThreadItem):
+        if item.server == MCP_SERVER_NAME and item.tool in TELEGRAM_TOOLS:
+            # Iris is speaking for herself; what she sends is the status.
+            return None
         return "Using Ariadne's local capability…"
     if isinstance(item, CommandExecutionThreadItem):
         return "Running a command…"
