@@ -3,6 +3,7 @@ from typing import cast
 
 import pytest
 from telegram import Message
+from telegram.constants import ParseMode
 
 from ariadne.codex import CodexConversation
 from ariadne.telegram_bot import (
@@ -19,13 +20,17 @@ class FakeMessage:
     def __init__(self) -> None:
         self.replies: list[str] = []
         self.edits: list[str] = []
+        self.edit_parse_modes: list[ParseMode | None] = []
 
     async def reply_text(self, text: str) -> "FakeMessage":
         self.replies.append(text)
         return self
 
-    async def edit_text(self, text: str) -> "FakeMessage":
+    async def edit_text(
+        self, text: str, *, parse_mode: ParseMode | None = None
+    ) -> "FakeMessage":
         self.edits.append(text)
+        self.edit_parse_modes.append(parse_mode)
         return self
 
 
@@ -101,6 +106,18 @@ async def test_streamed_reply_replaces_the_placeholder_with_the_final_answer(
     assert conversation.prompts == ["Say hello"]
     assert message.replies == [PLACEHOLDER_TEXT]
     assert message.edits[-1] == "Hello, Ariadne!"
+
+
+async def test_final_response_uses_rich_telegram_formatting(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation(["**C++** with `std::vector`"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_text(cast(Message, message), 7, "Format this")
+
+    assert message.edits[-1] == "<b>C++</b> with <code>std::vector</code>"
+    assert message.edit_parse_modes[-1] == ParseMode.HTML
 
 
 async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:

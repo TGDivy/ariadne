@@ -7,11 +7,12 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 
 from telegram import Message, Update
-from telegram.constants import ChatAction
+from telegram.constants import ChatAction, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from .codex import CodexConversation
+from .telegram_format import render_telegram_html
 
 LOGGER = logging.getLogger(__name__)
 
@@ -178,6 +179,37 @@ class AriadneBot:
         response: str,
         last_rendered_text: str,
     ) -> None:
+        try:
+            formatted_response = render_telegram_html(response)
+        except Exception:
+            LOGGER.exception("Telegram response formatting failed")
+        else:
+            if formatted_response and len(formatted_response) <= TELEGRAM_MESSAGE_LIMIT:
+                if formatted_response == last_rendered_text:
+                    return
+                if await self._edit_safely(
+                    placeholder,
+                    formatted_response,
+                    parse_mode=ParseMode.HTML,
+                ):
+                    return
+                await self._reply_safely(message, response)
+                return
+
+        await self._send_plain_final_response(
+            message,
+            placeholder,
+            response,
+            last_rendered_text,
+        )
+
+    async def _send_plain_final_response(
+        self,
+        message: Message,
+        placeholder: Message,
+        response: str,
+        last_rendered_text: str,
+    ) -> None:
         chunks = split_for_telegram(response)
         first_chunk_is_visible = chunks[0] == last_rendered_text
         if not first_chunk_is_visible:
@@ -202,9 +234,15 @@ class AriadneBot:
             LOGGER.exception("Telegram reply failed")
             return None
 
-    async def _edit_safely(self, message: Message, text: str) -> bool:
+    async def _edit_safely(
+        self,
+        message: Message,
+        text: str,
+        *,
+        parse_mode: ParseMode | None = None,
+    ) -> bool:
         try:
-            await message.edit_text(text)
+            await message.edit_text(text, parse_mode=parse_mode)
         except TelegramError:
             LOGGER.exception("Telegram message update failed")
             return False
