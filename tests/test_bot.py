@@ -1,4 +1,5 @@
 import asyncio
+from datetime import date
 from typing import cast
 
 import pytest
@@ -7,6 +8,7 @@ from telegram import Message
 from telegram.constants import ParseMode
 from telegram.error import TimedOut
 
+from ariadne import telegram_bot
 from ariadne.codex import (
     CodexConversation,
     CodexModel,
@@ -15,6 +17,7 @@ from ariadne.codex import (
 )
 from ariadne.telegram_bot import (
     BUSY_MESSAGE,
+    DOCUMENT_WITHOUT_CAPTION,
     FAILURE_MESSAGE,
     NEW_CONVERSATION_MESSAGE,
     NOTHING_TO_STOP_MESSAGE,
@@ -26,6 +29,7 @@ from ariadne.telegram_bot import (
     STOPPING_MESSAGE,
     TELEGRAM_MESSAGE_LIMIT,
     AriadneBot,
+    document_message,
     split_for_telegram,
 )
 
@@ -47,6 +51,7 @@ DEFAULT_MODELS = (
 class FakeMessage:
     def __init__(self) -> None:
         self.chat_id = 7
+        self.media_group_id: str | None = None
         self.text: str | None = None
         self.replies: list[str] = []
         self.reply_markups: list[object | None] = []
@@ -533,3 +538,101 @@ async def test_failed_turn_replies_and_allows_the_next_turn(
     assert message.edits == [FAILURE_MESSAGE]
     assert next_message.edits[-1] == "Recovered"
     assert conversation.prompts == ["First", "Second"]
+
+
+def test_document_message_uses_the_caption_as_the_request(tmp_path) -> None:
+    path = tmp_path / "cv.pdf"
+
+    text = document_message(
+        "compare this with the one in my repo", [(path, "application/pdf")]
+    )
+
+    assert text.startswith("compare this with the one in my repo")
+    assert f"Attached file: {path} (application/pdf)" in text
+
+
+def test_document_message_without_a_caption_invents_no_task(tmp_path) -> None:
+    path = tmp_path / "rows.csv"
+
+    text = document_message(None, [(path, None)])
+
+    assert text == f"{DOCUMENT_WITHOUT_CAPTION}\n\nAttached file: {path}"
+
+
+async def test_document_sent_during_a_turn_steers_it_and_is_kept(
+    tmp_path,
+) -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    attachment = tmp_path / "sent" / "rows.csv"
+    attachment.parent.mkdir()
+    attachment.write_text("a,b\n1,2\n", encoding="utf-8")
+
+    first_turn = asyncio.create_task(
+        bot.handle_text(cast(Message, FakeMessage()), 7, "Review the vault")
+    )
+    await conversation.started.wait()
+    await bot.handle_document(
+        cast(Message, FakeMessage()), 7, attachment, caption="what looks odd here?"
+    )
+
+    assert conversation.steered == [
+        document_message("what looks odd here?", [(attachment, None)])
+    ]
+
+    conversation.release.set()
+    await first_turn
+
+    assert attachment.exists()
+
+
+async def test_document_is_kept_after_the_turn_it_started(tmp_path) -> None:
+    conversation = FakeConversation(["Looked at it"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    attachment = tmp_path / "sent" / "notes.txt"
+    attachment.parent.mkdir()
+    attachment.write_text("hello", encoding="utf-8")
+
+    await bot.handle_document(cast(Message, FakeMessage()), 7, attachment)
+
+    assert conversation.prompts == [document_message(None, [(attachment, None)])]
+    assert attachment.exists()
+
+
+async def test_a_media_group_becomes_one_turn(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(telegram_bot, "ALBUM_DEBOUNCE_SECONDS", 0.01)
+    conversation = FakeConversation(["Looked at them"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    message = FakeMessage()
+    message.media_group_id = "album-1"
+    paths = []
+    for name in ("first.csv", "second.csv"):
+        path = tmp_path / name.removesuffix(".csv") / name
+        path.parent.mkdir()
+        path.write_text("a,b\n", encoding="utf-8")
+        paths.append(path)
+
+    await bot.handle_document(
+        cast(Message, message), 7, paths[0], caption="what looks odd here?"
+    )
+    await bot.handle_document(cast(Message, message), 7, paths[1])
+
+    assert conversation.prompts == []
+
+    await asyncio.sleep(0.05)
+
+    assert conversation.prompts == [
+        document_message("what looks odd here?", [(paths[0], None), (paths[1], None)])
+    ]
+
+
+def test_attachments_are_kept_under_a_folder_for_today(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(telegram_bot, "ATTACHMENT_ROOT", tmp_path)
+
+    first = telegram_bot.attachment_path("cv.pdf")
+    first.write_bytes(b"one")
+    second = telegram_bot.attachment_path("cv.pdf")
+
+    assert first.parent == tmp_path / date.today().isoformat()
+    assert first.name == "cv.pdf"
+    assert second.name == "cv-2.pdf"
