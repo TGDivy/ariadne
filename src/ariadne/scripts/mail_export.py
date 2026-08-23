@@ -151,9 +151,9 @@ def write_jsonl(path: Path, messages: list[dict[str, Any]]) -> None:
 
 
 def load_credentials() -> tuple[str, str]:
-    username = os.environ.get("ICLOUD_USERNAME") or input(
-        "iCloud Mail username: "
-    ).strip()
+    username = (
+        os.environ.get("ICLOUD_USERNAME") or input("iCloud Mail username: ").strip()
+    )
     password = os.environ.get("ICLOUD_APP_PASSWORD") or getpass.getpass(
         "App-specific password (hidden): "
     )

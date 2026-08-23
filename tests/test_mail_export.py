@@ -64,5 +64,5 @@ def test_fetch_selects_read_only_and_uses_body_peek():
     assert mail.calls == [
         ("select", "INBOX", True),
         ("search", None, "ALL"),
-        ("fetch", b"12", "(BODY.PEEK[])")
+        ("fetch", b"12", "(BODY.PEEK[])"),
     ]
