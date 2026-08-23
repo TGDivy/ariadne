@@ -8,6 +8,7 @@ from .models import (
     MailRoutes,
     SuggestedAction,
 )
+from .reader import MailReader
 from .runtime import (
     FULL_QUERY,
     HEADER_QUERY,
@@ -36,6 +37,7 @@ __all__ = [
     "MailProcessor",
     "MailRoute",
     "MailRoutes",
+    "MailReader",
     "MailState",
     "SuggestedAction",
     "backfill_inbox",

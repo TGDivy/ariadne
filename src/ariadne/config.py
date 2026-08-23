@@ -213,10 +213,18 @@ class Settings(BaseModel):
 
     @property
     def mcp_environment(self) -> dict[str, str]:
-        return {
+        values = {
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_ALLOWED_USER_ID": str(self.allowed_user_id),
         }
+        if self.mail.enabled:
+            assert self.mail.username is not None
+            assert self.mail.app_password is not None
+            values["ARIADNE_MAIL_USERNAME"] = self.mail.username
+            values["ARIADNE_MAIL_APP_PASSWORD"] = (
+                self.mail.app_password.get_secret_value()
+            )
+        return values
 
     @property
     def mail_settings(self) -> MailSettings | None:

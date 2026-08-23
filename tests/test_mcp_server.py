@@ -12,7 +12,9 @@ from ariadne.mail import MailState
 from ariadne.mcp_server import (
     mcp,
     react,
+    read_mail,
     runtime_status,
+    search_mail,
     send_message,
     triage_current_mail,
 )
@@ -57,6 +59,9 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "send_message",
         "react",
         "prepare_files",
+        "search_mail",
+        "read_mail",
+        "read_mail_thread",
         "triage_current_mail",
     ]
 
@@ -67,6 +72,16 @@ def test_a_normal_turn_has_no_mail_authority(monkeypatch) -> None:
 
     with pytest.raises(ToolError, match="unavailable"):
         triage_current_mail("notifications", "important", "keep_in_inbox")
+
+
+def test_mail_reading_requires_toml_derived_credentials(monkeypatch) -> None:
+    monkeypatch.delenv("ARIADNE_MAIL_USERNAME", raising=False)
+    monkeypatch.delenv("ARIADNE_MAIL_APP_PASSWORD", raising=False)
+
+    with pytest.raises(ToolError, match="not configured"):
+        search_mail("Ali Wilson")
+    with pytest.raises(ToolError, match="not configured"):
+        read_mail("mail:anything")
 
 
 def test_a_mail_turn_can_record_but_not_execute_its_decision(

@@ -2,16 +2,24 @@
 
 import os
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from imapclient import IMAPClient  # type: ignore[import-untyped]
 from telegram import Bot, ReplyParameters
 from telegram.constants import ParseMode, ReactionEmoji
 from telegram.error import BadRequest, TelegramError
 
-from .mail import Importance, SuggestedAction, record_current_mail_decision
+from .mail import (
+    IMAP_HOST,
+    Importance,
+    MailReader,
+    SuggestedAction,
+    record_current_mail_decision,
+)
 from .profile import PROFILES
 from .telegram.file_delivery import FileDelivery, FileDeliveryError
 from .telegram.format import split_for_telegram, telegram_messages
@@ -207,6 +215,61 @@ async def prepare_files(paths: list[str]) -> dict[str, Any]:
             for file in files
         ],
     }
+
+
+def _read_mail(operation: str, *args: object, **kwargs: object) -> dict[str, Any]:
+    """Connect for one read-only operation using TOML-derived credentials."""
+    try:
+        username = os.environ["ARIADNE_MAIL_USERNAME"]
+        password = os.environ["ARIADNE_MAIL_APP_PASSWORD"]
+    except KeyError as error:
+        raise ToolError("Mail reading is not configured for this turn.") from error
+
+    client: IMAPClient | None = None
+    try:
+        client = IMAPClient(IMAP_HOST, port=993, ssl=True)
+        client.login(username, password)
+        reader = MailReader(client)
+        method = cast(Callable[..., dict[str, Any]], getattr(reader, operation))
+        return method(*args, **kwargs)
+    except ToolError:
+        raise
+    except Exception as error:
+        raise ToolError(f"Mail could not complete that read: {error}") from error
+    finally:
+        if client is not None:
+            try:
+                client.logout()
+            except Exception:
+                pass
+
+
+@mcp.tool
+def search_mail(
+    query: str,
+    since: str | None = None,
+    before: str | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Search iCloud Mail using ordinary words, names, companies, or topics.
+
+    `since` and `before`, when useful, are ISO dates (YYYY-MM-DD). Results are
+    ranked locally from read-only IMAP metadata and body previews. Use a result
+    id with `read_mail` or `read_mail_thread`; no local mailbox copy is kept.
+    """
+    return _read_mail("search", query, since=since, before=before, limit=limit)
+
+
+@mcp.tool
+def read_mail(id: str) -> dict[str, Any]:
+    """Read one message returned by `search_mail`, without marking it read."""
+    return _read_mail("read", id)
+
+
+@mcp.tool
+def read_mail_thread(id: str) -> dict[str, Any]:
+    """Read the conversation around one search result without changing mail."""
+    return _read_mail("read_thread", id)
 
 
 @mcp.tool

@@ -44,6 +44,11 @@ WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_SERVER_NAME = "ariadne"
 TELEGRAM_MESSAGE_TOOL = "send_message"
 TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react")
+MAIL_ACTIVITY = {
+    "search_mail": "Searching mail…",
+    "read_mail": "Reading mail…",
+    "read_mail_thread": "Reading mail thread…",
+}
 
 
 class TurnInterrupted(Exception):
@@ -58,6 +63,8 @@ def _activity_message(item: object) -> str | None:
         if item.server == MCP_SERVER_NAME and item.tool in TELEGRAM_TOOLS:
             # Iris is speaking for herself; what she sends is the status.
             return None
+        if item.server == MCP_SERVER_NAME and item.tool in MAIL_ACTIVITY:
+            return MAIL_ACTIVITY[item.tool]
         return "Using Ariadne's local capability…"
     if isinstance(item, CommandExecutionThreadItem):
         return "Running a command…"
