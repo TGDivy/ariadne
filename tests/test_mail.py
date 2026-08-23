@@ -25,6 +25,7 @@ from ariadne.mail import (
     move_messages,
     parse_metadata,
     render_message,
+    restore_folder_to_inbox,
 )
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
@@ -127,12 +128,13 @@ class FakeIMAP:
         self.move_actions: list[str] = []
         self.flags: list[tuple[list[int], list[bytes]]] = []
         self.created: list[str] = []
+        self.selections: list[tuple[str, bool]] = []
 
     def has_capability(self, capability: str) -> bool:
         return capability in self.capabilities
 
     def select_folder(self, mailbox: str, readonly: bool = False) -> dict[bytes, int]:
-        assert mailbox == "INBOX"
+        self.selections.append((mailbox, readonly))
         return {
             b"UIDVALIDITY": self.uidvalidity,
             b"UIDNEXT": max(self.messages, default=0) + 1,
@@ -408,6 +410,41 @@ def test_move_messages_refuses_an_unsafe_mailbox_wide_expunge() -> None:
     assert client.copies == []
     assert client.deletions == []
     assert client.uid_expunges == []
+
+
+def test_restore_folder_previews_then_moves_every_message_to_inbox() -> None:
+    client = FakeIMAP({4: b"first", 7: b"second"}, capabilities=("UIDPLUS",))
+    updates: list[tuple[int, int]] = []
+
+    preview = restore_folder_to_inbox(
+        cast(Any, client),
+        "Receipts",
+        progress=lambda done, total: updates.append((done, total)),
+    )
+
+    assert preview.found == 2
+    assert preview.moved == 0
+    assert client.selections == [("Receipts", True)]
+    assert client.copies == []
+    assert updates == [(0, 2), (1, 2), (2, 2)]
+
+    applied = restore_folder_to_inbox(cast(Any, client), "Receipts", apply=True)
+
+    assert applied.found == 2
+    assert applied.moved == 2
+    assert client.selections[-1] == ("Receipts", False)
+    assert client.copies == [((4,), "INBOX"), ((7,), "INBOX")]
+    assert client.deletions == [((4,), True), ((7,), True)]
+    assert client.uid_expunges == [(4,), (7,)]
+
+
+def test_restore_folder_refuses_inbox_as_its_source() -> None:
+    client = FakeIMAP({})
+
+    with pytest.raises(ValueError, match="cannot be INBOX"):
+        restore_folder_to_inbox(cast(Any, client), "inbox", apply=True)
+
+    assert client.selections == []
 
 
 async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -> None:

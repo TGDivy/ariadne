@@ -168,3 +168,9 @@ class BackfillSummary:
     moved: int
     iris_skipped: int
     unmatched: int
+
+
+@dataclass(frozen=True, slots=True)
+class RestoreSummary:
+    found: int
+    moved: int

@@ -139,6 +139,18 @@ message. Its default mode is read-only and reports what `--apply` would move.
 Backfill and mail export show progress when run in an interactive terminal while
 keeping redirected output clean.
 
+If a bad rule filed messages into the wrong folder, preview moving that entire
+folder back to `INBOX`, then apply it after checking the count:
+
+```bash
+uv run python -m ariadne.scripts.mail_backfill --restore-folder Receipts
+uv run python -m ariadne.scripts.mail_backfill --restore-folder Receipts --apply
+```
+
+Repeat `--restore-folder` to restore multiple folders. This restores every
+message in each named folder because earlier backfill runs did not record which
+messages they moved.
+
 ## Instructions
 
 Iris's prompt is assembled from Markdown documents owned by the shared Codex
