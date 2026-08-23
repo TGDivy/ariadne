@@ -121,6 +121,9 @@ say `move` do not invoke Iris. Mail turns can keep, flag, or move the current
 message and may draft, but never send, email. The configured routes file can
 contain personal data and must stay outside Git.
 
+Mailbox moves use IMAP `MOVE` when available. On iCloud, Ariadne uses its
+`UIDPLUS` support to copy, mark deleted, and expunge only the exact source UIDs.
+
 Mail turns default independently to `gpt-5.6-luna` at medium reasoning effort
 with web search disabled. Override those defaults under `[profiles.mail]`;
 Telegram's `/settings` choices do not affect mail.

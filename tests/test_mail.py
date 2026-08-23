@@ -22,6 +22,7 @@ from ariadne.mail import (
     MailState,
     backfill_inbox,
     load_routes,
+    move_messages,
     parse_metadata,
     render_message,
 )
@@ -109,13 +110,26 @@ def test_ordered_routes_use_the_first_complete_match() -> None:
 
 
 class FakeIMAP:
-    def __init__(self, messages: dict[int, bytes], uidvalidity: int = 10) -> None:
+    def __init__(
+        self,
+        messages: dict[int, bytes],
+        uidvalidity: int = 10,
+        capabilities: tuple[str, ...] = ("MOVE",),
+    ) -> None:
         self.messages = messages
         self.uidvalidity = uidvalidity
+        self.capabilities = capabilities
         self.fetches: list[tuple[int, bytes]] = []
-        self.moves: list[tuple[list[int], str]] = []
+        self.moves: list[tuple[tuple[int, ...], str]] = []
+        self.copies: list[tuple[tuple[int, ...], str]] = []
+        self.deletions: list[tuple[tuple[int, ...], bool]] = []
+        self.uid_expunges: list[tuple[int, ...]] = []
+        self.move_actions: list[str] = []
         self.flags: list[tuple[list[int], list[bytes]]] = []
         self.created: list[str] = []
+
+    def has_capability(self, capability: str) -> bool:
+        return capability in self.capabilities
 
     def select_folder(self, mailbox: str, readonly: bool = False) -> dict[bytes, int]:
         assert mailbox == "INBOX"
@@ -141,8 +155,21 @@ class FakeIMAP:
                 response[uid] = {key: raw}
         return response
 
-    def move(self, uids: list[int], destination: str) -> None:
+    def move(self, uids: tuple[int, ...], destination: str) -> None:
+        self.move_actions.append("move")
         self.moves.append((uids, destination))
+
+    def copy(self, uids: tuple[int, ...], destination: str) -> None:
+        self.move_actions.append("copy")
+        self.copies.append((uids, destination))
+
+    def delete_messages(self, uids: tuple[int, ...], silent: bool = False) -> None:
+        self.move_actions.append("delete")
+        self.deletions.append((uids, silent))
+
+    def uid_expunge(self, uids: tuple[int, ...]) -> None:
+        self.move_actions.append("uid_expunge")
+        self.uid_expunges.append(uids)
 
     def add_flags(self, uids: list[int], flags: list[bytes]) -> None:
         self.flags.append((uids, flags))
@@ -250,7 +277,7 @@ async def test_first_start_baselines_then_new_mail_is_processed(
     await processor.reconcile()
     await processor.process_available()
 
-    assert client.moves == [([2], "Receipts")]
+    assert client.moves == [((2,), "Receipts")]
     assert client.flags == [([3], [b"\\Flagged"])]
     assert len(conversations) == 1
     assert "Useful body text" in conversations[0].prompts[0]
@@ -331,7 +358,8 @@ def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
                 "same@example.com", "Action needed now", message_id="<important>"
             ),
             3: message("other@example.com", "Hello", message_id="<other>"),
-        }
+        },
+        capabilities=("UIDPLUS",),
     )
 
     preview = backfill_inbox(cast(Any, client), routes())
@@ -346,7 +374,34 @@ def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
     applied = backfill_inbox(cast(Any, client), routes(), apply=True)
 
     assert applied.moved == 1
-    assert client.moves == [([1], "Receipts")]
+    assert client.moves == []
+    assert client.copies == [((1,), "Receipts")]
+    assert client.deletions == [((1,), True)]
+    assert client.uid_expunges == [(1,)]
+
+
+def test_move_messages_uses_iclouds_uidplus_fallback_without_global_expunge() -> None:
+    client = FakeIMAP({}, capabilities=("UIDPLUS",))
+
+    move_messages(cast(Any, client), [4, 7], "Receipts")
+
+    assert client.moves == []
+    assert client.copies == [((4, 7), "Receipts")]
+    assert client.deletions == [((4, 7), True)]
+    assert client.uid_expunges == [(4, 7)]
+    assert client.move_actions == ["copy", "delete", "uid_expunge"]
+
+
+def test_move_messages_refuses_an_unsafe_mailbox_wide_expunge() -> None:
+    client = FakeIMAP({}, capabilities=())
+
+    with pytest.raises(RuntimeError, match="neither MOVE nor safe UIDPLUS"):
+        move_messages(cast(Any, client), [4], "Receipts")
+
+    assert client.moves == []
+    assert client.copies == []
+    assert client.deletions == []
+    assert client.uid_expunges == []
 
 
 async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -> None:
