@@ -69,7 +69,7 @@ def test_fetch_selects_read_only_and_uses_body_peek():
     )
 
     assert len(results) == 2
-    assert updates == [(2, 2)]
+    assert updates == [(0, 2), (2, 2)]
     assert mail.calls == [
         ("select", "INBOX", True),
         ("search", None, "ALL"),

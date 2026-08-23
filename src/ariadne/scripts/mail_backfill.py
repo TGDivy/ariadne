@@ -13,6 +13,7 @@ from imapclient import IMAPClient  # type: ignore[import-untyped]
 
 from ariadne.config import load_settings
 from ariadne.mail import IMAP_HOST, backfill_inbox, ensure_folders, load_routes
+from ariadne.scripts.progress import ProgressBar
 
 
 def main() -> None:
@@ -35,7 +36,11 @@ def main() -> None:
         client.login(configured.username, configured.app_password.get_secret_value())
         if args.apply:
             ensure_folders(client, routes)
-        summary = backfill_inbox(client, routes, apply=args.apply)
+        label = "Applying backfill" if args.apply else "Previewing backfill"
+        with ProgressBar(label) as progress:
+            summary = backfill_inbox(
+                client, routes, apply=args.apply, progress=progress.update
+            )
     finally:
         try:
             client.logout()

@@ -362,7 +362,12 @@ def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
         capabilities=("UIDPLUS",),
     )
 
-    preview = backfill_inbox(cast(Any, client), routes())
+    updates: list[tuple[int, int]] = []
+    preview = backfill_inbox(
+        cast(Any, client),
+        routes(),
+        progress=lambda done, total: updates.append((done, total)),
+    )
 
     assert preview.scanned == 3
     assert preview.move_matches == 1
@@ -370,6 +375,7 @@ def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
     assert preview.iris_skipped == 1
     assert preview.unmatched == 1
     assert client.moves == []
+    assert updates == [(0, 3), (1, 3), (2, 3), (3, 3)]
 
     applied = backfill_inbox(cast(Any, client), routes(), apply=True)
 

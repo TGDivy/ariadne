@@ -138,6 +138,8 @@ uv run python -m ariadne.scripts.mail_backfill --apply
 
 The backfill never starts a Codex turn: it skips every `iris` rule and unmatched
 message. Its default mode is read-only and reports what `--apply` would move.
+Backfill and mail export show progress when run in an interactive terminal while
+keeping redirected output clean.
 
 ## Instructions
 

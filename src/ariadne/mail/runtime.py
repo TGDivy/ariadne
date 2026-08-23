@@ -600,6 +600,7 @@ def backfill_inbox(
     *,
     apply: bool = False,
     batch_size: int = 100,
+    progress: Callable[[int, int], None] | None = None,
 ) -> BackfillSummary:
     """Apply only deterministic move rules to mail already in INBOX.
 
@@ -608,25 +609,30 @@ def backfill_inbox(
     """
     client.select_folder(MAILBOX, readonly=not apply)
     uids = tuple(int(uid) for uid in client.search(["ALL"]))
+    if progress is not None:
+        progress(0, len(uids))
     scanned = move_matches = moved = iris_skipped = unmatched = 0
     for start in range(0, len(uids), batch_size):
         batch = uids[start : start + batch_size]
         response = client.fetch(batch, [HEADER_QUERY])
-        for uid in batch:
+        for offset, uid in enumerate(batch, start=1):
             raw = _response_value(response, uid, b"BODY[")
-            if raw is None:
-                continue
-            scanned += 1
-            route = routes.match(parse_metadata(raw))
-            if route is None:
-                unmatched += 1
-            elif route.action == "iris":
-                iris_skipped += 1
-            else:
-                move_matches += 1
-                if apply:
-                    move_messages(client, [uid], routes.folders[route.classification])
-                    moved += 1
+            if raw is not None:
+                scanned += 1
+                route = routes.match(parse_metadata(raw))
+                if route is None:
+                    unmatched += 1
+                elif route.action == "iris":
+                    iris_skipped += 1
+                else:
+                    move_matches += 1
+                    if apply:
+                        move_messages(
+                            client, [uid], routes.folders[route.classification]
+                        )
+                        moved += 1
+            if progress is not None:
+                progress(start + offset, len(uids))
     return BackfillSummary(
         scanned=scanned,
         move_matches=move_matches,
