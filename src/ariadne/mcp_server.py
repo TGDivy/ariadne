@@ -12,7 +12,7 @@ from telegram.constants import ParseMode, ReactionEmoji
 from telegram.error import BadRequest, TelegramError
 
 from .mail import Importance, SuggestedAction, record_current_mail_decision
-from .profile import TELEGRAM_PROFILE
+from .profile import PROFILES
 from .telegram.file_delivery import FileDelivery, FileDeliveryError
 from .telegram.format import split_for_telegram, telegram_messages
 
@@ -75,6 +75,7 @@ def runtime_status() -> dict[str, Any]:
     Secrets and environment values are never returned.
     """
     vault = Path(os.environ.get("ARIADNE_VAULT", Path.cwd())).resolve()
+    profile = PROFILES.get(os.environ.get("ARIADNE_PROFILE", "telegram"))
     return {
         "server": {"name": "ariadne", "version": "0.1.0"},
         "cwd": str(Path.cwd()),
@@ -84,7 +85,7 @@ def runtime_status() -> dict[str, Any]:
             "current": _process(os.getpid()),
             "parent": _process(os.getppid()),
         },
-        "capabilities": list(TELEGRAM_PROFILE.enabled_tools),
+        "capabilities": list(profile.enabled_tools) if profile is not None else [],
     }
 
 

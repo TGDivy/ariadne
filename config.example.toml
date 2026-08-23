@@ -1,0 +1,31 @@
+version = 1
+human_name = "Your Name"
+vault = "~/ariadne-thread"
+
+[telegram]
+bot_token = ""
+allowed_user_id = 0
+
+[telegram.identity]
+name = "Iris"
+description = "Iris runs on your own machine and follows The Thread wherever it leads — a private chat, an open-ended mission, no fixed destination."
+short_description = "Somewhere between a rainbow and a labyrinth."
+# profile_photo = "~/.config/ariadne/iris.jpg"
+
+[mail]
+enabled = false
+state = "~/.local/state/ariadne/mail.sqlite3"
+# username = "you@icloud.com"
+# app_password = ""
+# routes = "~/.config/ariadne/mail-routes.yaml"
+
+# Profile overrides are optional. Omitted values come from src/ariadne/profile.py.
+# [profiles.telegram]
+# model = "gpt-5.6-luna"
+# effort = "low"
+# web_search = "disabled"
+
+# [profiles.mail]
+# model = "gpt-5.6-luna"
+# effort = "medium"
+# web_search = "disabled"

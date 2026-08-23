@@ -7,23 +7,17 @@ The default is a read-only preview. Stop the running Ariadne process and pass
 from __future__ import annotations
 
 import argparse
-import os
 from pathlib import Path
 
 from imapclient import IMAPClient  # type: ignore[import-untyped]
 
+from ariadne.config import load_settings
 from ariadne.mail import IMAP_HOST, backfill_inbox, ensure_folders, load_routes
-
-
-def required_environment(name: str) -> str:
-    value = os.environ.get(name, "").strip()
-    if not value:
-        raise RuntimeError(f"{name} is required")
-    return value
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path)
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -31,14 +25,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    username = required_environment("ICLOUD_USERNAME")
-    password = required_environment("ICLOUD_APP_PASSWORD")
-    routes_path = Path(required_environment("ARIADNE_MAIL_ROUTES")).expanduser()
-    routes = load_routes(routes_path)
+    configured = load_settings(args.config).mail_settings
+    if configured is None:
+        raise RuntimeError("Mail must be enabled to run backfill.")
+    routes = load_routes(configured.routes)
 
     client = IMAPClient(IMAP_HOST, port=993, ssl=True)
     try:
-        client.login(username, password)
+        client.login(configured.username, configured.app_password.get_secret_value())
         if args.apply:
             ensure_folders(client, routes)
         summary = backfill_inbox(client, routes, apply=args.apply)

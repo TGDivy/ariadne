@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -5,124 +6,231 @@ from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import ValidationError
 
 from ariadne.codex import CodexTurnSettings
-from ariadne.config import Settings
+from ariadne.config import load_settings, settings_payload
 
 
-@pytest.fixture
-def settings_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    (tmp_path / ".git").mkdir()
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token")
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "12345")
-    monkeypatch.setenv("ARIADNE_VAULT", str(tmp_path))
-    monkeypatch.setenv("ARIADNE_HUMAN_NAME", "Divy")
-    return tmp_path
+def write_config(
+    tmp_path: Path,
+    *,
+    telegram: str = 'bot_token = "token"\nallowed_user_id = 12345',
+    extra: str = "",
+) -> Path:
+    vault = tmp_path / "vault"
+    (vault / ".git").mkdir(parents=True, exist_ok=True)
+    config = tmp_path / "config.toml"
+    config.write_text(
+        f'''\
+version = 1
+human_name = "Divy"
+vault = "{vault}"
+
+[telegram]
+{telegram}
+{extra}
+''',
+        encoding="utf-8",
+    )
+    return config
 
 
-def test_settings_loads_a_valid_git_vault(settings_environment: Path) -> None:
-    settings = Settings()
+def test_toml_loads_structured_settings_and_profile_overrides(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
 
-    assert settings.telegram_bot_token == "token"
-    assert settings.allowed_user_id == 12345
-    assert settings.vault == settings_environment.resolve()
+[profiles.mail]
+model = "gpt-mail"
+effort = "high"
+web_search = "live"
+""",
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.human_name == "Divy"
     assert settings.codex_turn_settings == CodexTurnSettings(
         model="gpt-5.6-luna",
         effort=ReasoningEffort.low,
         web_search="disabled",
     )
     assert settings.mail_turn_settings == CodexTurnSettings(
-        model="gpt-5.6-luna",
-        effort=ReasoningEffort.medium,
-        web_search="disabled",
-    )
-
-
-def test_settings_accepts_explicit_codex_defaults(
-    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("ARIADNE_CODEX_MODEL", "gpt-test")
-    monkeypatch.setenv("ARIADNE_REASONING_EFFORT", "high")
-    monkeypatch.setenv("ARIADNE_WEB_SEARCH", "live")
-
-    settings = Settings()
-
-    assert settings.codex_turn_settings == CodexTurnSettings(
-        model="gpt-test",
-        effort=ReasoningEffort.high,
-        web_search="live",
-    )
-
-
-def test_settings_accepts_independent_mail_model_defaults(
-    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("ARIADNE_MAIL_MODEL", "gpt-mail")
-    monkeypatch.setenv("ARIADNE_MAIL_REASONING_EFFORT", "high")
-    monkeypatch.setenv("ARIADNE_MAIL_WEB_SEARCH", "live")
-
-    settings = Settings()
-
-    assert settings.mail_turn_settings == CodexTurnSettings(
         model="gpt-mail",
         effort=ReasoningEffort.high,
         web_search="live",
     )
+    assert settings.mail_settings is None
 
 
-def test_settings_requires_a_positive_user_id(
-    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "0")
+def test_ariadne_config_selects_an_alternate_toml(tmp_path: Path) -> None:
+    config = write_config(tmp_path)
 
-    with pytest.raises(ValidationError, match="greater than 0"):
-        Settings()
+    settings = load_settings(environ={"ARIADNE_CONFIG": str(config)})
 
-
-def test_settings_requires_an_existing_vault(
-    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("ARIADNE_VAULT", str(settings_environment / "missing"))
-
-    with pytest.raises(ValidationError, match="directory"):
-        Settings()
+    assert settings.allowed_user_id == 12345
 
 
-def test_settings_requires_a_git_vault(
-    settings_environment: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    non_git_directory = tmp_path / "not-a-vault"
-    non_git_directory.mkdir()
-    monkeypatch.setenv("ARIADNE_VAULT", str(non_git_directory))
+def test_environment_variables_do_not_override_toml(tmp_path: Path) -> None:
+    config = write_config(tmp_path)
 
-    with pytest.raises(ValidationError, match="Git repository"):
-        Settings()
+    settings = load_settings(
+        config,
+        environ={
+            "ARIADNE_HUMAN_NAME": "Legacy",
+            "TELEGRAM_BOT_TOKEN": "legacy-token",
+        },
+    )
 
-
-def test_mail_is_opt_in_and_requires_a_complete_configuration(
-    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    assert Settings().mail_settings is None
-
-    monkeypatch.setenv("ICLOUD_USERNAME", "person@icloud.com")
-    with pytest.raises(ValueError, match="must be set together"):
-        _ = Settings().mail_settings
+    assert settings.human_name == "Divy"
+    assert settings.telegram_bot_token == "token"
 
 
-def test_mail_configuration_expands_external_paths(
-    settings_environment: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
+def test_missing_config_is_rejected(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.toml"
+
+    with pytest.raises(ValueError, match="Ariadne config does not exist"):
+        load_settings(missing, environ={})
+
+
+def test_disabled_mail_does_not_require_credentials(tmp_path: Path) -> None:
+    config = write_config(tmp_path, extra="\n[mail]\nenabled = false\n")
+
+    settings = load_settings(config, environ={})
+
+    assert settings.mail_settings is None
+
+
+def test_enabled_incomplete_mail_is_rejected(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[mail]
+enabled = true
+username = "person@icloud.com"
+""",
+    )
+
+    with pytest.raises(ValidationError, match="app_password, routes"):
+        load_settings(config, environ={})
+
+
+def test_enabled_mail_expands_paths(tmp_path: Path) -> None:
     routes = tmp_path / "routes.yaml"
     routes.write_text("version: 1\n", encoding="utf-8")
     state = tmp_path / "state" / "mail.sqlite3"
-    monkeypatch.setenv("ICLOUD_USERNAME", "person@icloud.com")
-    monkeypatch.setenv("ICLOUD_APP_PASSWORD", "app-password")
-    monkeypatch.setenv("ARIADNE_MAIL_ROUTES", str(routes))
-    monkeypatch.setenv("ARIADNE_MAIL_STATE", str(state))
+    config = write_config(
+        tmp_path,
+        extra=f'''\
 
-    configured = Settings().mail_settings
+[mail]
+enabled = true
+username = "person@icloud.com"
+app_password = "app-password"
+routes = "{routes}"
+state = "{state}"
+''',
+    )
+
+    configured = load_settings(config, environ={}).mail_settings
 
     assert configured is not None
     assert configured.routes == routes.resolve()
     assert configured.state == state.resolve()
     assert configured.app_password.get_secret_value() == "app-password"
+
+
+def test_default_mail_state_expands_the_home_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
+    config = write_config(tmp_path)
+
+    settings = load_settings(config, environ={})
+
+    assert settings.mail.state == fake_home / ".local/state/ariadne/mail.sqlite3"
+
+
+def test_config_example_is_a_valid_disabled_mail_template(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    (vault / ".git").mkdir(parents=True)
+    source = Path(__file__).parents[1] / "config.example.toml"
+    config = tmp_path / "config.toml"
+    config.write_text(
+        source.read_text(encoding="utf-8")
+        .replace('vault = "~/ariadne-thread"', f'vault = "{vault}"')
+        .replace('bot_token = ""', 'bot_token = "token"')
+        .replace("allowed_user_id = 0", "allowed_user_id = 7"),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.mail.enabled is False
+    assert settings.mail_settings is None
+
+
+def test_redacted_configuration_never_contains_secrets(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path, telegram='bot_token = "secret"\nallowed_user_id = 7'
+    )
+
+    serialized = json.dumps(settings_payload(load_settings(config, environ={})))
+
+    assert "secret" not in serialized
+    assert "<redacted>" in serialized
+
+
+def test_validation_errors_never_contain_mail_passwords(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[mail]
+enabled = true
+username = "person@icloud.com"
+app_password = "super-secret-password"
+routes = "/does/not/exist.yaml"
+""",
+    )
+
+    with pytest.raises(ValidationError) as raised:
+        load_settings(config, environ={})
+
+    assert "super-secret-password" not in str(raised.value)
+
+
+def test_unknown_configuration_keys_are_rejected(tmp_path: Path) -> None:
+    config = write_config(tmp_path, extra="unknown = true\n")
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        load_settings(config, environ={})
+
+
+def test_settings_requires_a_positive_user_id(tmp_path: Path) -> None:
+    config = write_config(tmp_path, telegram='bot_token = "token"\nallowed_user_id = 0')
+
+    with pytest.raises(ValidationError, match="greater than 0"):
+        load_settings(config, environ={})
+
+
+def test_settings_requires_an_existing_vault(tmp_path: Path) -> None:
+    config = write_config(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            str(tmp_path / "vault"), str(tmp_path / "missing")
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="directory"):
+        load_settings(config, environ={})
+
+
+def test_settings_requires_a_git_vault(tmp_path: Path) -> None:
+    config = write_config(tmp_path)
+    (tmp_path / "vault" / ".git").rmdir()
+
+    with pytest.raises(ValidationError, match="Git repository"):
+        load_settings(config, environ={})

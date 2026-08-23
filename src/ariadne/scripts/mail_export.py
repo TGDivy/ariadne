@@ -1,8 +1,8 @@
 """Export recent iCloud Mail messages for local, read-only mailbox analysis.
 
-Run with the repository's environment file, for example:
+Run with Ariadne's TOML configuration, for example:
 
-    uv run --env-file .env python -m ariadne.scripts.mail_export \
+    uv run python -m ariadne.scripts.mail_export \
         --limit 1000 --output mail-export.jsonl
 
 The export contains headers, routing metadata, plain-text body excerpts, and
@@ -16,7 +16,6 @@ import email
 import getpass
 import imaplib
 import json
-import os
 import re
 import sys
 import tempfile
@@ -27,6 +26,8 @@ from email.header import decode_header, make_header
 from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+
+from ariadne.config import Settings, load_settings
 
 
 def decode(value: str | None) -> str:
@@ -186,15 +187,15 @@ def write_jsonl(path: Path, messages: list[dict[str, Any]]) -> None:
     temporary_path.replace(path)
 
 
-def load_credentials() -> tuple[str, str]:
-    username = (
-        os.environ.get("ICLOUD_USERNAME") or input("iCloud Mail username: ").strip()
-    )
-    password = os.environ.get("ICLOUD_APP_PASSWORD") or getpass.getpass(
-        "App-specific password (hidden): "
+def load_credentials(settings: Settings) -> tuple[str, str]:
+    username = settings.mail.username or input("iCloud Mail username: ").strip()
+    password = (
+        settings.mail.app_password.get_secret_value()
+        if settings.mail.app_password is not None
+        else getpass.getpass("App-specific password (hidden): ")
     )
     if not username or not password:
-        raise RuntimeError("ICLOUD_USERNAME and ICLOUD_APP_PASSWORD are required")
+        raise RuntimeError("Mail username and app_password are required in TOML")
     return username, password
 
 
@@ -218,6 +219,7 @@ def render_progress(done: int, total: int, started: float) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--folder", default="INBOX")
     parser.add_argument("--limit", type=int, default=1000)
     parser.add_argument(
@@ -233,7 +235,7 @@ def main() -> None:
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
 
-    username, password = load_credentials()
+    username, password = load_credentials(load_settings(args.config))
     mail = imaplib.IMAP4_SSL("imap.mail.me.com", 993)
     try:
         mail.login(username, password)

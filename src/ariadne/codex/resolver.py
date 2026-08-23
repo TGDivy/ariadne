@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from importlib.resources import files
 from pathlib import Path
@@ -87,12 +86,15 @@ def resolve_profile(
         repository=repository,
     )
 
-    values = {"ARIADNE_VAULT": str(vault)}
-    for variable in profile.mcp_environment_names:
-        value = os.environ.get(variable)
-        if value is not None:
-            values[variable] = value
-    values.update(mcp_environment or {})
+    values = {
+        "ARIADNE_VAULT": str(vault),
+        "ARIADNE_PROFILE": profile.name,
+    }
+    values.update(
+        (name, value)
+        for name, value in (mcp_environment or {}).items()
+        if name in profile.mcp_environment_names
+    )
 
     return ResolvedTurnProfile(
         profile=profile,

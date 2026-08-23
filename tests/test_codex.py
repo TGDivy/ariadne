@@ -76,10 +76,15 @@ def test_mcp_config_forwards_its_required_environment(
             vault=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
+            mcp_environment={
+                "TELEGRAM_BOT_TOKEN": "token-for-test",
+                "TELEGRAM_ALLOWED_USER_ID": "123",
+            },
         )
     )
 
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
+    assert 'mcp_servers.ariadne.env.ARIADNE_PROFILE="telegram"' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
     assert (
         "mcp_servers.ariadne.enabled_tools="

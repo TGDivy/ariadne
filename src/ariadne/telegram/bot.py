@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import suppress
@@ -180,8 +179,15 @@ class _Album:
 class AriadneBot:
     """Translate Telegram updates into one shared Codex conversation."""
 
-    def __init__(self, allowed_user_id: int, conversation: CodexConversation) -> None:
+    def __init__(
+        self,
+        allowed_user_id: int,
+        conversation: CodexConversation,
+        *,
+        bot_token: str,
+    ) -> None:
         self._allowed_user_id = allowed_user_id
+        self._bot_token = bot_token
         self._conversation = conversation
         self._busy = False
         self._stopping = False
@@ -251,7 +257,7 @@ class AriadneBot:
         try:
             files = await self._file_delivery.approve(
                 approval_id,
-                token=os.environ["TELEGRAM_BOT_TOKEN"],
+                token=self._bot_token,
                 chat_id=message.chat_id,
             )
         except (FileDeliveryError, KeyError):
