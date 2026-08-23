@@ -59,6 +59,23 @@ live web research for the running process. Each change starts a new in-memory
 Codex conversation. Use `/stop` to ask Codex to interrupt the active turn; it
 cannot undo work that already completed.
 
+### Read-only mail export experiment
+
+The one-off operator script can export recent iCloud Mail messages for local
+analysis. Add `ICLOUD_USERNAME` and `ICLOUD_APP_PASSWORD` to the ignored `.env`
+file, then run:
+
+```bash
+uv run --env-file .env python -m ariadne.scripts.mail_export \
+  --limit 1000 --output mail-export.jsonl
+```
+
+The export is JSONL so it can retain recipients, thread headers, body text, and
+attachment metadata without storing attachment binaries. It selects the
+mailbox read-only and uses `BODY.PEEK[]`; it does not send, move, delete, or
+mark messages read. The default folder is `INBOX`; use `--folder` to inspect a
+different mailbox.
+
 Messages sent while Ariadne is working are not rejected: they steer the Codex
 turn that is already running, so Codex folds them into the work in flight.
 
