@@ -570,6 +570,30 @@ def ensure_folders(client: IMAPClient, routes: MailRoutes) -> None:
             client.create_folder(folder)
 
 
+def move_messages(
+    client: IMAPClient, messages: Iterable[int], destination: str
+) -> None:
+    """Move UIDs atomically, or emulate it with UIDPLUS and targeted expunge.
+
+    iCloud Mail does not advertise RFC 6851 MOVE. Its UIDPLUS support lets us
+    copy, mark only the source UIDs deleted, and expunge only those same UIDs.
+    A mailbox-wide EXPUNGE is deliberately never used.
+    """
+    uids = tuple(messages)
+    if not uids:
+        return
+    if client.has_capability("MOVE"):
+        client.move(uids, destination)
+        return
+    if not client.has_capability("UIDPLUS"):
+        raise RuntimeError(
+            "The IMAP server supports neither MOVE nor safe UIDPLUS moves."
+        )
+    client.copy(uids, destination)
+    client.delete_messages(uids, silent=True)
+    client.uid_expunge(uids)
+
+
 def backfill_inbox(
     client: IMAPClient,
     routes: MailRoutes,
@@ -601,7 +625,7 @@ def backfill_inbox(
             else:
                 move_matches += 1
                 if apply:
-                    client.move([uid], routes.folders[route.classification])
+                    move_messages(client, [uid], routes.folders[route.classification])
                     moved += 1
     return BackfillSummary(
         scanned=scanned,
@@ -771,7 +795,9 @@ class MailProcessor:
         if job.action == "move":
             if job.destination is None:
                 raise RuntimeError("A move needs a destination folder.")
-            await asyncio.to_thread(self.client.move, [job.uid], job.destination)
+            await asyncio.to_thread(
+                move_messages, self.client, [job.uid], job.destination
+            )
         elif job.action == "flag":
             await asyncio.to_thread(self.client.add_flags, [job.uid], [b"\\Flagged"])
         elif job.action != "keep":
