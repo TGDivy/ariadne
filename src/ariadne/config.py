@@ -1,12 +1,23 @@
 """Environment-backed configuration for Ariadne."""
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from openai_codex.generated.v2_all import ReasoningEffort
-from pydantic import DirectoryPath, Field, PositiveInt, field_validator
+from pydantic import DirectoryPath, Field, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .codex import CodexTurnSettings, WebSearchSetting
+
+
+@dataclass(frozen=True, slots=True)
+class MailSettings:
+    """The complete opt-in iCloud Mail runtime configuration."""
+
+    username: str
+    app_password: SecretStr
+    routes: Path
+    state: Path
 
 
 class Settings(BaseSettings):
@@ -39,6 +50,22 @@ class Settings(BaseSettings):
         default="disabled",
         validation_alias="ARIADNE_WEB_SEARCH",
     )
+    icloud_username: str | None = Field(
+        default=None,
+        validation_alias="ICLOUD_USERNAME",
+    )
+    icloud_app_password: SecretStr | None = Field(
+        default=None,
+        validation_alias="ICLOUD_APP_PASSWORD",
+    )
+    mail_routes: Path | None = Field(
+        default=None,
+        validation_alias="ARIADNE_MAIL_ROUTES",
+    )
+    mail_state: Path = Field(
+        default=Path("~/.local/state/ariadne/mail.sqlite3"),
+        validation_alias="ARIADNE_MAIL_STATE",
+    )
 
     @field_validator("telegram_bot_token", mode="before")
     @classmethod
@@ -57,6 +84,23 @@ class Settings(BaseSettings):
     def strip_human_name(cls, value: object) -> object:
         """Treat a whitespace-only name as absent."""
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("icloud_username", mode="before")
+    @classmethod
+    def strip_icloud_username(cls, value: object) -> object:
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
+
+    @field_validator("mail_routes", "mail_state", mode="before")
+    @classmethod
+    def expand_mail_path(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            return Path(value).expanduser() if value else None
+        if isinstance(value, Path):
+            return value.expanduser()
+        return value
 
     @field_validator("vault", mode="before")
     @classmethod
@@ -85,4 +129,32 @@ class Settings(BaseSettings):
             model=self.codex_model,
             effort=self.reasoning_effort,
             web_search=self.web_search,
+        )
+
+    @property
+    def mail_settings(self) -> MailSettings | None:
+        """Return mail settings when the source is configured completely."""
+        configured = (
+            self.icloud_username is not None,
+            self.icloud_app_password is not None,
+            self.mail_routes is not None,
+        )
+        if not any(configured):
+            return None
+        if not all(configured):
+            raise ValueError(
+                "ICLOUD_USERNAME, ICLOUD_APP_PASSWORD, and ARIADNE_MAIL_ROUTES "
+                "must be set together."
+            )
+        assert self.icloud_username is not None
+        assert self.icloud_app_password is not None
+        assert self.mail_routes is not None
+        routes = self.mail_routes.resolve()
+        if not routes.is_file():
+            raise ValueError("ARIADNE_MAIL_ROUTES must point to a YAML file.")
+        return MailSettings(
+            username=self.icloud_username,
+            app_password=self.icloud_app_password,
+            routes=routes,
+            state=self.mail_state.resolve(),
         )

@@ -1,0 +1,28 @@
+version: 1
+
+folders:
+  newsletters: Newsletters
+  promotions: Promotions
+  receipts: Receipts
+  travel: Travel
+  notifications: Notifications
+
+defaults:
+  unmatched_action: inspect
+  unmatched_keep_in_inbox: true
+
+# Rules are ordered; the first match wins. Match values are case-insensitive.
+rules:
+  - id: important-example
+    match:
+      from: [person@example.com]
+      subject_contains_any: [Action needed]
+    classification: notifications
+    action: iris
+
+  - id: newsletter-example
+    match:
+      from: [newsletter@example.com]
+      has_list_unsubscribe: true
+    classification: newsletters
+    action: move

@@ -74,3 +74,34 @@ def test_settings_requires_a_git_vault(
 
     with pytest.raises(ValidationError, match="Git repository"):
         Settings()
+
+
+def test_mail_is_opt_in_and_requires_a_complete_configuration(
+    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert Settings().mail_settings is None
+
+    monkeypatch.setenv("ICLOUD_USERNAME", "person@icloud.com")
+    with pytest.raises(ValueError, match="must be set together"):
+        _ = Settings().mail_settings
+
+
+def test_mail_configuration_expands_external_paths(
+    settings_environment: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    routes = tmp_path / "routes.yaml"
+    routes.write_text("version: 1\n", encoding="utf-8")
+    state = tmp_path / "state" / "mail.sqlite3"
+    monkeypatch.setenv("ICLOUD_USERNAME", "person@icloud.com")
+    monkeypatch.setenv("ICLOUD_APP_PASSWORD", "app-password")
+    monkeypatch.setenv("ARIADNE_MAIL_ROUTES", str(routes))
+    monkeypatch.setenv("ARIADNE_MAIL_STATE", str(state))
+
+    configured = Settings().mail_settings
+
+    assert configured is not None
+    assert configured.routes == routes.resolve()
+    assert configured.state == state.resolve()
+    assert configured.app_password.get_secret_value() == "app-password"

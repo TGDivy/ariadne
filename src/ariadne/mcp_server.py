@@ -13,6 +13,7 @@ from telegram.error import BadRequest, TelegramError
 
 from .codex import MCP_TOOLS
 from .file_delivery import FileDelivery, FileDeliveryError
+from .mail import Importance, SuggestedAction, record_current_mail_decision
 from .telegram_format import split_for_telegram, telegram_messages
 
 mcp = FastMCP(
@@ -205,6 +206,27 @@ async def prepare_files(paths: list[str]) -> dict[str, Any]:
             for file in files
         ],
     }
+
+
+@mcp.tool
+def triage_current_mail(
+    classification: str,
+    importance: Importance,
+    suggested_action: SuggestedAction,
+    draft_reply: str | None = None,
+) -> dict[str, str]:
+    """Record the decision for this mail event and request a safe mailbox action.
+
+    This capability exists only in mail turns. It can keep or flag the message,
+    or move it to one of Ariadne's five configured filing folders. A draft reply
+    is recorded for the user; this tool never sends email.
+    """
+    try:
+        return record_current_mail_decision(
+            classification, importance, suggested_action, draft_reply
+        )
+    except ValueError as error:
+        raise ToolError(str(error)) from error
 
 
 def main() -> None:

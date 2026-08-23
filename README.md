@@ -80,6 +80,37 @@ number of messages per request.
 Messages sent while Ariadne is working are not rejected: they steer the Codex
 turn that is already running, so Codex folds them into the work in flight.
 
+### iCloud Mail loop
+
+Mail is opt-in. Copy `mail-routes.example.yaml` outside the repository, edit it,
+and set all three values below in the ignored `.env` file:
+
+```dotenv
+ICLOUD_USERNAME=you@icloud.com
+ICLOUD_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+ARIADNE_MAIL_ROUTES=~/.config/ariadne/mail-routes.yaml
+```
+
+`ARIADNE_MAIL_STATE` optionally changes the durable SQLite path (the default is
+`~/.local/state/ariadne/mail.sqlite3`). The normal `python -m ariadne` command
+records the current `INBOX` UID as its first-run baseline without processing old
+mail. From then on it catches up mail received during downtime, drains jobs
+sequentially, and waits with IMAP IDLE. Inspection uses `BODY.PEEK`; rules that
+say `move` do not invoke Iris. Mail turns can keep, flag, or move the current
+message and may draft, but never send, email. The configured routes file can
+contain personal data and must stay outside Git.
+
+To apply only deterministic `move` rules to mail that was already in `INBOX`,
+stop Ariadne and preview the separate backfill:
+
+```bash
+uv run --env-file .env python -m ariadne.scripts.mail_backfill
+uv run --env-file .env python -m ariadne.scripts.mail_backfill --apply
+```
+
+The backfill never starts a Codex turn: it skips every `iris` rule and unmatched
+message. Its default mode is read-only and reports what `--apply` would move.
+
 ## Instructions
 
 Iris's prompt lives in `src/ariadne/instructions/` as Markdown, one document per
