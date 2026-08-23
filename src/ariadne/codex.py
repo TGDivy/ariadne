@@ -42,6 +42,7 @@ from .instructions import render
 LOGGER = logging.getLogger(__name__)
 
 WebSearchSetting = Literal["disabled", "live"]
+ConversationSurface = Literal["telegram", "mail"]
 ActivityCallback = Callable[[str], Awaitable[None]]
 SpokenCallback = Callable[[str], None]
 StopRequested = Callable[[], bool]
@@ -49,6 +50,7 @@ StopRequested = Callable[[], bool]
 WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_SERVER_NAME = "ariadne"
 MCP_TOOLS = ("runtime_status", "send_message", "react", "prepare_files")
+MAIL_TOOL = "triage_current_mail"
 TELEGRAM_MESSAGE_TOOL = "send_message"
 TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react")
 MCP_REQUIRED_ENVIRONMENT_VARIABLES = (
@@ -166,15 +168,32 @@ def _sandbox_config_overrides() -> tuple[str, ...]:
     )
 
 
-def _mcp_config_overrides(vault: Path) -> tuple[str, ...]:
+def _mcp_config_overrides(
+    vault: Path,
+    *,
+    mail_job_id: str | None = None,
+    mail_state: Path | None = None,
+) -> tuple[str, ...]:
     """Return the local Ariadne MCP server configuration for Codex."""
+    enabled_tools = list(MCP_TOOLS)
+    if mail_job_id is not None and mail_state is not None:
+        enabled_tools.append(MAIL_TOOL)
     overrides = [
         f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
         "mcp_servers.ariadne.args=" + json.dumps(["-m", "ariadne.mcp_server"]),
         "mcp_servers.ariadne.env.ARIADNE_VAULT=" + json.dumps(str(vault)),
         "mcp_servers.ariadne.enabled=true",
-        "mcp_servers.ariadne.enabled_tools=" + json.dumps(list(MCP_TOOLS)),
+        "mcp_servers.ariadne.enabled_tools=" + json.dumps(enabled_tools),
     ]
+    if mail_job_id is not None and mail_state is not None:
+        overrides.extend(
+            (
+                "mcp_servers.ariadne.env.ARIADNE_MAIL_JOB_ID="
+                + json.dumps(mail_job_id),
+                "mcp_servers.ariadne.env.ARIADNE_MAIL_STATE="
+                + json.dumps(str(mail_state)),
+            )
+        )
     for variable in MCP_REQUIRED_ENVIRONMENT_VARIABLES:
         value = os.environ.get(variable)
         if value is not None:
@@ -191,18 +210,28 @@ class CodexConversation:
         settings: CodexTurnSettings,
         *,
         human: str,
+        surface: ConversationSurface = "telegram",
+        mail_job_id: str | None = None,
+        mail_state: Path | None = None,
         client: AsyncCodex | None = None,
     ) -> None:
         self._vault = vault
         self._settings = settings
         self._human = human
+        self._surface = surface
+        if surface == "mail" and (mail_job_id is None or mail_state is None):
+            raise ValueError("Mail conversations require a job id and state path.")
         self._client = (
             client
             if client is not None
             else AsyncCodex(
                 CodexConfig(
                     config_overrides=_sandbox_config_overrides()
-                    + _mcp_config_overrides(vault),
+                    + _mcp_config_overrides(
+                        vault,
+                        mail_job_id=mail_job_id,
+                        mail_state=mail_state,
+                    ),
                     cwd=str(vault),
                 )
             )
@@ -367,7 +396,8 @@ class CodexConversation:
     def _base_instructions(self) -> str:
         """Combine the shared instructions with the rules for this surface."""
         return "\n\n".join(
-            render(document, human=self._human) for document in ("base", "telegram")
+            render(document, human=self._human)
+            for document in ("base", self._surface)
         )
 
     def _developer_instructions(self) -> str:

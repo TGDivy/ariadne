@@ -1,6 +1,8 @@
-"""Run Ariadne's Milestone 1 Telegram conversation loop."""
+"""Run Ariadne's Telegram conversation and optional mail loops."""
 
+import asyncio
 import logging
+from contextlib import suppress
 from typing import Any
 
 from pydantic import ValidationError
@@ -16,6 +18,7 @@ from telegram.ext import (
 
 from .codex import CodexConversation
 from .config import Settings
+from .mail import MailLoop
 from .telegram_bot import AriadneBot
 
 LOGGER = logging.getLogger(__name__)
@@ -53,7 +56,11 @@ def main() -> None:
 
     try:
         settings = Settings()
+        mail_settings = settings.mail_settings
     except ValidationError as error:
+        LOGGER.error("Configuration error: %s", error)
+        raise SystemExit(2) from error
+    except ValueError as error:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
 
@@ -63,8 +70,36 @@ def main() -> None:
         human=settings.human_name,
     )
     ariadne = AriadneBot(settings.allowed_user_id, conversation)
+    try:
+        mail_loop = (
+            MailLoop(
+                mail_settings,
+                settings.vault,
+                settings.codex_turn_settings,
+                human=settings.human_name,
+            )
+            if mail_settings is not None
+            else None
+        )
+    except ValueError as error:
+        LOGGER.error("Configuration error: %s", error)
+        raise SystemExit(2) from error
+    mail_task: asyncio.Task[None] | None = None
 
-    async def close_codex(_: object) -> None:
+    async def start_services(application: AriadneApplication) -> None:
+        nonlocal mail_task
+        await publish_commands(application)
+        if mail_loop is not None:
+            mail_task = asyncio.create_task(mail_loop.run_forever())
+            LOGGER.info("Started iCloud Mail source")
+
+    async def close_services(_: object) -> None:
+        if mail_loop is not None:
+            mail_loop.stop()
+        if mail_task is not None:
+            mail_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await mail_task
         try:
             await conversation.close()
         except Exception:
@@ -74,8 +109,8 @@ def main() -> None:
         ApplicationBuilder()
         .token(settings.telegram_bot_token)
         .concurrent_updates(True)
-        .post_init(publish_commands)
-        .post_shutdown(close_codex)
+        .post_init(start_services)
+        .post_shutdown(close_services)
         .build()
     )
     application.add_handler(CommandHandler("start", ariadne.start))

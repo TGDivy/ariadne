@@ -9,6 +9,7 @@ __pycache__/
 .ariadne-attachments/
 mail-export*.jsonl
 mail-export*.csv
+/mail-routes.yaml
 
 # Local secrets
 .env

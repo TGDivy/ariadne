@@ -8,7 +8,14 @@ from fastmcp.exceptions import ToolError
 from telegram.constants import ParseMode
 
 from ariadne import mcp_server
-from ariadne.mcp_server import mcp, react, runtime_status, send_message
+from ariadne.mail import MailState
+from ariadne.mcp_server import (
+    mcp,
+    react,
+    runtime_status,
+    send_message,
+    triage_current_mail,
+)
 from ariadne.telegram_format import TELEGRAM_MESSAGE_LIMIT
 
 
@@ -50,7 +57,40 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "send_message",
         "react",
         "prepare_files",
+        "triage_current_mail",
     ]
+
+
+def test_a_normal_turn_has_no_mail_authority(monkeypatch) -> None:
+    monkeypatch.delenv("ARIADNE_MAIL_JOB_ID", raising=False)
+    monkeypatch.delenv("ARIADNE_MAIL_STATE", raising=False)
+
+    with pytest.raises(ToolError, match="unavailable"):
+        triage_current_mail("notifications", "important", "keep_in_inbox")
+
+
+def test_a_mail_turn_can_record_but_not_execute_its_decision(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "mail.sqlite3"
+    state = MailState(path)
+    state.initialize()
+    state.discover("INBOX", 1, [2])
+    job_id = MailState.job_id("INBOX", 1, 2)
+    state.start(job_id)
+    monkeypatch.setenv("ARIADNE_MAIL_JOB_ID", job_id)
+    monkeypatch.setenv("ARIADNE_MAIL_STATE", str(path))
+
+    result = triage_current_mail(
+        "career", "important", "flag", "Thanks — I am interested."
+    )
+
+    job = state.get(job_id)
+    assert result == {"status": "recorded", "job_id": job_id}
+    assert job is not None
+    assert job.suggested_action == "flag"
+    assert job.draft_reply == "Thanks — I am interested."
+    assert job.action is None
 
 
 def test_runtime_status_never_returns_environment_values(
