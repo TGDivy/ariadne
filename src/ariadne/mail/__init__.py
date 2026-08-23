@@ -6,6 +6,7 @@ from .models import (
     MailMetadata,
     MailRoute,
     MailRoutes,
+    RestoreSummary,
     SuggestedAction,
 )
 from .reader import MailReader
@@ -24,6 +25,7 @@ from .runtime import (
     parse_metadata,
     record_current_mail_decision,
     render_message,
+    restore_folder_to_inbox,
 )
 
 __all__ = [
@@ -39,6 +41,7 @@ __all__ = [
     "MailRoutes",
     "MailReader",
     "MailState",
+    "RestoreSummary",
     "SuggestedAction",
     "backfill_inbox",
     "cheap_triage",
@@ -48,4 +51,5 @@ __all__ = [
     "parse_metadata",
     "record_current_mail_decision",
     "render_message",
+    "restore_folder_to_inbox",
 ]

@@ -34,6 +34,7 @@ from .models import (
     MailJob,
     MailMetadata,
     MailRoutes,
+    RestoreSummary,
     SuggestedAction,
 )
 
@@ -640,6 +641,32 @@ def backfill_inbox(
         iris_skipped=iris_skipped,
         unmatched=unmatched,
     )
+
+
+def restore_folder_to_inbox(
+    client: IMAPClient,
+    source: str,
+    *,
+    apply: bool = False,
+    progress: Callable[[int, int], None] | None = None,
+) -> RestoreSummary:
+    """Preview or move every message from one folder back to INBOX."""
+    if source.casefold() == MAILBOX.casefold():
+        raise ValueError("The restore source cannot be INBOX.")
+
+    client.select_folder(source, readonly=not apply)
+    uids = tuple(int(uid) for uid in client.search(["ALL"]))
+    if progress is not None:
+        progress(0, len(uids))
+
+    moved = 0
+    for offset, uid in enumerate(uids, start=1):
+        if apply:
+            move_messages(client, [uid], MAILBOX)
+            moved += 1
+        if progress is not None:
+            progress(offset, len(uids))
+    return RestoreSummary(found=len(uids), moved=moved)
 
 
 class MailProcessor:
