@@ -765,18 +765,26 @@ class MailProcessor:
                 await self._apply(cast(MailJob, self.state.get(job.job_id)))
                 return
 
-            triage = cheap_triage(metadata) if route is None else "important"
-            if triage == "routine":
-                self.state.set_runtime_decision(
-                    job.job_id,
-                    route_id=None,
-                    classification="routine",
-                    importance="routine",
-                    suggested_action="keep_in_inbox",
-                    action="keep",
-                )
-                self.state.finish(job.job_id)
-                return
+            if route is None:
+                defaults = self.routes.defaults
+                if defaults.unmatched_action != "inspect":
+                    raise RuntimeError(
+                        f"Unsupported unmatched action: {defaults.unmatched_action}"
+                    )
+                if (
+                    cheap_triage(metadata) == "routine"
+                    and defaults.unmatched_keep_in_inbox
+                ):
+                    self.state.set_runtime_decision(
+                        job.job_id,
+                        route_id=None,
+                        classification="routine",
+                        importance="routine",
+                        suggested_action="keep_in_inbox",
+                        action="keep",
+                    )
+                    self.state.finish(job.job_id)
+                    return
 
             raw = await self._fetch(job.uid, FULL_QUERY)
             if raw is None:
@@ -799,7 +807,11 @@ class MailProcessor:
             f"ordered route {route.id!r} classified this as "
             f"{route.classification!r} and requested Iris"
             if (route := self.routes.match(metadata)) is not None
-            else "unmatched mail needs inspection"
+            else (
+                "unmatched mail needs inspection and defaults to staying in INBOX"
+                if self.routes.defaults.unmatched_keep_in_inbox
+                else "unmatched mail needs inspection"
+            )
         )
         prompt = (
             f"Mailbox event: {MAILBOX} UID {job.uid} (UIDVALIDITY {job.uidvalidity}).\n"

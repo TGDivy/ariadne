@@ -119,6 +119,10 @@ say `move` do not invoke Iris. Mail turns can keep, flag, or move the current
 message and may draft, but never send, email. The configured routes file can
 contain personal data and must stay outside Git.
 
+Unmatched mail follows the route defaults: cheap header triage keeps clearly
+routine mail in `INBOX`, while everything else gets an Iris inspection that
+defaults to keeping the message in `INBOX`.
+
 Mailbox moves use IMAP `MOVE` when available. On iCloud, Ariadne uses its
 `UIDPLUS` support to copy, mark deleted, and expunge only the exact source UIDs.
 

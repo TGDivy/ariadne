@@ -21,6 +21,7 @@ from ariadne.mail import (
     MailRoutes,
     MailState,
     backfill_inbox,
+    cheap_triage,
     load_routes,
     move_messages,
     parse_metadata,
@@ -42,6 +43,10 @@ def routes() -> MailRoutes:
                 "receipts": "Receipts",
                 "travel": "Travel",
                 "notifications": "Notifications",
+            },
+            "defaults": {
+                "unmatched_action": "inspect",
+                "unmatched_keep_in_inbox": True,
             },
             "rules": [
                 {
@@ -77,6 +82,8 @@ def test_checked_in_routes_example_matches_the_runtime_schema() -> None:
 
     assert len(configured.rules) == 2
     assert configured.folders["newsletters"] == "Newsletters"
+    assert configured.defaults.unmatched_action == "inspect"
+    assert configured.defaults.unmatched_keep_in_inbox is True
 
 
 def message(
@@ -108,6 +115,36 @@ def test_ordered_routes_use_the_first_complete_match() -> None:
     assert matched is not None
     assert matched.id == "important-first"
     assert matched.action == "iris"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            message(
+                "alerts@example.com",
+                "Security alert",
+                message_id="<1>",
+                list_unsubscribe=True,
+            ),
+            "important",
+        ),
+        (
+            message(
+                "list@example.com",
+                "Weekly digest",
+                message_id="<2>",
+                list_unsubscribe=True,
+            ),
+            "routine",
+        ),
+        (message("person@example.com", "Project update", message_id="<3>"), "inspect"),
+    ],
+)
+def test_cheap_triage_only_short_circuits_clearly_routine_mail(
+    raw: bytes, expected: str
+) -> None:
+    assert cheap_triage(parse_metadata(raw)) == expected
 
 
 class FakeIMAP:
@@ -274,22 +311,33 @@ async def test_first_start_baselines_then_new_mail_is_processed(
                 message_id="<bulk>",
                 list_unsubscribe=True,
             ),
+            5: message(
+                "alerts@example.com",
+                "Security alert",
+                message_id="<alert>",
+            ),
         }
     )
     await processor.reconcile()
     await processor.process_available()
 
     assert client.moves == [((2,), "Receipts")]
-    assert client.flags == [([3], [b"\\Flagged"])]
-    assert len(conversations) == 1
+    assert client.flags == [([3], [b"\\Flagged"]), ([5], [b"\\Flagged"])]
+    assert len(conversations) == 2
     assert "Useful body text" in conversations[0].prompts[0]
-    assert conversations[0].closed
-    assert [query for _uid, query in client.fetches].count(FULL_QUERY) == 1
-    assert [query for _uid, query in client.fetches].count(HEADER_QUERY) == 3
+    assert "ordered route 'important-first'" in conversations[0].prompts[0]
+    assert "defaults to staying in INBOX" in conversations[1].prompts[0]
+    assert all(conversation.closed for conversation in conversations)
+    assert [query for _uid, query in client.fetches].count(FULL_QUERY) == 2
+    assert [query for _uid, query in client.fetches].count(HEADER_QUERY) == 4
     assert all(
         state.get(MailState.job_id("INBOX", 10, uid)).status == "done"
-        for uid in (2, 3, 4)
+        for uid in (2, 3, 4, 5)
     )
+    routine = state.get(MailState.job_id("INBOX", 10, 4))
+    assert routine is not None
+    assert routine.action == "keep"
+    assert routine.suggested_action == "keep_in_inbox"
     assert state.get(MailState.job_id("INBOX", 10, 1)) is None
 
 
@@ -359,7 +407,12 @@ def test_backfill_previews_and_bulk_applies_deterministic_moves() -> None:
             2: message(
                 "same@example.com", "Action needed now", message_id="<important>"
             ),
-            3: message("other@example.com", "Hello", message_id="<other>"),
+            3: message(
+                "other@example.com",
+                "Weekly digest",
+                message_id="<other>",
+                list_unsubscribe=True,
+            ),
             4: message("shop@example.com", "Another receipt", message_id="<second>"),
             5: message("same@example.com", "Special offer", message_id="<offer>"),
         },
@@ -378,12 +431,19 @@ def test_backfill_previews_and_bulk_applies_deterministic_moves() -> None:
     assert preview.moved == 0
     assert preview.iris_skipped == 1
     assert preview.unmatched == 1
+    assert preview.scanned == (
+        preview.move_matches + preview.iris_skipped + preview.unmatched
+    )
     assert client.moves == []
     assert updates == [(0, 5), (5, 5)]
 
     applied = backfill_inbox(cast(Any, client), routes(), apply=True)
 
     assert applied.moved == 3
+    assert applied.scanned == preview.scanned
+    assert applied.move_matches == preview.move_matches
+    assert applied.iris_skipped == preview.iris_skipped
+    assert applied.unmatched == preview.unmatched
     assert client.moves == []
     assert client.copies == [((1, 4), "Receipts"), ((5,), "Promotions")]
     assert client.deletions == [((1, 4), True), ((5,), True)]
