@@ -6,10 +6,12 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import SecretStr
 from pypdf import PdfWriter
 
 from ariadne.codex import CodexConversation, _mcp_config_overrides
+from ariadne.codex.models import CodexTurnSettings
 from ariadne.mail import (
     FULL_QUERY,
     HEADER_QUERY,
@@ -21,6 +23,10 @@ from ariadne.mail import (
     parse_metadata,
     render_message,
 )
+from ariadne.mail.profile import mail_profile
+from ariadne.telegram.profile import telegram_profile
+
+TURN_SETTINGS = CodexTurnSettings("gpt-5.6-luna", ReasoningEffort.low, "disabled")
 
 
 def routes() -> MailRoutes:
@@ -363,9 +369,17 @@ async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -
 
 
 def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) -> None:
-    normal = _mcp_config_overrides(tmp_path)
+    normal = _mcp_config_overrides(
+        telegram_profile(tmp_path, TURN_SETTINGS, human="Divy")
+    )
     mail = _mcp_config_overrides(
-        tmp_path, mail_job_id="INBOX:1:2", mail_state=tmp_path / "mail.sqlite3"
+        mail_profile(
+            tmp_path,
+            TURN_SETTINGS,
+            human="Divy",
+            job_id="INBOX:1:2",
+            state=tmp_path / "mail.sqlite3",
+        )
     )
 
     assert not any("triage_current_mail" in value for value in normal)

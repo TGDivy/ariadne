@@ -16,7 +16,7 @@ from ariadne.mcp_server import (
     send_message,
     triage_current_mail,
 )
-from ariadne.telegram_format import TELEGRAM_MESSAGE_LIMIT
+from ariadne.telegram.format import TELEGRAM_MESSAGE_LIMIT
 
 
 class FakeBot:

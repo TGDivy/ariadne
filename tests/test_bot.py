@@ -8,14 +8,14 @@ from telegram import Message
 from telegram.constants import ParseMode
 from telegram.error import TimedOut
 
-from ariadne import telegram_bot
 from ariadne.codex import (
     CodexConversation,
     CodexModel,
     CodexTurnSettings,
     TurnInterrupted,
 )
-from ariadne.telegram_bot import (
+from ariadne.telegram import bot as telegram_bot
+from ariadne.telegram.bot import (
     BUSY_MESSAGE,
     DOCUMENT_WITHOUT_CAPTION,
     FAILURE_MESSAGE,
@@ -30,7 +30,7 @@ from ariadne.telegram_bot import (
     document_message,
     turn_text,
 )
-from ariadne.telegram_format import TELEGRAM_MESSAGE_LIMIT, split_for_telegram
+from ariadne.telegram.format import TELEGRAM_MESSAGE_LIMIT, split_for_telegram
 
 DEFAULT_SETTINGS = CodexTurnSettings(
     model="gpt-5.6-luna",
