@@ -23,9 +23,9 @@ from telegram.constants import ChatAction, FileSizeLimit, ParseMode
 from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
-from .codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
+from ..codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
 from .file_delivery import FileDelivery, FileDeliveryError
-from .telegram_format import split_for_telegram, telegram_messages
+from .format import split_for_telegram, telegram_messages
 
 LOGGER = logging.getLogger(__name__)
 

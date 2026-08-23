@@ -1,4 +1,4 @@
-from ariadne.telegram_format import render_telegram_html
+from ariadne.telegram.format import render_telegram_html
 
 
 def test_markdown_is_rendered_as_safe_telegram_html() -> None:

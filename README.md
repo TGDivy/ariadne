@@ -28,9 +28,9 @@ Current status: **Milestone 2 — The Thread foundation**.
    her instructions. `ARIADNE_VAULT` must point to that local Git clone.
    It is Codex's working directory. Iris can read anywhere, write anywhere
    under your home directory, and reach only the domains in `NETWORK_DOMAINS`
-   in `src/ariadne/codex.py`. The Codex
-   model, reasoning effort, and web-research setting are also applied
-   explicitly from this file.
+   in `src/ariadne/profile.py`. The Telegram Codex model, reasoning
+   effort, and web-research setting are also applied explicitly from this
+   file.
 
 4. Ensure Codex is already authenticated on this machine.
 5. Optionally, give the bot its name, descriptions, and profile photo — set
@@ -58,6 +58,20 @@ Use `/settings` to choose an available model, supported reasoning effort, and
 live web research for the running process. Each change starts a new in-memory
 Codex conversation. Use `/stop` to ask Codex to interrupt the active turn; it
 cannot undo work that already completed.
+
+Telegram and mail have independent turn profiles. To inspect the exact model,
+prompts, tools, thread behavior, permissions, and forwarded environment variable
+names that either surface will use, run:
+
+```bash
+uv run --env-file .env python -m ariadne.scripts.profile telegram
+uv run --env-file .env python -m ariadne.scripts.profile mail
+```
+
+Add `--json` for machine-readable output. Inspection never prints environment
+values. Every declarative source profile lives together in
+`src/ariadne/profile.py`; runtime trigger policy such as polling, queues,
+retries, and UID state remains in each surface's runtime code.
 
 ### Read-only mail export experiment
 
@@ -100,6 +114,11 @@ say `move` do not invoke Iris. Mail turns can keep, flag, or move the current
 message and may draft, but never send, email. The configured routes file can
 contain personal data and must stay outside Git.
 
+Mail turns default independently to `gpt-5.6-luna` at medium reasoning effort
+with web search disabled. Override those defaults with `ARIADNE_MAIL_MODEL`,
+`ARIADNE_MAIL_REASONING_EFFORT`, and `ARIADNE_MAIL_WEB_SEARCH`; Telegram's
+`/settings` choices do not affect mail.
+
 To apply only deterministic `move` rules to mail that was already in `INBOX`,
 stop Ariadne and preview the separate backfill:
 
@@ -113,21 +132,21 @@ message. Its default mode is read-only and reports what `--apply` would move.
 
 ## Instructions
 
-Iris's prompt lives in `src/ariadne/instructions/` as Markdown, one document per
-file:
+Iris's prompt is assembled from Markdown documents owned by the shared Codex
+runtime and each conversation surface:
 
-- `base.md` replaces Codex's built-in coding-agent base instructions.
-- `telegram.md` holds the rules that are true only because Iris speaks through
-  Telegram, and is appended to `base.md`. A second surface adds its own document
-  here rather than editing `base.md`.
-- `grounding.md` is the developer message: where Iris is running and what she can
-  reach.
+- `src/ariadne/instructions/base.md` replaces Codex's built-in coding-agent base
+  instructions.
+- `src/ariadne/telegram/instructions.md` and
+  `src/ariadne/mail/instructions.md` hold rules specific to those surfaces and
+  are appended to the shared base.
+- `src/ariadne/instructions/grounding.md` is the developer message: where Iris is
+  running and what she can reach.
 
 Documents may use `{{ placeholder }}` fields, filled by `render()`. Only
 `{{ human }}` exists today, from `ARIADNE_HUMAN_NAME`. Keep the set small: these
-documents are built once when a thread starts and then live for the whole
-process, so anything that must stay current belongs in the turn rather than the
-prompt.
+documents are built when a profile is resolved, so anything that must stay
+current belongs in the turn rather than the prompt.
 
 Write them as flowing paragraphs, one line each — hard-wrapped prompt text
 teaches the model to hard-wrap its replies, and those newlines survive all the

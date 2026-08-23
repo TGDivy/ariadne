@@ -17,9 +17,11 @@ from telegram.ext import (
 )
 
 from .codex import CodexConversation
+from .codex.resolver import resolve_profile
 from .config import Settings
 from .mail import MailLoop
-from .telegram_bot import AriadneBot
+from .profile import TELEGRAM_PROFILE
+from .telegram.bot import AriadneBot
 
 LOGGER = logging.getLogger(__name__)
 
@@ -65,9 +67,12 @@ def main() -> None:
         raise SystemExit(2) from error
 
     conversation = CodexConversation(
-        settings.vault,
-        settings.codex_turn_settings,
-        human=settings.human_name,
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=settings.vault,
+            settings=settings.codex_turn_settings,
+            human=settings.human_name,
+        )
     )
     ariadne = AriadneBot(settings.allowed_user_id, conversation)
     try:
@@ -75,7 +80,7 @@ def main() -> None:
             MailLoop(
                 mail_settings,
                 settings.vault,
-                settings.codex_turn_settings,
+                settings.mail_turn_settings,
                 human=settings.human_name,
             )
             if mail_settings is not None

@@ -2,22 +2,18 @@
 
 import json
 import logging
-import os
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 from openai_codex import (
-    ApprovalMode,
     AsyncCodex,
     AsyncThread,
     AsyncTurnHandle,
     CodexConfig,
     LocalImageInput,
     RunInput,
-    Sandbox,
     TextInput,
 )
 from openai_codex.generated.v2_all import (
@@ -30,66 +26,24 @@ from openai_codex.generated.v2_all import (
     McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
-    ReasoningEffort,
     TurnCompletedNotification,
     TurnStatus,
     WebSearchThreadItem,
 )
 from openai_codex.models import JsonObject
 
-from .instructions import render
+from .models import CodexModel, CodexTurnSettings, ResolvedTurnProfile
 
 LOGGER = logging.getLogger(__name__)
 
-WebSearchSetting = Literal["disabled", "live"]
-ConversationSurface = Literal["telegram", "mail"]
 ActivityCallback = Callable[[str], Awaitable[None]]
 SpokenCallback = Callable[[str], None]
 StopRequested = Callable[[], bool]
 
 WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_SERVER_NAME = "ariadne"
-MCP_TOOLS = ("runtime_status", "send_message", "react", "prepare_files")
-MAIL_TOOL = "triage_current_mail"
 TELEGRAM_MESSAGE_TOOL = "send_message"
 TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react")
-MCP_REQUIRED_ENVIRONMENT_VARIABLES = (
-    "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_ALLOWED_USER_ID",
-)
-
-PERMISSION_PROFILE = "ariadne"
-NETWORK_DOMAINS = (
-    "github.com",
-    "*.github.com",
-    "*.githubusercontent.com",
-    "pypi.org",
-    "files.pythonhosted.org",
-    "registry.npmjs.org",
-    "cdn.playwright.dev",
-    "playwright.azureedge.net",
-    "localhost",
-    "127.0.0.1",
-)
-
-
-@dataclass(frozen=True, slots=True)
-class CodexTurnSettings:
-    """The explicit settings Ariadne applies to every Codex conversation."""
-
-    model: str
-    effort: ReasoningEffort
-    web_search: WebSearchSetting
-
-
-@dataclass(frozen=True, slots=True)
-class CodexModel:
-    """One model the current Codex runtime says Ariadne may select."""
-
-    identifier: str
-    display_name: str
-    default_effort: ReasoningEffort
-    supported_efforts: tuple[ReasoningEffort, ...]
 
 
 class TurnInterrupted(Exception):
@@ -143,61 +97,41 @@ def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:
     )
 
 
-def _repository_root() -> Path | None:
-    """Return the Ariadne clone this process runs from, when there is one."""
-    for directory in Path(__file__).resolve().parents:
-        if (directory / ".git").exists():
-            return directory
-    return None
-
-
-def _sandbox_config_overrides() -> tuple[str, ...]:
+def _sandbox_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
     """Return Iris's writable roots and network allowlist.
 
     The allowlist is enforced by Codex's network proxy, which is off unless
     the feature is enabled.
     """
-    domains = ", ".join(f'{json.dumps(domain)}="allow"' for domain in NETWORK_DOMAINS)
-    profile = f"permissions.{PERMISSION_PROFILE}"
+    domains = ", ".join(
+        f'{json.dumps(domain)}="allow"' for domain in profile.network_domains
+    )
+    writable_roots = ", ".join(
+        f'{json.dumps(str(root))}="write"' for root in profile.writable_roots
+    )
+    permission = f"permissions.{profile.permission_profile}"
     return (
         "features.network_proxy=true",
-        f"default_permissions={json.dumps(PERMISSION_PROFILE)}",
-        f'{profile}.filesystem={{{json.dumps(str(Path.home()))}="write"}}',
-        f"{profile}.network.domains={{{domains}}}",
-        f"{profile}.network.allow_local_binding=true",
+        f"default_permissions={json.dumps(profile.permission_profile)}",
+        f"{permission}.filesystem={{{writable_roots}}}",
+        f"{permission}.network.domains={{{domains}}}",
+        f"{permission}.network.allow_local_binding="
+        f"{str(profile.allow_local_binding).lower()}",
     )
 
 
-def _mcp_config_overrides(
-    vault: Path,
-    *,
-    mail_job_id: str | None = None,
-    mail_state: Path | None = None,
-) -> tuple[str, ...]:
+def _mcp_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
     """Return the local Ariadne MCP server configuration for Codex."""
-    enabled_tools = list(MCP_TOOLS)
-    if mail_job_id is not None and mail_state is not None:
-        enabled_tools.append(MAIL_TOOL)
     overrides = [
         f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
         "mcp_servers.ariadne.args=" + json.dumps(["-m", "ariadne.mcp_server"]),
-        "mcp_servers.ariadne.env.ARIADNE_VAULT=" + json.dumps(str(vault)),
         "mcp_servers.ariadne.enabled=true",
-        "mcp_servers.ariadne.enabled_tools=" + json.dumps(enabled_tools),
+        "mcp_servers.ariadne.enabled_tools=" + json.dumps(profile.enabled_tools),
     ]
-    if mail_job_id is not None and mail_state is not None:
-        overrides.extend(
-            (
-                "mcp_servers.ariadne.env.ARIADNE_MAIL_JOB_ID="
-                + json.dumps(mail_job_id),
-                "mcp_servers.ariadne.env.ARIADNE_MAIL_STATE="
-                + json.dumps(str(mail_state)),
-            )
-        )
-    for variable in MCP_REQUIRED_ENVIRONMENT_VARIABLES:
-        value = os.environ.get(variable)
-        if value is not None:
-            overrides.append(f"mcp_servers.ariadne.env.{variable}={json.dumps(value)}")
+    overrides.extend(
+        f"mcp_servers.ariadne.env.{name}={json.dumps(value)}"
+        for name, value in profile.mcp_environment_values
+    )
     return tuple(overrides)
 
 
@@ -206,33 +140,19 @@ class CodexConversation:
 
     def __init__(
         self,
-        vault: Path,
-        settings: CodexTurnSettings,
+        profile: ResolvedTurnProfile,
         *,
-        human: str,
-        surface: ConversationSurface = "telegram",
-        mail_job_id: str | None = None,
-        mail_state: Path | None = None,
         client: AsyncCodex | None = None,
     ) -> None:
-        self._vault = vault
-        self._settings = settings
-        self._human = human
-        self._surface = surface
-        if surface == "mail" and (mail_job_id is None or mail_state is None):
-            raise ValueError("Mail conversations require a job id and state path.")
+        self._profile = profile
         self._client = (
             client
             if client is not None
             else AsyncCodex(
                 CodexConfig(
-                    config_overrides=_sandbox_config_overrides()
-                    + _mcp_config_overrides(
-                        vault,
-                        mail_job_id=mail_job_id,
-                        mail_state=mail_state,
-                    ),
-                    cwd=str(vault),
+                    config_overrides=_sandbox_config_overrides(profile)
+                    + _mcp_config_overrides(profile),
+                    cwd=str(profile.cwd),
                 )
             )
         )
@@ -243,7 +163,12 @@ class CodexConversation:
     @property
     def settings(self) -> CodexTurnSettings:
         """Return the settings that the next turn will use."""
-        return self._settings
+        return self._profile.settings
+
+    @property
+    def profile(self) -> ResolvedTurnProfile:
+        """Return the complete configuration of the next turn."""
+        return self._profile
 
     async def available_models(self) -> tuple[CodexModel, ...]:
         """Return the non-hidden models available to the current Codex runtime."""
@@ -264,7 +189,7 @@ class CodexConversation:
 
     def set_settings(self, settings: CodexTurnSettings) -> None:
         """Apply new process-local settings to subsequent turns."""
-        self._settings = settings
+        self._profile = self._profile.with_settings(settings)
         self.reset()
 
     async def interrupt(self) -> bool:
@@ -314,11 +239,11 @@ class CodexConversation:
         thread = await self._thread_for_conversation()
         turn = await thread.turn(
             _turn_input(message, image_paths),
-            approval_mode=ApprovalMode.auto_review,
-            cwd=str(self._vault),
-            effort=self._settings.effort,
-            model=self._settings.model,
-            sandbox=Sandbox.workspace_write,
+            approval_mode=self._profile.approval_mode,
+            cwd=str(self._profile.cwd),
+            effort=self._profile.effort,
+            model=self._profile.model,
+            sandbox=self._profile.sandbox,
         )
         self._active_turn = turn
 
@@ -371,6 +296,8 @@ class CodexConversation:
                 self._active_turn = None
             if self._interrupting_turn is turn:
                 self._interrupting_turn = None
+            if self._profile.thread_policy == "fresh-per-event":
+                self._thread = None
 
     async def close(self) -> None:
         """Release the process-wide Codex client during shutdown."""
@@ -383,47 +310,21 @@ class CodexConversation:
     async def _thread_for_conversation(self) -> AsyncThread:
         if self._thread is None:
             self._thread = await self._client.thread_start(
-                approval_mode=ApprovalMode.auto_review,
-                base_instructions=self._base_instructions(),
+                approval_mode=self._profile.approval_mode,
+                base_instructions=self._profile.base_instructions,
                 config=self._thread_config(),
-                cwd=str(self._vault),
-                developer_instructions=self._developer_instructions(),
-                model=self._settings.model,
-                sandbox=Sandbox.workspace_write,
+                cwd=str(self._profile.cwd),
+                developer_instructions=self._profile.developer_instructions,
+                model=self._profile.model,
+                sandbox=self._profile.sandbox,
             )
         return self._thread
 
-    def _base_instructions(self) -> str:
-        """Combine the shared instructions with the rules for this surface."""
-        return "\n\n".join(
-            render(document, human=self._human) for document in ("base", self._surface)
-        )
-
-    def _developer_instructions(self) -> str:
-        sections = [render("grounding", human=self._human)]
-        repository = _repository_root()
-        if repository is not None:
-            sections.append(render("ariadne", human=self._human, repo=str(repository)))
-        instructions = "\n\n".join(sections)
-        if self._settings.web_search == "live":
-            research_instructions = """\
-## Current information
-
-Live web search is enabled. Use it when current information matters, and include
-the actual source links in your final answer when you do."""
-        else:
-            research_instructions = """\
-## Current information
-
-Live web search is disabled. Do not claim to have searched, researched,
-checked, or verified current information on the web."""
-        return f"{instructions}\n\n{research_instructions}"
-
     def _thread_config(self) -> JsonObject:
         config: JsonObject = {
-            "model_reasoning_effort": self._settings.effort.value,
-            "web_search": self._settings.web_search,
+            "model_reasoning_effort": self._profile.effort.value,
+            "web_search": self._profile.web_search,
         }
-        if self._settings.web_search == "live":
+        if self._profile.web_search == "live":
             config["tools"] = {"web_search": {"context_size": WEB_SEARCH_CONTEXT_SIZE}}
         return config

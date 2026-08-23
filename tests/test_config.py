@@ -29,6 +29,11 @@ def test_settings_loads_a_valid_git_vault(settings_environment: Path) -> None:
         effort=ReasoningEffort.low,
         web_search="disabled",
     )
+    assert settings.mail_turn_settings == CodexTurnSettings(
+        model="gpt-5.6-luna",
+        effort=ReasoningEffort.medium,
+        web_search="disabled",
+    )
 
 
 def test_settings_accepts_explicit_codex_defaults(
@@ -42,6 +47,22 @@ def test_settings_accepts_explicit_codex_defaults(
 
     assert settings.codex_turn_settings == CodexTurnSettings(
         model="gpt-test",
+        effort=ReasoningEffort.high,
+        web_search="live",
+    )
+
+
+def test_settings_accepts_independent_mail_model_defaults(
+    settings_environment: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARIADNE_MAIL_MODEL", "gpt-mail")
+    monkeypatch.setenv("ARIADNE_MAIL_REASONING_EFFORT", "high")
+    monkeypatch.setenv("ARIADNE_MAIL_WEB_SEARCH", "live")
+
+    settings = Settings()
+
+    assert settings.mail_turn_settings == CodexTurnSettings(
+        model="gpt-mail",
         effort=ReasoningEffort.high,
         web_search="live",
     )

@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from ariadne import file_delivery
-from ariadne.file_delivery import FileDelivery, FileDeliveryError, StagedFile
+from ariadne.telegram import file_delivery
+from ariadne.telegram.file_delivery import FileDelivery, FileDeliveryError, StagedFile
 
 
 def test_stage_records_readable_files_under_home(

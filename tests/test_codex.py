@@ -33,9 +33,9 @@ from ariadne.codex import (
     CodexTurnSettings,
     TurnInterrupted,
     _mcp_config_overrides,
-    _repository_root,
 )
-from ariadne.instructions import render
+from ariadne.codex.resolver import resolve_profile
+from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
 HUMAN = "Divy"
 
@@ -46,13 +46,38 @@ DEFAULT_SETTINGS = CodexTurnSettings(
 )
 
 
+def make_conversation(
+    vault: Path,
+    settings: CodexTurnSettings,
+    *,
+    human: str,
+    client: AsyncCodex,
+) -> CodexConversation:
+    return CodexConversation(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=vault,
+            settings=settings,
+            human=human,
+        ),
+        client=client,
+    )
+
+
 def test_mcp_config_forwards_its_required_environment(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "123")
 
-    overrides = _mcp_config_overrides(tmp_path)
+    overrides = _mcp_config_overrides(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        )
+    )
 
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
@@ -190,7 +215,7 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
 ) -> None:
     thread = FakeThread()
     client = FakeCodex(thread)
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -206,21 +231,13 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
     assert client.thread_start_options == [
         {
             "approval_mode": ApprovalMode.auto_review,
-            "base_instructions": (
-                f"{render('base', human=HUMAN)}\n\n{render('telegram', human=HUMAN)}"
-            ),
+            "base_instructions": conversation.profile.base_instructions,
             "config": {
                 "model_reasoning_effort": "low",
                 "web_search": "disabled",
             },
             "cwd": str(tmp_path),
-            "developer_instructions": (
-                f"{render('grounding', human=HUMAN)}\n\n"
-                f"{render('ariadne', human=HUMAN, repo=str(_repository_root()))}\n\n"
-                "## Current information\n\n"
-                "Live web search is disabled. Do not claim to have searched, "
-                "researched,\nchecked, or verified current information on the web."
-            ),
+            "developer_instructions": conversation.profile.developer_instructions,
             "model": "gpt-5.6-luna",
             "sandbox": Sandbox.workspace_write,
         }
@@ -253,7 +270,7 @@ async def test_codex_conversation_enables_live_web_search_explicitly(
         web_search="live",
     )
     client = FakeCodex(thread)
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         settings,
         human=HUMAN,
@@ -287,7 +304,7 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
             started_items=[ThreadItem(root=web_search_item)],
         )
     )
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -326,7 +343,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
             started_items=[ThreadItem(root=mcp_item)],
         )
     )
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -362,7 +379,7 @@ async def test_iris_speaking_for_herself_is_not_announced_as_a_tool(
     thread = FakeThread(
         turn=FakeTurn(["Answer"], started_items=[ThreadItem(root=mcp_item)])
     )
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -408,7 +425,7 @@ async def test_codex_conversation_reports_what_iris_said_in_telegram_herself(
             ],
         )
     )
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -428,7 +445,7 @@ async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(
     tmp_path: Path,
 ) -> None:
     turn = InterruptibleTurn()
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -452,7 +469,7 @@ async def test_codex_conversation_steers_the_turn_it_is_already_running(
     tmp_path: Path,
 ) -> None:
     turn = InterruptibleTurn()
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -484,7 +501,7 @@ async def test_codex_conversation_steers_with_a_local_image_attachment(
     image_path = tmp_path / "screenshot.png"
     image_path.write_bytes(b"not a real image")
     turn = InterruptibleTurn()
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -513,7 +530,7 @@ async def test_codex_conversation_interrupts_a_turn_that_starts_after_stop_reque
     tmp_path: Path,
 ) -> None:
     turn = InterruptibleTurn()
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -534,7 +551,7 @@ async def test_codex_conversation_interrupts_a_turn_that_starts_after_stop_reque
 
 async def test_codex_conversation_uses_the_final_agent_answer(tmp_path: Path) -> None:
     thread = FakeThread(final_answer="The final answer.")
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -552,7 +569,7 @@ async def test_codex_conversation_sends_local_images_with_caption(
     image_path = tmp_path / "screenshot.png"
     image_path.write_bytes(b"not a real image")
     thread = FakeThread()
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -577,7 +594,7 @@ async def test_codex_conversation_starts_a_new_thread_after_reset(
     first_thread = FakeThread()
     second_thread = FakeThread()
     client = FakeCodex(first_thread, second_thread)
-    conversation = CodexConversation(
+    conversation = make_conversation(
         tmp_path,
         DEFAULT_SETTINGS,
         human=HUMAN,
@@ -593,4 +610,32 @@ async def test_codex_conversation_starts_a_new_thread_after_reset(
 
     assert first_thread.inputs == ["First message"]
     assert second_thread.inputs == ["Second message"]
+    assert len(client.thread_start_options) == 2
+
+
+async def test_fresh_per_event_profile_starts_a_new_thread_after_each_turn(
+    tmp_path: Path,
+) -> None:
+    first_thread = FakeThread()
+    second_thread = FakeThread()
+    client = FakeCodex(first_thread, second_thread)
+    conversation = CodexConversation(
+        resolve_profile(
+            MAIL_PROFILE,
+            vault=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+            mcp_environment={
+                "ARIADNE_MAIL_JOB_ID": "INBOX:1:2",
+                "ARIADNE_MAIL_STATE": str(tmp_path / "mail.sqlite3"),
+            },
+        ),
+        client=cast(AsyncCodex, client),
+    )
+
+    _ = [text async for text in conversation.stream_reply("First event")]
+    _ = [text async for text in conversation.stream_reply("Second event")]
+
+    assert first_thread.inputs == ["First event"]
+    assert second_thread.inputs == ["Second event"]
     assert len(client.thread_start_options) == 2

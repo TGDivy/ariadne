@@ -1,8 +1,8 @@
 """Iris's instruction documents.
 
-`base.md` replaces Codex's built-in base instructions, `telegram.md` adds the
-rules that hold only for this surface, and `grounding.md` is the developer
-message. Documents are prose with `{{ placeholder }}` fields; see
+`base.md` replaces Codex's built-in base instructions and `grounding.md` is the
+shared developer message. Surface-specific instructions live in their owning
+packages. Documents are prose with `{{ placeholder }}` fields; see
 docs/research/codex-base-instructions.md for what they replace.
 """
 

@@ -7,7 +7,8 @@ from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import DirectoryPath, Field, PositiveInt, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .codex import CodexTurnSettings, WebSearchSetting
+from .codex.models import CodexTurnSettings, WebSearchSetting
+from .profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,18 +38,31 @@ class Settings(BaseSettings):
         validation_alias="ARIADNE_HUMAN_NAME",
     )
     vault: DirectoryPath = Field(validation_alias="ARIADNE_VAULT")
-    codex_model: str = Field(
-        default="gpt-5.6-luna",
+    codex_model: str | None = Field(
+        default=None,
         min_length=1,
         validation_alias="ARIADNE_CODEX_MODEL",
     )
-    reasoning_effort: ReasoningEffort = Field(
-        default=ReasoningEffort.low,
+    reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
         validation_alias="ARIADNE_REASONING_EFFORT",
     )
-    web_search: WebSearchSetting = Field(
-        default="disabled",
+    web_search: WebSearchSetting | None = Field(
+        default=None,
         validation_alias="ARIADNE_WEB_SEARCH",
+    )
+    mail_model: str | None = Field(
+        default=None,
+        min_length=1,
+        validation_alias="ARIADNE_MAIL_MODEL",
+    )
+    mail_reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
+        validation_alias="ARIADNE_MAIL_REASONING_EFFORT",
+    )
+    mail_web_search: WebSearchSetting | None = Field(
+        default=None,
+        validation_alias="ARIADNE_MAIL_WEB_SEARCH",
     )
     icloud_username: str | None = Field(
         default=None,
@@ -73,7 +87,7 @@ class Settings(BaseSettings):
         """Treat whitespace-only tokens as absent."""
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("codex_model", mode="before")
+    @field_validator("codex_model", "mail_model", mode="before")
     @classmethod
     def strip_codex_model(cls, value: object) -> object:
         """Treat whitespace-only model names as absent."""
@@ -124,11 +138,20 @@ class Settings(BaseSettings):
 
     @property
     def codex_turn_settings(self) -> CodexTurnSettings:
-        """Return the explicit Codex settings for this Ariadne process."""
+        """Overlay Telegram's environment settings on its declared defaults."""
         return CodexTurnSettings(
-            model=self.codex_model,
-            effort=self.reasoning_effort,
-            web_search=self.web_search,
+            model=self.codex_model or TELEGRAM_PROFILE.model,
+            effort=self.reasoning_effort or TELEGRAM_PROFILE.effort,
+            web_search=self.web_search or TELEGRAM_PROFILE.web_search,
+        )
+
+    @property
+    def mail_turn_settings(self) -> CodexTurnSettings:
+        """Overlay mail's environment settings on its declared defaults."""
+        return CodexTurnSettings(
+            model=self.mail_model or MAIL_PROFILE.model,
+            effort=self.mail_reasoning_effort or MAIL_PROFILE.effort,
+            web_search=self.mail_web_search or MAIL_PROFILE.web_search,
         )
 
     @property
