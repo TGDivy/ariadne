@@ -352,7 +352,7 @@ async def test_mail_loop_ensures_every_configured_folder() -> None:
     ]
 
 
-def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
+def test_backfill_previews_and_bulk_applies_deterministic_moves() -> None:
     client = FakeIMAP(
         {
             1: message("shop@example.com", "Receipt", message_id="<receipt>"),
@@ -360,6 +360,8 @@ def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
                 "same@example.com", "Action needed now", message_id="<important>"
             ),
             3: message("other@example.com", "Hello", message_id="<other>"),
+            4: message("shop@example.com", "Another receipt", message_id="<second>"),
+            5: message("same@example.com", "Special offer", message_id="<offer>"),
         },
         capabilities=("UIDPLUS",),
     )
@@ -371,21 +373,21 @@ def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
         progress=lambda done, total: updates.append((done, total)),
     )
 
-    assert preview.scanned == 3
-    assert preview.move_matches == 1
+    assert preview.scanned == 5
+    assert preview.move_matches == 3
     assert preview.moved == 0
     assert preview.iris_skipped == 1
     assert preview.unmatched == 1
     assert client.moves == []
-    assert updates == [(0, 3), (1, 3), (2, 3), (3, 3)]
+    assert updates == [(0, 5), (5, 5)]
 
     applied = backfill_inbox(cast(Any, client), routes(), apply=True)
 
-    assert applied.moved == 1
+    assert applied.moved == 3
     assert client.moves == []
-    assert client.copies == [((1,), "Receipts")]
-    assert client.deletions == [((1,), True)]
-    assert client.uid_expunges == [(1,)]
+    assert client.copies == [((1, 4), "Receipts"), ((5,), "Promotions")]
+    assert client.deletions == [((1, 4), True), ((5,), True)]
+    assert client.uid_expunges == [(1, 4), (5,)]
 
 
 def test_move_messages_uses_iclouds_uidplus_fallback_without_global_expunge() -> None:
@@ -413,7 +415,9 @@ def test_move_messages_refuses_an_unsafe_mailbox_wide_expunge() -> None:
 
 
 def test_restore_folder_previews_then_moves_every_message_to_inbox() -> None:
-    client = FakeIMAP({4: b"first", 7: b"second"}, capabilities=("UIDPLUS",))
+    client = FakeIMAP(
+        {4: b"first", 7: b"second", 9: b"third"}, capabilities=("UIDPLUS",)
+    )
     updates: list[tuple[int, int]] = []
 
     preview = restore_folder_to_inbox(
@@ -422,20 +426,22 @@ def test_restore_folder_previews_then_moves_every_message_to_inbox() -> None:
         progress=lambda done, total: updates.append((done, total)),
     )
 
-    assert preview.found == 2
+    assert preview.found == 3
     assert preview.moved == 0
     assert client.selections == [("Receipts", True)]
     assert client.copies == []
-    assert updates == [(0, 2), (1, 2), (2, 2)]
+    assert updates == [(0, 3), (3, 3)]
 
-    applied = restore_folder_to_inbox(cast(Any, client), "Receipts", apply=True)
+    applied = restore_folder_to_inbox(
+        cast(Any, client), "Receipts", apply=True, batch_size=2
+    )
 
-    assert applied.found == 2
-    assert applied.moved == 2
+    assert applied.found == 3
+    assert applied.moved == 3
     assert client.selections[-1] == ("Receipts", False)
-    assert client.copies == [((4,), "INBOX"), ((7,), "INBOX")]
-    assert client.deletions == [((4,), True), ((7,), True)]
-    assert client.uid_expunges == [(4,), (7,)]
+    assert client.copies == [((4, 7), "INBOX"), ((9,), "INBOX")]
+    assert client.deletions == [((4, 7), True), ((9,), True)]
+    assert client.uid_expunges == [(4, 7), (9,)]
 
 
 def test_restore_folder_refuses_inbox_as_its_source() -> None:
