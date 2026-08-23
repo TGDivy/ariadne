@@ -10,20 +10,6 @@ from pathlib import Path
 from ..instructions import fill, render
 from .models import CodexTurnSettings, ResolvedTurnProfile, TurnProfile
 
-COMMON_IRIS_TOOLS = ("runtime_status", "send_message", "react", "prepare_files")
-NETWORK_DOMAINS = (
-    "github.com",
-    "*.github.com",
-    "*.githubusercontent.com",
-    "pypi.org",
-    "files.pythonhosted.org",
-    "registry.npmjs.org",
-    "cdn.playwright.dev",
-    "playwright.azureedge.net",
-    "localhost",
-    "127.0.0.1",
-)
-
 
 def _repository_root() -> Path | None:
     for directory in Path(__file__).resolve().parents:

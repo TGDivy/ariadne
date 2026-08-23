@@ -17,10 +17,11 @@ from telegram.ext import (
 )
 
 from .codex import CodexConversation
+from .codex.resolver import resolve_profile
 from .config import Settings
 from .mail import MailLoop
+from .profile import TELEGRAM_PROFILE
 from .telegram.bot import AriadneBot
-from .telegram.profile import resolve_telegram_profile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -66,9 +67,10 @@ def main() -> None:
         raise SystemExit(2) from error
 
     conversation = CodexConversation(
-        resolve_telegram_profile(
-            settings.vault,
-            settings.codex_turn_settings,
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=settings.vault,
+            settings=settings.codex_turn_settings,
             human=settings.human_name,
         )
     )

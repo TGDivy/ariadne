@@ -11,8 +11,8 @@ from telegram import Bot, ReplyParameters
 from telegram.constants import ParseMode, ReactionEmoji
 from telegram.error import BadRequest, TelegramError
 
-from .codex.profile import COMMON_IRIS_TOOLS
 from .mail import Importance, SuggestedAction, record_current_mail_decision
+from .profile import TELEGRAM_PROFILE
 from .telegram.file_delivery import FileDelivery, FileDeliveryError
 from .telegram.format import split_for_telegram, telegram_messages
 
@@ -84,7 +84,7 @@ def runtime_status() -> dict[str, Any]:
             "current": _process(os.getpid()),
             "parent": _process(os.getppid()),
         },
-        "capabilities": list(COMMON_IRIS_TOOLS),
+        "capabilities": list(TELEGRAM_PROFILE.enabled_tools),
     }
 
 

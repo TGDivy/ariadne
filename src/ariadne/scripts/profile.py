@@ -7,9 +7,9 @@ import json
 from typing import Any
 
 from ariadne.codex.models import ResolvedTurnProfile
+from ariadne.codex.resolver import resolve_profile
 from ariadne.config import Settings
-from ariadne.mail.profile import resolve_mail_profile
-from ariadne.telegram.profile import resolve_telegram_profile
+from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
 
 def profile_payload(profile: ResolvedTurnProfile) -> dict[str, Any]:
@@ -78,15 +78,17 @@ def main() -> None:
 
     settings = Settings()
     if args.profile == "telegram":
-        profile = resolve_telegram_profile(
-            settings.vault,
-            settings.codex_turn_settings,
+        profile = resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=settings.vault,
+            settings=settings.codex_turn_settings,
             human=settings.human_name,
         )
     else:
-        profile = resolve_mail_profile(
-            settings.vault,
-            settings.mail_turn_settings,
+        profile = resolve_profile(
+            MAIL_PROFILE,
+            vault=settings.vault,
+            settings=settings.mail_turn_settings,
             human=settings.human_name,
         )
 

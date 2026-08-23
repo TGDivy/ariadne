@@ -24,7 +24,9 @@ from pydantic import ValidationError
 from pypdf import PdfReader
 
 from ..codex import CodexConversation, CodexTurnSettings
+from ..codex.resolver import resolve_profile
 from ..config import MailSettings
+from ..profile import MAIL_PROFILE
 from .models import (
     BackfillSummary,
     Importance,
@@ -34,7 +36,6 @@ from .models import (
     MailRoutes,
     SuggestedAction,
 )
-from .profile import resolve_mail_profile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -810,12 +811,15 @@ class MailLoop:
 
     def _conversation(self, job_id: str) -> CodexConversation:
         return CodexConversation(
-            resolve_mail_profile(
-                self.vault,
-                self.turn_settings,
+            resolve_profile(
+                MAIL_PROFILE,
+                vault=self.vault,
+                settings=self.turn_settings,
                 human=self.human,
-                job_id=job_id,
-                state=self.settings.state,
+                mcp_environment={
+                    "ARIADNE_MAIL_JOB_ID": job_id,
+                    "ARIADNE_MAIL_STATE": str(self.settings.state),
+                },
             )
         )
 

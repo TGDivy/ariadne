@@ -34,8 +34,8 @@ from ariadne.codex import (
     TurnInterrupted,
     _mcp_config_overrides,
 )
-from ariadne.mail.profile import resolve_mail_profile
-from ariadne.telegram.profile import resolve_telegram_profile
+from ariadne.codex.resolver import resolve_profile
+from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
 HUMAN = "Divy"
 
@@ -54,7 +54,13 @@ def make_conversation(
     client: AsyncCodex,
 ) -> CodexConversation:
     return CodexConversation(
-        resolve_telegram_profile(vault, settings, human=human), client=client
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=vault,
+            settings=settings,
+            human=human,
+        ),
+        client=client,
     )
 
 
@@ -65,7 +71,12 @@ def test_mcp_config_forwards_its_required_environment(
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "123")
 
     overrides = _mcp_config_overrides(
-        resolve_telegram_profile(tmp_path, DEFAULT_SETTINGS, human=HUMAN)
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        )
     )
 
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
@@ -609,12 +620,15 @@ async def test_fresh_per_event_profile_starts_a_new_thread_after_each_turn(
     second_thread = FakeThread()
     client = FakeCodex(first_thread, second_thread)
     conversation = CodexConversation(
-        resolve_mail_profile(
-            tmp_path,
-            DEFAULT_SETTINGS,
+        resolve_profile(
+            MAIL_PROFILE,
+            vault=tmp_path,
+            settings=DEFAULT_SETTINGS,
             human=HUMAN,
-            job_id="INBOX:1:2",
-            state=tmp_path / "mail.sqlite3",
+            mcp_environment={
+                "ARIADNE_MAIL_JOB_ID": "INBOX:1:2",
+                "ARIADNE_MAIL_STATE": str(tmp_path / "mail.sqlite3"),
+            },
         ),
         client=cast(AsyncCodex, client),
     )

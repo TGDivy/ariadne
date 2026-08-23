@@ -28,7 +28,7 @@ Current status: **Milestone 2 — The Thread foundation**.
    her instructions. `ARIADNE_VAULT` must point to that local Git clone.
    It is Codex's working directory. Iris can read anywhere, write anywhere
    under your home directory, and reach only the domains in `NETWORK_DOMAINS`
-   in `src/ariadne/codex/profile.py`. The Telegram Codex model, reasoning
+   in `src/ariadne/profile.py`. The Telegram Codex model, reasoning
    effort, and web-research setting are also applied explicitly from this
    file.
 
@@ -69,10 +69,9 @@ uv run --env-file .env python -m ariadne.scripts.profile mail
 ```
 
 Add `--json` for machine-readable output. Inspection never prints environment
-values. The declarative source profiles are exported as `TELEGRAM_PROFILE` from
-`ariadne.telegram` and `MAIL_PROFILE` from `ariadne.mail`; runtime trigger
-policy such as polling, queues, retries, and UID state remains in each surface's
-runtime code.
+values. Every declarative source profile lives together in
+`src/ariadne/profile.py`; runtime trigger policy such as polling, queues,
+retries, and UID state remains in each surface's runtime code.
 
 ### Read-only mail export experiment
 

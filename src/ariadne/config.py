@@ -8,6 +8,7 @@ from pydantic import DirectoryPath, Field, PositiveInt, SecretStr, field_validat
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .codex.models import CodexTurnSettings, WebSearchSetting
+from .profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,8 +139,6 @@ class Settings(BaseSettings):
     @property
     def codex_turn_settings(self) -> CodexTurnSettings:
         """Overlay Telegram's environment settings on its declared defaults."""
-        from .telegram.profile import TELEGRAM_PROFILE
-
         return CodexTurnSettings(
             model=self.codex_model or TELEGRAM_PROFILE.model,
             effort=self.reasoning_effort or TELEGRAM_PROFILE.effort,
@@ -149,8 +148,6 @@ class Settings(BaseSettings):
     @property
     def mail_turn_settings(self) -> CodexTurnSettings:
         """Overlay mail's environment settings on its declared defaults."""
-        from .mail.profile import MAIL_PROFILE
-
         return CodexTurnSettings(
             model=self.mail_model or MAIL_PROFILE.model,
             effort=self.mail_reasoning_effort or MAIL_PROFILE.effort,

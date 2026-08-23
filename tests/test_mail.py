@@ -12,6 +12,7 @@ from pypdf import PdfWriter
 
 from ariadne.codex import CodexConversation, _mcp_config_overrides
 from ariadne.codex.models import CodexTurnSettings
+from ariadne.codex.resolver import resolve_profile
 from ariadne.mail import (
     FULL_QUERY,
     HEADER_QUERY,
@@ -23,8 +24,7 @@ from ariadne.mail import (
     parse_metadata,
     render_message,
 )
-from ariadne.mail.profile import resolve_mail_profile
-from ariadne.telegram.profile import resolve_telegram_profile
+from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
 TURN_SETTINGS = CodexTurnSettings("gpt-5.6-luna", ReasoningEffort.low, "disabled")
 
@@ -370,15 +370,23 @@ async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -
 
 def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) -> None:
     normal = _mcp_config_overrides(
-        resolve_telegram_profile(tmp_path, TURN_SETTINGS, human="Divy")
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=tmp_path,
+            settings=TURN_SETTINGS,
+            human="Divy",
+        )
     )
     mail = _mcp_config_overrides(
-        resolve_mail_profile(
-            tmp_path,
-            TURN_SETTINGS,
+        resolve_profile(
+            MAIL_PROFILE,
+            vault=tmp_path,
+            settings=TURN_SETTINGS,
             human="Divy",
-            job_id="INBOX:1:2",
-            state=tmp_path / "mail.sqlite3",
+            mcp_environment={
+                "ARIADNE_MAIL_JOB_ID": "INBOX:1:2",
+                "ARIADNE_MAIL_STATE": str(tmp_path / "mail.sqlite3"),
+            },
         )
     )
 
