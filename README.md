@@ -137,7 +137,8 @@ uv run python -m ariadne.scripts.mail_backfill --apply
 The backfill never starts a Codex turn: it skips every `iris` rule and unmatched
 message. Its default mode is read-only and reports what `--apply` would move.
 Backfill and mail export show progress when run in an interactive terminal while
-keeping redirected output clean.
+keeping redirected output clean. Applied backfills group each fetched batch by
+destination and move matching messages in bounded bulk operations.
 
 If a bad rule filed messages into the wrong folder, preview moving that entire
 folder back to `INBOX`, then apply it after checking the count:
@@ -149,7 +150,7 @@ uv run python -m ariadne.scripts.mail_backfill --restore-folder Receipts --apply
 
 Repeat `--restore-folder` to restore multiple folders. This restores every
 message in each named folder because earlier backfill runs did not record which
-messages they moved.
+messages they moved. Restores also use bounded bulk operations.
 
 ## Instructions
 

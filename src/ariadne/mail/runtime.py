@@ -616,7 +616,8 @@ def backfill_inbox(
     for start in range(0, len(uids), batch_size):
         batch = uids[start : start + batch_size]
         response = client.fetch(batch, [HEADER_QUERY])
-        for offset, uid in enumerate(batch, start=1):
+        moves_by_destination: dict[str, list[int]] = {}
+        for uid in batch:
             raw = _response_value(response, uid, b"BODY[")
             if raw is not None:
                 scanned += 1
@@ -628,12 +629,13 @@ def backfill_inbox(
                 else:
                     move_matches += 1
                     if apply:
-                        move_messages(
-                            client, [uid], routes.folders[route.classification]
-                        )
-                        moved += 1
-            if progress is not None:
-                progress(start + offset, len(uids))
+                        destination = routes.folders[route.classification]
+                        moves_by_destination.setdefault(destination, []).append(uid)
+        for destination, matched_uids in moves_by_destination.items():
+            move_messages(client, matched_uids, destination)
+            moved += len(matched_uids)
+        if progress is not None:
+            progress(start + len(batch), len(uids))
     return BackfillSummary(
         scanned=scanned,
         move_matches=move_matches,
@@ -648,6 +650,7 @@ def restore_folder_to_inbox(
     source: str,
     *,
     apply: bool = False,
+    batch_size: int = 100,
     progress: Callable[[int, int], None] | None = None,
 ) -> RestoreSummary:
     """Preview or move every message from one folder back to INBOX."""
@@ -660,12 +663,13 @@ def restore_folder_to_inbox(
         progress(0, len(uids))
 
     moved = 0
-    for offset, uid in enumerate(uids, start=1):
+    for start in range(0, len(uids), batch_size):
+        batch = uids[start : start + batch_size]
         if apply:
-            move_messages(client, [uid], MAILBOX)
-            moved += 1
+            move_messages(client, batch, MAILBOX)
+            moved += len(batch)
         if progress is not None:
-            progress(offset, len(uids))
+            progress(start + len(batch), len(uids))
     return RestoreSummary(found=len(uids), moved=moved)
 
 
