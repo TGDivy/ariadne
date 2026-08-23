@@ -97,6 +97,8 @@ def test_disabled_mail_does_not_require_credentials(tmp_path: Path) -> None:
     settings = load_settings(config, environ={})
 
     assert settings.mail_settings is None
+    assert "ARIADNE_MAIL_USERNAME" not in settings.mcp_environment
+    assert "ARIADNE_MAIL_APP_PASSWORD" not in settings.mcp_environment
 
 
 def test_enabled_incomplete_mail_is_rejected(tmp_path: Path) -> None:
@@ -137,6 +139,10 @@ state = "{state}"
     assert configured.routes == routes.resolve()
     assert configured.state == state.resolve()
     assert configured.app_password.get_secret_value() == "app-password"
+
+    settings = load_settings(config, environ={})
+    assert settings.mcp_environment["ARIADNE_MAIL_USERNAME"] == "person@icloud.com"
+    assert settings.mcp_environment["ARIADNE_MAIL_APP_PASSWORD"] == "app-password"
 
 
 def test_default_mail_state_expands_the_home_directory(

@@ -35,6 +35,11 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert TELEGRAM_PROFILE.developer_documents == ("grounding", "ariadne")
     assert TELEGRAM_PROFILE.thread_policy == "shared"
     assert "triage_current_mail" not in TELEGRAM_PROFILE.enabled_tools
+    assert TELEGRAM_PROFILE.enabled_tools[-3:] == (
+        "search_mail",
+        "read_mail",
+        "read_mail_thread",
+    )
 
 
 def test_telegram_profile_is_complete_and_uses_dynamic_settings(
@@ -61,6 +66,9 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
         "send_message",
         "react",
         "prepare_files",
+        "search_mail",
+        "read_mail",
+        "read_mail_thread",
     )
     assert "ariadne.telegram/instructions.md" in profile.base_instruction_sources
     assert "Live web search is enabled." in profile.developer_instructions

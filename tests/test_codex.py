@@ -88,7 +88,8 @@ def test_mcp_config_forwards_its_required_environment(
     assert "mcp_servers.ariadne.enabled=true" in overrides
     assert (
         "mcp_servers.ariadne.enabled_tools="
-        '["runtime_status", "send_message", "react", "prepare_files"]' in overrides
+        '["runtime_status", "send_message", "react", "prepare_files", '
+        '"search_mail", "read_mail", "read_mail_thread"]' in overrides
     )
     assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
     assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
@@ -368,6 +369,49 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
 
     assert activities == ["Using Ariadne's local capability…"]
     assert "private" not in activities[0]
+
+
+@pytest.mark.parametrize(
+    ("tool", "expected"),
+    [
+        ("search_mail", "Searching mail…"),
+        ("read_mail", "Reading mail…"),
+        ("read_mail_thread", "Reading mail thread…"),
+    ],
+)
+async def test_codex_conversation_reports_specific_mail_activity(
+    tmp_path: Path, tool: str, expected: str
+) -> None:
+    item = McpToolCallThreadItem(
+        arguments={"query": "private query"},
+        id="mail",
+        server="ariadne",
+        status=McpToolCallStatus.in_progress,
+        tool=tool,
+        type="mcpToolCall",
+    )
+    thread = FakeThread(
+        turn=FakeTurn(["Answer"], started_items=[ThreadItem(root=item)])
+    )
+    conversation = make_conversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        human=HUMAN,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+    )
+    activities: list[str] = []
+
+    async def record_activity(activity: str) -> None:
+        activities.append(activity)
+
+    _ = [
+        text
+        async for text in conversation.stream_reply(
+            "Find the email", activity=record_activity
+        )
+    ]
+
+    assert activities == [expected]
 
 
 async def test_iris_speaking_for_herself_is_not_announced_as_a_tool(

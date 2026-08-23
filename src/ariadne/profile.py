@@ -27,7 +27,15 @@ TELEGRAM_PROFILE = TurnProfile(
     web_search="disabled",
     instruction_documents=("base", "telegram"),
     developer_documents=("grounding", "ariadne"),
-    enabled_tools=("runtime_status", "send_message", "react", "prepare_files"),
+    enabled_tools=(
+        "runtime_status",
+        "send_message",
+        "react",
+        "prepare_files",
+        "search_mail",
+        "read_mail",
+        "read_mail_thread",
+    ),
     thread_policy="shared",
     sandbox=Sandbox.workspace_write,
     approval_mode=ApprovalMode.auto_review,
@@ -40,6 +48,8 @@ TELEGRAM_PROFILE = TurnProfile(
         "ARIADNE_PROFILE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
+        "ARIADNE_MAIL_USERNAME",
+        "ARIADNE_MAIL_APP_PASSWORD",
     ),
 )
 
