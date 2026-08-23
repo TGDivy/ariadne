@@ -37,7 +37,7 @@ from ariadne.codex import (
 from ariadne.codex.resolver import resolve_profile
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 
-HUMAN = "Divy"
+HUMAN = "Example User"
 
 DEFAULT_SETTINGS = CodexTurnSettings(
     model="gpt-5.6-luna",
@@ -470,7 +470,7 @@ async def test_codex_conversation_reports_what_iris_said_in_telegram_herself(
             completed_items=[
                 spoke("send_message", {"text": "Found the repo."}),
                 spoke("send_message", '{"text": "This is the latest one."}'),
-                spoke("prepare_files", {"paths": ["/home/iris/cv.pdf"]}),
+                spoke("prepare_files", {"paths": ["/tmp/example-cv.pdf"]}),
             ],
         )
     )

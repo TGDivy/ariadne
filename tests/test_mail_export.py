@@ -6,7 +6,7 @@ from ariadne.scripts.mail_export import fetch_messages, parse_message
 def make_message() -> bytes:
     message = EmailMessage()
     message["From"] = "Recruiter <recruiter@example.com>"
-    message["To"] = "work@divyb.xyz"
+    message["To"] = "user@example.com"
     message["Subject"] = "Interview details"
     message["Date"] = "Sun, 23 Aug 2026 10:00:00 +0000"
     message["Message-ID"] = "<message@example.com>"

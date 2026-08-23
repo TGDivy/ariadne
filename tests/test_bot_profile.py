@@ -50,7 +50,7 @@ def config(tmp_path: Path, identity: str = "") -> Path:
     path.write_text(
         f'''\
 version = 1
-human_name = "Divy"
+human_name = "Example User"
 vault = "{tmp_path}"
 [telegram]
 bot_token = "token-for-test"

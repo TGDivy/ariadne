@@ -22,7 +22,7 @@ def make_message(
 ) -> bytes:
     message = EmailMessage()
     message["From"] = sender
-    message["To"] = "Divy <divy@icloud.com>"
+    message["To"] = "Example User <user@example.com>"
     message["Subject"] = subject
     message["Date"] = date
     message["Message-ID"] = message_id
@@ -41,11 +41,11 @@ class FakeIMAP:
         self.messages = {
             "INBOX": {
                 1: make_message(
-                    sender="Ali Wilson <ali@example.com>",
-                    subject="Oxford Knight introductions",
+                    sender="Example Sender <sender@example.com>",
+                    subject="Example Search introductions",
                     date="Thu, 20 Aug 2026 09:00:00 +0000",
                     message_id="<root@example.com>",
-                    body="I mentioned Alpha Capital and Beacon Partners.",
+                    body="I mentioned Firm Alpha and Firm Beta.",
                 ),
                 2: make_message(
                     sender="Airline <travel@example.com>",
@@ -57,18 +57,18 @@ class FakeIMAP:
             },
             "Sent Messages": {
                 8: make_message(
-                    sender="Divy <divy@icloud.com>",
-                    subject="Re: Oxford Knight introductions",
+                    sender="Example User <user@example.com>",
+                    subject="Re: Example Search introductions",
                     date="Fri, 21 Aug 2026 10:00:00 +0000",
                     message_id="<reply@example.com>",
                     in_reply_to="<root@example.com>",
                     references="<root@example.com>",
-                    body="Thanks Ali, I will research those firms.",
+                    body="Thanks, I will research those firms.",
                 )
             },
             "Trash": {
                 9: make_message(
-                    sender="Ali Wilson <ali@example.com>",
+                    sender="Example Sender <sender@example.com>",
                     subject="Deleted",
                     date="Sat, 22 Aug 2026 10:00:00 +0000",
                     message_id="<trash@example.com>",
@@ -125,9 +125,9 @@ class FakeIMAP:
 def test_human_mail_search_ranks_locally_and_returns_refetchable_ids() -> None:
     client = FakeIMAP()
 
-    result = MailReader(client).search("Ali Wilson", since="2026-08-01")
+    result = MailReader(client).search("Example Sender", since="2026-08-01")
 
-    assert result["results"][0]["subject"] == "Oxford Knight introductions"
+    assert result["results"][0]["subject"] == "Example Search introductions"
     assert all(item["subject"] != "Deleted" for item in result["results"])
     reference = decode_mail_id(result["results"][0]["id"])
     assert (reference.folder, reference.uidvalidity, reference.uid) == (
@@ -157,13 +157,13 @@ def test_read_mail_refetches_full_message_without_marking_it_read() -> None:
 
 def test_read_mail_thread_follows_references_across_folders() -> None:
     client = FakeIMAP()
-    result = MailReader(client).search("Oxford Knight")
+    result = MailReader(client).search("Example Search")
 
     thread = MailReader(client).read_thread(result["results"][0]["id"])
 
     assert [message["subject"] for message in thread["messages"]] == [
-        "Oxford Knight introductions",
-        "Re: Oxford Knight introductions",
+        "Example Search introductions",
+        "Re: Example Search introductions",
     ]
     assert all("body" in message for message in thread["messages"])
 
@@ -171,4 +171,4 @@ def test_read_mail_thread_follows_references_across_folders() -> None:
 @pytest.mark.parametrize("value", ["yesterday", "2026-08-23T10:00:00"])
 def test_search_dates_are_unambiguous_iso_dates(value: str) -> None:
     with pytest.raises(ValueError, match="ISO date"):
-        MailReader(FakeIMAP()).search("Ali", since=value)
+        MailReader(FakeIMAP()).search("Example", since=value)

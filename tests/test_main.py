@@ -30,7 +30,7 @@ def test_config_show_is_valid_json_and_redacts_secrets(
     config.write_text(
         f'''\
 version = 1
-human_name = "Divy"
+human_name = "Example User"
 vault = "{vault}"
 [telegram]
 bot_token = "super-secret-token"
