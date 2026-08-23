@@ -72,9 +72,10 @@ uv run --env-file .env python -m ariadne.scripts.mail_export \
 
 The export is JSONL so it can retain recipients, thread headers, body text, and
 attachment metadata without storing attachment binaries. It selects the
-mailbox read-only and uses `BODY.PEEK[]`; it does not send, move, delete, or
-mark messages read. The default folder is `INBOX`; use `--folder` to inspect a
-different mailbox.
+mailbox read-only and uses batched `BODY.PEEK[]` fetches; it does not send,
+move, delete, or mark messages read. The default folder is `INBOX`; use
+`--folder` to inspect a different mailbox. Use `--batch-size` to tune the
+number of messages per request.
 
 Messages sent while Ariadne is working are not rejected: they steer the Codex
 turn that is already running, so Codex folds them into the work in flight.

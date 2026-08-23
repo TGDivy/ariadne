@@ -109,10 +109,47 @@ def parse_message(raw: bytes, uid: bytes | str, folder: str) -> dict[str, Any]:
     }
 
 
+def fetch_batch(mail: imaplib.IMAP4_SSL, uids: list[bytes]) -> dict[str, bytes]:
+    """Fetch a batch and map each returned MIME payload back to its UID."""
+    uid_set = ",".join(uid.decode() for uid in uids)
+    status, fetched = mail.uid("fetch", uid_set, "(UID BODY.PEEK[])")
+    if status != "OK":
+        return {}
+
+    payloads = {}
+    for item in fetched:
+        if not isinstance(item, tuple):
+            continue
+        metadata, raw = item
+        if not isinstance(metadata, bytes) or not isinstance(raw, bytes):
+            continue
+        match = re.search(rb"\bUID\s+(\d+)\b", metadata, re.IGNORECASE)
+        if match:
+            payloads[match.group(1).decode()] = raw
+    return payloads
+
+
+def fetch_one(mail: imaplib.IMAP4_SSL, uid: bytes) -> bytes | None:
+    """Fallback for a UID that a server could not return in a batch."""
+    status, fetched = mail.uid("fetch", uid.decode(), "(UID BODY.PEEK[])")
+    if status != "OK":
+        return None
+    raw = next(
+        (
+            item[1]
+            for item in fetched
+            if isinstance(item, tuple) and isinstance(item[1], bytes)
+        ),
+        b"",
+    )
+    return raw or None
+
+
 def fetch_messages(
     mail: imaplib.IMAP4_SSL,
     folder: str,
     limit: int,
+    batch_size: int = 25,
     progress: Callable[[int, int], None] | None = None,
 ) -> list[dict[str, Any]]:
     status, _ = mail.select(folder, readonly=True)
@@ -125,17 +162,16 @@ def fetch_messages(
 
     uids = data[0].split()[-limit:]
     results = []
-    for index, uid in enumerate(uids, start=1):
-        try:
-            status, fetched = mail.uid("fetch", uid, "(BODY.PEEK[])")
-            if status != "OK":
-                continue
-            raw = next((item[1] for item in fetched if isinstance(item, tuple)), b"")
+    for start in range(0, len(uids), batch_size):
+        batch = uids[start : start + batch_size]
+        payloads = fetch_batch(mail, batch)
+        for uid in batch:
+            uid_text = uid.decode()
+            raw = payloads.get(uid_text) or fetch_one(mail, uid)
             if raw:
                 results.append(parse_message(raw, uid, folder))
-        finally:
-            if progress:
-                progress(index, len(uids))
+        if progress:
+            progress(min(start + len(batch), len(uids)), len(uids))
     return results
 
 
@@ -184,10 +220,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--folder", default="INBOX")
     parser.add_argument("--limit", type=int, default=1000)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=25,
+        help="Messages per IMAP fetch request (default: 25)",
+    )
     parser.add_argument("--output", type=Path, default=Path("mail-export.jsonl"))
     args = parser.parse_args()
     if args.limit < 1:
         parser.error("--limit must be positive")
+    if args.batch_size < 1:
+        parser.error("--batch-size must be positive")
 
     username, password = load_credentials()
     mail = imaplib.IMAP4_SSL("imap.mail.me.com", 993)
@@ -202,6 +246,7 @@ def main() -> None:
             mail,
             args.folder,
             args.limit,
+            args.batch_size,
             progress=lambda done, total: render_progress(done, total, started),
         )
         if messages:

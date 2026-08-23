@@ -18,8 +18,8 @@ def make_message() -> bytes:
 
 
 class FakeMail:
-    def __init__(self, raw: bytes) -> None:
-        self.raw = raw
+    def __init__(self, raw_by_uid: dict[str, bytes]) -> None:
+        self.raw_by_uid = raw_by_uid
         self.calls: list[tuple[object, ...]] = []
 
     def select(self, folder: str, readonly: bool = False) -> tuple[str, list[bytes]]:
@@ -29,8 +29,16 @@ class FakeMail:
     def uid(self, command: str, *args: object) -> tuple[str, list[object]]:
         self.calls.append((command, *args))
         if command == "search":
-            return "OK", [b"12"]
-        return "OK", [(b"metadata", self.raw)]
+            return "OK", [b"12 13"]
+        uid_set = str(args[0])
+        return "OK", [
+            (
+                f"{uid} (UID {uid} BODY[] {{{len(raw)}}})".encode(),
+                raw,
+            )
+            for uid, raw in self.raw_by_uid.items()
+            if uid in uid_set.split(",")
+        ]
 
 
 def test_parse_message_keeps_body_and_attachment_metadata_without_binary_attachment():
@@ -49,20 +57,21 @@ def test_parse_message_keeps_body_and_attachment_metadata_without_binary_attachm
 
 
 def test_fetch_selects_read_only_and_uses_body_peek():
-    mail = FakeMail(make_message())
+    mail = FakeMail({"12": make_message(), "13": make_message()})
     updates: list[tuple[int, int]] = []
 
     results = fetch_messages(
         mail,
         "INBOX",
         1000,
+        batch_size=25,
         progress=lambda done, total: updates.append((done, total)),
     )
 
-    assert len(results) == 1
-    assert updates == [(1, 1)]
+    assert len(results) == 2
+    assert updates == [(2, 2)]
     assert mail.calls == [
         ("select", "INBOX", True),
         ("search", None, "ALL"),
-        ("fetch", b"12", "(BODY.PEEK[])"),
+        ("fetch", "12,13", "(UID BODY.PEEK[])"),
     ]
