@@ -21,6 +21,7 @@ from ariadne.mail import (
     MailRoutes,
     MailState,
     backfill_inbox,
+    load_routes,
     parse_metadata,
     render_message,
 )
@@ -65,6 +66,15 @@ def routes() -> MailRoutes:
             ],
         }
     )
+
+
+def test_checked_in_routes_example_matches_the_runtime_schema() -> None:
+    example = Path(__file__).parents[1] / "mail-routes.example.yaml"
+
+    configured = load_routes(example)
+
+    assert len(configured.rules) == 2
+    assert configured.folders["newsletters"] == "Newsletters"
 
 
 def message(

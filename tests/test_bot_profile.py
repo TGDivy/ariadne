@@ -4,6 +4,7 @@ from typing import Any
 import pytest
 from telegram import InputProfilePhotoStatic
 
+from ariadne.config import load_settings
 from ariadne.scripts import bot_profile
 from ariadne.scripts.bot_profile import configure
 
@@ -38,19 +39,42 @@ class FakeBot:
 
 @pytest.fixture
 def telegram(monkeypatch) -> FakeBot:
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
     bot = FakeBot("token-for-test")
     monkeypatch.setattr(bot_profile, "Bot", lambda token: bot)
     return bot
 
 
-async def test_only_the_fields_set_in_the_environment_are_applied(
-    telegram: FakeBot, monkeypatch
-) -> None:
-    monkeypatch.setenv("ARIADNE_BOT_NAME", "Iris")
-    monkeypatch.setenv("ARIADNE_BOT_SHORT_DESCRIPTION", "Your other half.")
+def config(tmp_path: Path, identity: str = "") -> Path:
+    (tmp_path / ".git").mkdir(exist_ok=True)
+    path = tmp_path / "config.toml"
+    path.write_text(
+        f'''\
+version = 1
+human_name = "Divy"
+vault = "{tmp_path}"
+[telegram]
+bot_token = "token-for-test"
+allowed_user_id = 7
+{identity}
+''',
+        encoding="utf-8",
+    )
+    return path
 
-    await configure()
+
+async def test_only_the_fields_set_in_toml_are_applied(
+    telegram: FakeBot, tmp_path: Path
+) -> None:
+    path = config(
+        tmp_path,
+        """\
+[telegram.identity]
+name = "Iris"
+short_description = "Your other half."
+""",
+    )
+
+    await configure(load_settings(path, environ={}))
 
     assert telegram.calls == [
         ("name", "Iris"),
@@ -59,20 +83,28 @@ async def test_only_the_fields_set_in_the_environment_are_applied(
 
 
 async def test_a_profile_photo_is_read_from_the_configured_path(
-    telegram: FakeBot, monkeypatch, tmp_path: Path
+    telegram: FakeBot, tmp_path: Path
 ) -> None:
     photo = tmp_path / "iris.jpg"
     photo.write_bytes(b"not a real image")
-    monkeypatch.setenv("ARIADNE_BOT_PROFILE_PHOTO", str(photo))
+    path = config(
+        tmp_path,
+        f'''\
+[telegram.identity]
+profile_photo = "{photo}"
+''',
+    )
 
-    await configure()
+    await configure(load_settings(path, environ={}))
 
     [(field, value)] = telegram.calls
     assert field == "photo"
     assert isinstance(value, InputProfilePhotoStatic)
 
 
-async def test_nothing_set_leaves_the_bot_profile_untouched(telegram: FakeBot) -> None:
-    await configure()
+async def test_nothing_set_leaves_the_bot_profile_untouched(
+    telegram: FakeBot, tmp_path: Path
+) -> None:
+    await configure(load_settings(config(tmp_path), environ={}))
 
     assert telegram.calls == []

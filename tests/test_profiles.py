@@ -6,7 +6,7 @@ from openai_codex.generated.v2_all import ReasoningEffort
 
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
-from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
+from ariadne.profile import MAIL_PROFILE, PROFILES, TELEGRAM_PROFILE
 from ariadne.scripts.profile import profile_payload, render_profile
 
 TELEGRAM_SETTINGS = CodexTurnSettings(
@@ -22,6 +22,7 @@ MAIL_SETTINGS = CodexTurnSettings(
 
 
 def test_surface_profiles_are_explicit_declarations() -> None:
+    assert PROFILES == {"telegram": TELEGRAM_PROFILE, "mail": MAIL_PROFILE}
     assert MAIL_PROFILE.name == "mail"
     assert MAIL_PROFILE.settings == MAIL_SETTINGS
     assert MAIL_PROFILE.instruction_documents == ("base", "mail")
@@ -106,6 +107,8 @@ def test_profile_inspection_never_contains_environment_values(
         settings=MAIL_SETTINGS,
         human="Divy",
         mcp_environment={
+            "TELEGRAM_BOT_TOKEN": "super-secret-token",
+            "TELEGRAM_ALLOWED_USER_ID": "7",
             "ARIADNE_MAIL_JOB_ID": "secret-job-id",
             "ARIADNE_MAIL_STATE": str(tmp_path / "secret-state.sqlite3"),
         },

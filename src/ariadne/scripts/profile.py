@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Any
 
 from ariadne.codex.models import ResolvedTurnProfile
 from ariadne.codex.resolver import resolve_profile
-from ariadne.config import Settings
-from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
+from ariadne.config import load_settings
+from ariadne.profile import PROFILES
 
 
 def profile_payload(profile: ResolvedTurnProfile) -> dict[str, Any]:
@@ -72,25 +73,19 @@ def render_profile(profile: ResolvedTurnProfile) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("profile", choices=("telegram", "mail"))
+    parser.add_argument("profile", choices=tuple(PROFILES))
+    parser.add_argument("--config", type=Path)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    settings = Settings()
-    if args.profile == "telegram":
-        profile = resolve_profile(
-            TELEGRAM_PROFILE,
-            vault=settings.vault,
-            settings=settings.codex_turn_settings,
-            human=settings.human_name,
-        )
-    else:
-        profile = resolve_profile(
-            MAIL_PROFILE,
-            vault=settings.vault,
-            settings=settings.mail_turn_settings,
-            human=settings.human_name,
-        )
+    settings = load_settings(args.config)
+    profile = resolve_profile(
+        PROFILES[args.profile],
+        vault=settings.vault,
+        settings=settings.turn_settings(args.profile),
+        human=settings.human_name,
+        mcp_environment=settings.mcp_environment,
+    )
 
     if args.json:
         print(json.dumps(profile_payload(profile), indent=2))

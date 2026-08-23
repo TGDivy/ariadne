@@ -1,8 +1,11 @@
 """Run Ariadne's Telegram conversation and optional mail loops."""
 
+import argparse
 import asyncio
+import json
 import logging
 from contextlib import suppress
+from pathlib import Path
 from typing import Any
 
 from pydantic import ValidationError
@@ -18,7 +21,7 @@ from telegram.ext import (
 
 from .codex import CodexConversation
 from .codex.resolver import resolve_profile
-from .config import Settings
+from .config import Settings, config_path, load_settings, settings_payload
 from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
 from .telegram.bot import AriadneBot
@@ -52,13 +55,9 @@ def configure_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-def main() -> None:
-    """Start the Telegram long-polling application."""
-    configure_logging()
-
+def _load_configuration(path: Path | None) -> Settings:
     try:
-        settings = Settings()
-        mail_settings = settings.mail_settings
+        return load_settings(path)
     except ValidationError as error:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
@@ -66,15 +65,41 @@ def main() -> None:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
 
+
+def main() -> None:
+    """Start Ariadne or inspect its typed configuration."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", type=Path, help="Path to Ariadne's TOML config")
+    subparsers = parser.add_subparsers(dest="command")
+    config_parser = subparsers.add_parser("config", help="Validate configuration")
+    config_parser.add_argument("action", choices=("check", "show"))
+    args = parser.parse_args()
+
+    configure_logging()
+    settings = _load_configuration(args.config)
+    if args.command == "config":
+        if args.action == "show":
+            print(json.dumps(settings_payload(settings), indent=2))
+        else:
+            print(f"Configuration is valid: {config_path(args.config)}")
+        return
+
+    mail_settings = settings.mail_settings
+
     conversation = CodexConversation(
         resolve_profile(
             TELEGRAM_PROFILE,
             vault=settings.vault,
             settings=settings.codex_turn_settings,
             human=settings.human_name,
+            mcp_environment=settings.mcp_environment,
         )
     )
-    ariadne = AriadneBot(settings.allowed_user_id, conversation)
+    ariadne = AriadneBot(
+        settings.allowed_user_id,
+        conversation,
+        bot_token=settings.telegram_bot_token,
+    )
     try:
         mail_loop = (
             MailLoop(
@@ -82,6 +107,7 @@ def main() -> None:
                 settings.vault,
                 settings.mail_turn_settings,
                 human=settings.human_name,
+                mcp_environment=settings.mcp_environment,
             )
             if mail_settings is not None
             else None

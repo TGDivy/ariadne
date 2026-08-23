@@ -37,6 +37,7 @@ TELEGRAM_PROFILE = TurnProfile(
     allow_local_binding=True,
     mcp_environment_names=(
         "ARIADNE_VAULT",
+        "ARIADNE_PROFILE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
     ),
@@ -65,9 +66,14 @@ MAIL_PROFILE = TurnProfile(
     allow_local_binding=True,
     mcp_environment_names=(
         "ARIADNE_VAULT",
+        "ARIADNE_PROFILE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
         "ARIADNE_MAIL_JOB_ID",
         "ARIADNE_MAIL_STATE",
     ),
 )
+
+PROFILES: dict[str, TurnProfile] = {
+    profile.name: profile for profile in (TELEGRAM_PROFILE, MAIL_PROFILE)
+}

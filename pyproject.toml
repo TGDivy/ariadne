@@ -9,7 +9,6 @@ dependencies = [
     "markdown-it-py>=4.2.0",
     "openai-codex>=0.147.0",
     "pydantic>=2.13.4",
-    "pydantic-settings>=2.15.0",
     "pypdf>=6.0.0",
     "pyyaml>=6.0.2",
     "python-telegram-bot>=22.8",

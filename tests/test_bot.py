@@ -1,6 +1,7 @@
 import asyncio
 from datetime import date
 from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from openai_codex.generated.v2_all import ReasoningEffort
@@ -26,10 +27,10 @@ from ariadne.telegram.bot import (
     STEERING_FAILED_MESSAGE,
     STOPPED_MESSAGE,
     STOPPING_MESSAGE,
-    AriadneBot,
     document_message,
     turn_text,
 )
+from ariadne.telegram.bot import AriadneBot as TelegramBot
 from ariadne.telegram.format import TELEGRAM_MESSAGE_LIMIT, split_for_telegram
 
 DEFAULT_SETTINGS = CodexTurnSettings(
@@ -45,6 +46,11 @@ DEFAULT_MODELS = (
         supported_efforts=(ReasoningEffort.low, ReasoningEffort.medium),
     ),
 )
+
+
+def AriadneBot(allowed_user_id: int, conversation: CodexConversation) -> TelegramBot:
+    """Build the bot with the required test credential."""
+    return TelegramBot(allowed_user_id, conversation, bot_token="token-for-test")
 
 
 class FakeMessage:
@@ -240,6 +246,25 @@ async def test_unauthorized_message_is_ignored(message: FakeMessage, caplog) -> 
     assert conversation.prompts == []
     assert message.replies == []
     assert "Ignoring message from unauthorized Telegram user id=8" in caplog.text
+
+
+async def test_file_delivery_uses_the_configured_bot_token(
+    message: FakeMessage,
+) -> None:
+    delivery = AsyncMock()
+    delivery.approve.return_value = [object()]
+    bot = TelegramBot(
+        7,
+        cast(CodexConversation, FakeConversation([])),
+        bot_token="configured-token",
+    )
+    bot._file_delivery = delivery
+
+    await bot._approve_staged_files(cast(Message, message), 7, "approval-id")
+
+    delivery.approve.assert_awaited_once_with(
+        "approval-id", token="configured-token", chat_id=7
+    )
 
 
 async def test_a_streamed_reply_leaves_only_the_final_answer_behind(

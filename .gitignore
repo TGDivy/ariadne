@@ -10,11 +10,11 @@ __pycache__/
 mail-export*.jsonl
 mail-export*.csv
 /mail-routes.yaml
+/config.toml
 
 # Local secrets
 .env
 .env.*
-!.env.example
 
 # Editor and operating-system files
 .idea/

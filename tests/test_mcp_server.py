@@ -107,6 +107,14 @@ def test_runtime_status_never_returns_environment_values(
     assert "must-not-appear" not in json.dumps(payload)
 
 
+def test_runtime_status_reports_the_current_profiles_capabilities(monkeypatch) -> None:
+    monkeypatch.setenv("ARIADNE_PROFILE", "mail")
+
+    payload = runtime_status()
+
+    assert payload["capabilities"][-1] == "triage_current_mail"
+
+
 async def test_a_message_from_iris_is_sent_as_telegram_html(telegram: FakeBot) -> None:
     message_ids = await send_message("The **latest** one is from June.")
 

@@ -17,15 +17,17 @@ Current status: **Milestone 2 — The Thread foundation**.
    git clone https://github.com/TGDivy/ariadne-thread.git ~/ariadne-thread
    ```
 
-3. Copy the example configuration and fill in your values:
+3. Create the private TOML configuration and fill in your values:
 
    ```bash
-   cp .env.example .env
-   $EDITOR .env
+   mkdir -p ~/.config/ariadne
+   cp config.example.toml ~/.config/ariadne/config.toml
+   chmod 600 ~/.config/ariadne/config.toml
+   $EDITOR ~/.config/ariadne/config.toml
    ```
 
-   `ARIADNE_HUMAN_NAME` is the name Iris calls you by; it is substituted into
-   her instructions. `ARIADNE_VAULT` must point to that local Git clone.
+   `human_name` is the name Iris calls you by; it is substituted into her
+   instructions. `vault` must point to that local Git clone.
    It is Codex's working directory. Iris can read anywhere, write anywhere
    under your home directory, and reach only the domains in `NETWORK_DOMAINS`
    in `src/ariadne/profile.py`. The Telegram Codex model, reasoning
@@ -34,21 +36,24 @@ Current status: **Milestone 2 — The Thread foundation**.
 
 4. Ensure Codex is already authenticated on this machine.
 5. Optionally, give the bot its name, descriptions, and profile photo — set
-   any of `ARIADNE_BOT_NAME`, `ARIADNE_BOT_DESCRIPTION`,
-   `ARIADNE_BOT_SHORT_DESCRIPTION`, and `ARIADNE_BOT_PROFILE_PHOTO` in `.env`
-   and run once:
+   fields under `[telegram.identity]` and run once:
 
    ```bash
-   uv run --env-file .env python -m ariadne.scripts.bot_profile
+   uv run python -m ariadne.scripts.bot_profile
    ```
 
    This talks to Telegram directly and changes the bot itself, not the running
    process; it only needs to be run again when one of these should change.
-6. Run:
+6. Validate the effective configuration, then run:
 
    ```bash
-   uv run --env-file .env python -m ariadne
+   uv run python -m ariadne config check
+   uv run python -m ariadne
    ```
+
+   `python -m ariadne config show` prints the effective configuration with
+   secrets redacted. Set `ARIADNE_CONFIG` for all commands, or pass `--config`
+   to the command you are running, to use a non-default path.
 
 Nothing from the vault is injected into the prompt. The Thread is Iris's working
 directory and she reads it herself. Send `/new` to start a fresh Codex
@@ -64,8 +69,8 @@ prompts, tools, thread behavior, permissions, and forwarded environment variable
 names that either surface will use, run:
 
 ```bash
-uv run --env-file .env python -m ariadne.scripts.profile telegram
-uv run --env-file .env python -m ariadne.scripts.profile mail
+uv run python -m ariadne.scripts.profile telegram
+uv run python -m ariadne.scripts.profile mail
 ```
 
 Add `--json` for machine-readable output. Inspection never prints environment
@@ -76,11 +81,10 @@ retries, and UID state remains in each surface's runtime code.
 ### Read-only mail export experiment
 
 The one-off operator script can export recent iCloud Mail messages for local
-analysis. Add `ICLOUD_USERNAME` and `ICLOUD_APP_PASSWORD` to the ignored `.env`
-file, then run:
+analysis. Configure `username` and `app_password` under `[mail]`, then run:
 
 ```bash
-uv run --env-file .env python -m ariadne.scripts.mail_export \
+uv run python -m ariadne.scripts.mail_export \
   --limit 1000 --output mail-export.jsonl
 ```
 
@@ -97,16 +101,19 @@ turn that is already running, so Codex folds them into the work in flight.
 ### iCloud Mail loop
 
 Mail is opt-in. Copy `mail-routes.example.yaml` outside the repository, edit it,
-and set all three values below in the ignored `.env` file:
+and enable its TOML section explicitly:
 
-```dotenv
-ICLOUD_USERNAME=you@icloud.com
-ICLOUD_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-ARIADNE_MAIL_ROUTES=~/.config/ariadne/mail-routes.yaml
+```toml
+[mail]
+enabled = true
+username = "you@icloud.com"
+app_password = ""
+routes = "~/.config/ariadne/mail-routes.yaml"
+state = "~/.local/state/ariadne/mail.sqlite3"
 ```
 
-`ARIADNE_MAIL_STATE` optionally changes the durable SQLite path (the default is
-`~/.local/state/ariadne/mail.sqlite3`). The normal `python -m ariadne` command
+`state` optionally changes the durable SQLite path. The normal
+`python -m ariadne` command
 records the current `INBOX` UID as its first-run baseline without processing old
 mail. From then on it catches up mail received during downtime, drains jobs
 sequentially, and waits with IMAP IDLE. Inspection uses `BODY.PEEK`; rules that
@@ -115,16 +122,15 @@ message and may draft, but never send, email. The configured routes file can
 contain personal data and must stay outside Git.
 
 Mail turns default independently to `gpt-5.6-luna` at medium reasoning effort
-with web search disabled. Override those defaults with `ARIADNE_MAIL_MODEL`,
-`ARIADNE_MAIL_REASONING_EFFORT`, and `ARIADNE_MAIL_WEB_SEARCH`; Telegram's
-`/settings` choices do not affect mail.
+with web search disabled. Override those defaults under `[profiles.mail]`;
+Telegram's `/settings` choices do not affect mail.
 
 To apply only deterministic `move` rules to mail that was already in `INBOX`,
 stop Ariadne and preview the separate backfill:
 
 ```bash
-uv run --env-file .env python -m ariadne.scripts.mail_backfill
-uv run --env-file .env python -m ariadne.scripts.mail_backfill --apply
+uv run python -m ariadne.scripts.mail_backfill
+uv run python -m ariadne.scripts.mail_backfill --apply
 ```
 
 The backfill never starts a Codex turn: it skips every `iris` rule and unmatched
@@ -144,7 +150,7 @@ runtime and each conversation surface:
   running and what she can reach.
 
 Documents may use `{{ placeholder }}` fields, filled by `render()`. Only
-`{{ human }}` exists today, from `ARIADNE_HUMAN_NAME`. Keep the set small: these
+`{{ human }}` exists today, from `human_name`. Keep the set small: these
 documents are built when a profile is resolved, so anything that must stay
 current belongs in the turn rather than the prompt.
 
