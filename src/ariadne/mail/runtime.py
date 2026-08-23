@@ -34,7 +34,7 @@ from .models import (
     MailRoutes,
     SuggestedAction,
 )
-from .profile import mail_profile
+from .profile import resolve_mail_profile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -810,7 +810,7 @@ class MailLoop:
 
     def _conversation(self, job_id: str) -> CodexConversation:
         return CodexConversation(
-            mail_profile(
+            resolve_mail_profile(
                 self.vault,
                 self.turn_settings,
                 human=self.human,

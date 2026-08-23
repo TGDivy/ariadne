@@ -1,4 +1,4 @@
-"""Shared types that describe Codex models and resolved turn profiles."""
+"""Declarations and resolved configuration for Codex turn profiles."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ ThreadPolicy = Literal["shared", "fresh-per-event"]
 
 @dataclass(frozen=True, slots=True)
 class CodexTurnSettings:
-    """The model settings that may vary within one turn profile."""
+    """The model settings that may be selected for a profile."""
 
     model: str
     effort: ReasoningEffort
@@ -34,31 +34,94 @@ class CodexModel:
 
 @dataclass(frozen=True, slots=True)
 class TurnProfile:
-    """The complete effective configuration of one kind of Codex turn."""
+    """A declarative profile exported by one conversation surface."""
 
     name: str
     model: str
     effort: ReasoningEffort
     web_search: WebSearchSetting
+    instruction_documents: tuple[str, ...]
+    developer_documents: tuple[str, ...]
+    enabled_tools: tuple[str, ...]
+    thread_policy: ThreadPolicy
+    sandbox: Sandbox = Sandbox.workspace_write
+    approval_mode: ApprovalMode = ApprovalMode.auto_review
+    permission_profile: str = "ariadne"
+    writable_roots: tuple[Path, ...] = (Path.home(),)
+    network_domains: tuple[str, ...] = ()
+    allow_local_binding: bool = True
+    mcp_environment_names: tuple[str, ...] = ()
+
+    @property
+    def settings(self) -> CodexTurnSettings:
+        """Return this profile's default model settings."""
+        return CodexTurnSettings(self.model, self.effort, self.web_search)
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedTurnProfile:
+    """The complete effective configuration supplied to Codex."""
+
+    profile: TurnProfile
+    settings: CodexTurnSettings
+    cwd: Path
     base_instruction_sources: tuple[str, ...]
     developer_instruction_sources: tuple[str, ...]
     base_instructions: str
     developer_instructions_core: str
-    enabled_tools: tuple[str, ...]
-    thread_policy: ThreadPolicy
-    cwd: Path
-    sandbox: Sandbox = Sandbox.workspace_write
-    approval_mode: ApprovalMode = ApprovalMode.auto_review
-    permission_profile: str = "ariadne"
-    writable_roots: tuple[Path, ...] = ()
-    network_domains: tuple[str, ...] = ()
-    allow_local_binding: bool = True
-    mcp_environment_names: tuple[str, ...] = ()
     _mcp_environment_values: tuple[tuple[str, str], ...] = field(default=(), repr=False)
 
     @property
-    def settings(self) -> CodexTurnSettings:
-        return CodexTurnSettings(self.model, self.effort, self.web_search)
+    def name(self) -> str:
+        return self.profile.name
+
+    @property
+    def model(self) -> str:
+        return self.settings.model
+
+    @property
+    def effort(self) -> ReasoningEffort:
+        return self.settings.effort
+
+    @property
+    def web_search(self) -> WebSearchSetting:
+        return self.settings.web_search
+
+    @property
+    def enabled_tools(self) -> tuple[str, ...]:
+        return self.profile.enabled_tools
+
+    @property
+    def thread_policy(self) -> ThreadPolicy:
+        return self.profile.thread_policy
+
+    @property
+    def sandbox(self) -> Sandbox:
+        return self.profile.sandbox
+
+    @property
+    def approval_mode(self) -> ApprovalMode:
+        return self.profile.approval_mode
+
+    @property
+    def permission_profile(self) -> str:
+        return self.profile.permission_profile
+
+    @property
+    def writable_roots(self) -> tuple[Path, ...]:
+        return self.profile.writable_roots
+
+    @property
+    def network_domains(self) -> tuple[str, ...]:
+        return self.profile.network_domains
+
+    @property
+    def allow_local_binding(self) -> bool:
+        return self.profile.allow_local_binding
+
+    @property
+    def mcp_environment_names(self) -> tuple[str, ...]:
+        return self.profile.mcp_environment_names
 
     @property
     def developer_instructions(self) -> str:
@@ -81,11 +144,6 @@ checked, or verified current information on the web."""
         """Return runtime values for MCP construction, never for inspection."""
         return self._mcp_environment_values
 
-    def with_settings(self, settings: CodexTurnSettings) -> TurnProfile:
-        """Resolve a dynamic model selection without changing profile identity."""
-        return replace(
-            self,
-            model=settings.model,
-            effort=settings.effort,
-            web_search=settings.web_search,
-        )
+    def with_settings(self, settings: CodexTurnSettings) -> ResolvedTurnProfile:
+        """Apply a dynamic model selection without changing the declaration."""
+        return replace(self, settings=settings)

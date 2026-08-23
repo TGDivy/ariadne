@@ -32,8 +32,7 @@ from openai_codex.generated.v2_all import (
 )
 from openai_codex.models import JsonObject
 
-from .models import CodexModel, CodexTurnSettings, TurnProfile
-from .profile import COMMON_IRIS_TOOLS
+from .models import CodexModel, CodexTurnSettings, ResolvedTurnProfile
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +42,6 @@ StopRequested = Callable[[], bool]
 
 WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_SERVER_NAME = "ariadne"
-MCP_TOOLS = COMMON_IRIS_TOOLS
 TELEGRAM_MESSAGE_TOOL = "send_message"
 TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react")
 
@@ -99,7 +97,7 @@ def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:
     )
 
 
-def _sandbox_config_overrides(profile: TurnProfile) -> tuple[str, ...]:
+def _sandbox_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
     """Return Iris's writable roots and network allowlist.
 
     The allowlist is enforced by Codex's network proxy, which is off unless
@@ -122,7 +120,7 @@ def _sandbox_config_overrides(profile: TurnProfile) -> tuple[str, ...]:
     )
 
 
-def _mcp_config_overrides(profile: TurnProfile) -> tuple[str, ...]:
+def _mcp_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
     """Return the local Ariadne MCP server configuration for Codex."""
     overrides = [
         f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
@@ -142,7 +140,7 @@ class CodexConversation:
 
     def __init__(
         self,
-        profile: TurnProfile,
+        profile: ResolvedTurnProfile,
         *,
         client: AsyncCodex | None = None,
     ) -> None:
@@ -168,7 +166,7 @@ class CodexConversation:
         return self._profile.settings
 
     @property
-    def profile(self) -> TurnProfile:
+    def profile(self) -> ResolvedTurnProfile:
         """Return the complete configuration of the next turn."""
         return self._profile
 

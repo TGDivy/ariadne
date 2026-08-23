@@ -8,6 +8,7 @@ from .models import (
     MailRoutes,
     SuggestedAction,
 )
+from .profile import MAIL_PROFILE, resolve_mail_profile
 from .runtime import (
     FULL_QUERY,
     HEADER_QUERY,
@@ -36,6 +37,7 @@ __all__ = [
     "MailRoute",
     "MailRoutes",
     "MailState",
+    "MAIL_PROFILE",
     "SuggestedAction",
     "backfill_inbox",
     "cheap_triage",
@@ -44,4 +46,5 @@ __all__ = [
     "parse_metadata",
     "record_current_mail_decision",
     "render_message",
+    "resolve_mail_profile",
 ]

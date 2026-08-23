@@ -6,13 +6,13 @@ import argparse
 import json
 from typing import Any
 
-from ariadne.codex.models import TurnProfile
+from ariadne.codex.models import ResolvedTurnProfile
 from ariadne.config import Settings
-from ariadne.mail.profile import mail_profile
-from ariadne.telegram.profile import telegram_profile
+from ariadne.mail.profile import resolve_mail_profile
+from ariadne.telegram.profile import resolve_telegram_profile
 
 
-def profile_payload(profile: TurnProfile) -> dict[str, Any]:
+def profile_payload(profile: ResolvedTurnProfile) -> dict[str, Any]:
     """Return an inspection-safe profile with no environment values."""
     return {
         "name": profile.name,
@@ -29,6 +29,8 @@ def profile_payload(profile: TurnProfile) -> dict[str, Any]:
         "allow_local_binding": profile.allow_local_binding,
         "enabled_tools": list(profile.enabled_tools),
         "mcp_environment_names": list(profile.mcp_environment_names),
+        "instruction_documents": list(profile.profile.instruction_documents),
+        "developer_documents": list(profile.profile.developer_documents),
         "base_instruction_sources": list(profile.base_instruction_sources),
         "developer_instruction_sources": list(profile.developer_instruction_sources),
         "base_instructions": profile.base_instructions,
@@ -36,7 +38,7 @@ def profile_payload(profile: TurnProfile) -> dict[str, Any]:
     }
 
 
-def render_profile(profile: TurnProfile) -> str:
+def render_profile(profile: ResolvedTurnProfile) -> str:
     payload = profile_payload(profile)
     lines = [
         f"Profile: {payload['name']}",
@@ -53,6 +55,8 @@ def render_profile(profile: TurnProfile) -> str:
         f"Allow local binding: {payload['allow_local_binding']}",
         "Enabled MCP tools: " + ", ".join(payload["enabled_tools"]),
         "MCP environment names: " + ", ".join(payload["mcp_environment_names"]),
+        "Instruction documents: " + ", ".join(payload["instruction_documents"]),
+        "Developer documents: " + ", ".join(payload["developer_documents"]),
         "Base instruction sources: " + ", ".join(payload["base_instruction_sources"]),
         "Developer instruction sources: "
         + ", ".join(payload["developer_instruction_sources"]),
@@ -74,13 +78,13 @@ def main() -> None:
 
     settings = Settings()
     if args.profile == "telegram":
-        profile = telegram_profile(
+        profile = resolve_telegram_profile(
             settings.vault,
             settings.codex_turn_settings,
             human=settings.human_name,
         )
     else:
-        profile = mail_profile(
+        profile = resolve_mail_profile(
             settings.vault,
             settings.mail_turn_settings,
             human=settings.human_name,

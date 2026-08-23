@@ -1,19 +1,47 @@
-"""Codex turn profile for one mail event."""
+"""Declarative Codex turn profile for mail events."""
 
 from pathlib import Path
 
-from ..codex.models import CodexTurnSettings, TurnProfile
-from ..codex.profile import COMMON_IRIS_TOOLS, MAIL_TOOL, resolve_profile
+from openai_codex.generated.v2_all import ReasoningEffort
+
+from ..codex.models import CodexTurnSettings, ResolvedTurnProfile, TurnProfile
+from ..codex.profile import NETWORK_DOMAINS, resolve_profile
+
+MAIL_PROFILE = TurnProfile(
+    name="mail",
+    model="gpt-5.6-luna",
+    effort=ReasoningEffort.medium,
+    web_search="disabled",
+    instruction_documents=("base", "mail"),
+    developer_documents=("grounding", "ariadne"),
+    enabled_tools=(
+        "runtime_status",
+        "send_message",
+        "react",
+        "prepare_files",
+        "triage_current_mail",
+    ),
+    thread_policy="fresh-per-event",
+    network_domains=NETWORK_DOMAINS,
+    mcp_environment_names=(
+        "ARIADNE_VAULT",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_ALLOWED_USER_ID",
+        "ARIADNE_MAIL_JOB_ID",
+        "ARIADNE_MAIL_STATE",
+    ),
+)
 
 
-def mail_profile(
+def resolve_mail_profile(
     vault: Path,
-    settings: CodexTurnSettings,
+    settings: CodexTurnSettings | None = None,
     *,
     human: str,
     job_id: str | None = None,
     state: Path | None = None,
-) -> TurnProfile:
+) -> ResolvedTurnProfile:
+    """Resolve mail defaults or independent configured overrides for one job."""
     if (job_id is None) != (state is None):
         raise ValueError("Mail job id and state path must be provided together.")
     environment = (
@@ -25,13 +53,9 @@ def mail_profile(
         else {}
     )
     return resolve_profile(
-        name="mail",
-        surface_package=__package__,
+        MAIL_PROFILE,
         vault=vault,
         settings=settings,
         human=human,
-        enabled_tools=(*COMMON_IRIS_TOOLS, MAIL_TOOL),
-        thread_policy="fresh-per-event",
         mcp_environment=environment,
-        mcp_environment_names=("ARIADNE_MAIL_JOB_ID", "ARIADNE_MAIL_STATE"),
     )

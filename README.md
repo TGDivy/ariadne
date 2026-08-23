@@ -69,7 +69,10 @@ uv run --env-file .env python -m ariadne.scripts.profile mail
 ```
 
 Add `--json` for machine-readable output. Inspection never prints environment
-values.
+values. The declarative source profiles are exported as `TELEGRAM_PROFILE` from
+`ariadne.telegram` and `MAIL_PROFILE` from `ariadne.mail`; runtime trigger
+policy such as polling, queues, retries, and UID state remains in each surface's
+runtime code.
 
 ### Read-only mail export experiment
 

@@ -5,12 +5,19 @@ from .conversation import (
     TurnInterrupted,
     _mcp_config_overrides,
 )
-from .models import CodexModel, CodexTurnSettings, TurnProfile, WebSearchSetting
+from .models import (
+    CodexModel,
+    CodexTurnSettings,
+    ResolvedTurnProfile,
+    TurnProfile,
+    WebSearchSetting,
+)
 
 __all__ = [
     "CodexConversation",
     "CodexModel",
     "CodexTurnSettings",
+    "ResolvedTurnProfile",
     "TurnInterrupted",
     "TurnProfile",
     "WebSearchSetting",

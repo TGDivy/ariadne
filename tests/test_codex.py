@@ -34,8 +34,8 @@ from ariadne.codex import (
     TurnInterrupted,
     _mcp_config_overrides,
 )
-from ariadne.mail.profile import mail_profile
-from ariadne.telegram.profile import telegram_profile
+from ariadne.mail.profile import resolve_mail_profile
+from ariadne.telegram.profile import resolve_telegram_profile
 
 HUMAN = "Divy"
 
@@ -54,7 +54,7 @@ def make_conversation(
     client: AsyncCodex,
 ) -> CodexConversation:
     return CodexConversation(
-        telegram_profile(vault, settings, human=human), client=client
+        resolve_telegram_profile(vault, settings, human=human), client=client
     )
 
 
@@ -65,7 +65,7 @@ def test_mcp_config_forwards_its_required_environment(
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "123")
 
     overrides = _mcp_config_overrides(
-        telegram_profile(tmp_path, DEFAULT_SETTINGS, human=HUMAN)
+        resolve_telegram_profile(tmp_path, DEFAULT_SETTINGS, human=HUMAN)
     )
 
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
@@ -609,7 +609,7 @@ async def test_fresh_per_event_profile_starts_a_new_thread_after_each_turn(
     second_thread = FakeThread()
     client = FakeCodex(first_thread, second_thread)
     conversation = CodexConversation(
-        mail_profile(
+        resolve_mail_profile(
             tmp_path,
             DEFAULT_SETTINGS,
             human=HUMAN,
