@@ -17,9 +17,7 @@ import getpass
 import imaplib
 import json
 import re
-import sys
 import tempfile
-import time
 from collections.abc import Callable
 from datetime import UTC
 from email.header import decode_header, make_header
@@ -28,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from ariadne.config import Settings, load_settings
+from ariadne.scripts.progress import ProgressBar
 
 
 def decode(value: str | None) -> str:
@@ -162,6 +161,8 @@ def fetch_messages(
         raise RuntimeError(f"IMAP search failed: {status}")
 
     uids = data[0].split()[-limit:]
+    if progress is not None:
+        progress(0, len(uids))
     results = []
     for start in range(0, len(uids), batch_size):
         batch = uids[start : start + batch_size]
@@ -171,7 +172,7 @@ def fetch_messages(
             raw = payloads.get(uid_text) or fetch_one(mail, uid)
             if raw:
                 results.append(parse_message(raw, uid, folder))
-        if progress:
+        if progress is not None:
             progress(min(start + len(batch), len(uids)), len(uids))
     return results
 
@@ -199,24 +200,6 @@ def load_credentials(settings: Settings) -> tuple[str, str]:
     return username, password
 
 
-def render_progress(done: int, total: int, started: float) -> None:
-    if not total:
-        return
-    elapsed = max(time.monotonic() - started, 0.001)
-    rate = done / elapsed
-    remaining = max(total - done, 0)
-    eta = remaining / rate if rate else 0
-    width = 28
-    filled = round(width * done / total)
-    bar = "#" * filled + "-" * (width - filled)
-    print(
-        f"\rFetching [{bar}] {done}/{total} "
-        f"{rate:.1f}/s ETA {int(eta // 60):02d}:{int(eta % 60):02d}",
-        end="",
-        flush=True,
-    )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path)
@@ -239,20 +222,14 @@ def main() -> None:
     mail = imaplib.IMAP4_SSL("imap.mail.me.com", 993)
     try:
         mail.login(username, password)
-        print(
-            f"Fetching up to {args.limit} messages from {args.folder!r}...",
-            flush=True,
-        )
-        started = time.monotonic()
-        messages = fetch_messages(
-            mail,
-            args.folder,
-            args.limit,
-            args.batch_size,
-            progress=lambda done, total: render_progress(done, total, started),
-        )
-        if messages:
-            print(file=sys.stdout)
+        with ProgressBar(f"Fetching {args.folder!r}") as progress:
+            messages = fetch_messages(
+                mail,
+                args.folder,
+                args.limit,
+                args.batch_size,
+                progress=progress.update,
+            )
         write_jsonl(args.output, messages)
         print(f"Wrote {len(messages)} messages to {args.output}")
     finally:
