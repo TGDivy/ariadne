@@ -396,8 +396,7 @@ class CodexConversation:
     def _base_instructions(self) -> str:
         """Combine the shared instructions with the rules for this surface."""
         return "\n\n".join(
-            render(document, human=self._human)
-            for document in ("base", self._surface)
+            render(document, human=self._human) for document in ("base", self._surface)
         )
 
     def _developer_instructions(self) -> str:

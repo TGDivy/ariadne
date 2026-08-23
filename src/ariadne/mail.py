@@ -201,9 +201,7 @@ def _matches(match: RouteMatch, message: MailMetadata) -> bool:
 
 def _header_addresses(*values: str) -> tuple[str, ...]:
     return tuple(
-        address.casefold()
-        for _name, address in getaddresses(values)
-        if address.strip()
+        address.casefold() for _name, address in getaddresses(values) if address.strip()
     )
 
 
