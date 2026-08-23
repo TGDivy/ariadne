@@ -287,6 +287,16 @@ class MailState:
                 """
             )
             database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS mail_checkpoints (
+                    mailbox TEXT PRIMARY KEY,
+                    uidvalidity INTEGER NOT NULL,
+                    last_seen_uid INTEGER NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+                """
+            )
+            database.execute(
                 "UPDATE mail_jobs SET status = 'pending' WHERE status = 'running'"
             )
 
@@ -328,6 +338,94 @@ class MailState:
                     AND status IN ('pending', 'running', 'failed')
                 """,
                 (now, mailbox, uidvalidity),
+            )
+
+    def catch_up(
+        self,
+        mailbox: str,
+        uidvalidity: int,
+        uids: Iterable[int],
+        *,
+        initial_baseline_uid: int | None = None,
+    ) -> None:
+        """Baseline a new mailbox, then durably enqueue UIDs seen afterward."""
+        current_uids = tuple(sorted(uids))
+        newest_uid = current_uids[-1] if current_uids else 0
+        now = time.time()
+        with self._connect() as database:
+            checkpoint = database.execute(
+                "SELECT * FROM mail_checkpoints WHERE mailbox = ?", (mailbox,)
+            ).fetchone()
+            checkpoint_changed = (
+                checkpoint is None or checkpoint["uidvalidity"] != uidvalidity
+            )
+            if checkpoint_changed:
+                baseline_uid = (
+                    initial_baseline_uid
+                    if initial_baseline_uid is not None
+                    else newest_uid
+                )
+                database.execute(
+                    """
+                    INSERT INTO mail_checkpoints
+                        (mailbox, uidvalidity, last_seen_uid, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(mailbox) DO UPDATE SET
+                        uidvalidity = excluded.uidvalidity,
+                        last_seen_uid = excluded.last_seen_uid,
+                        updated_at = excluded.updated_at
+                    """,
+                    (mailbox, uidvalidity, baseline_uid, now),
+                )
+                if checkpoint is not None:
+                    database.execute(
+                        """
+                        UPDATE mail_jobs SET status = 'failed',
+                            error = 'Mailbox UIDVALIDITY changed', updated_at = ?
+                        WHERE mailbox = ? AND uidvalidity != ?
+                            AND status IN ('pending', 'running', 'failed')
+                        """,
+                        (now, mailbox, uidvalidity),
+                    )
+                else:
+                    database.execute(
+                        """
+                        UPDATE mail_jobs SET status = 'done',
+                            error = 'Superseded by initial mailbox baseline',
+                            updated_at = ?
+                        WHERE mailbox = ?
+                            AND status IN ('pending', 'running', 'failed')
+                        """,
+                        (now, mailbox),
+                    )
+                last_seen_uid = baseline_uid
+            else:
+                last_seen_uid = int(checkpoint["last_seen_uid"])
+            new_uids = tuple(uid for uid in current_uids if uid > last_seen_uid)
+            database.executemany(
+                """
+                INSERT OR IGNORE INTO mail_jobs
+                    (job_id, mailbox, uidvalidity, uid, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                """,
+                (
+                    (
+                        self.job_id(mailbox, uidvalidity, uid),
+                        mailbox,
+                        uidvalidity,
+                        uid,
+                        now,
+                        now,
+                    )
+                    for uid in new_uids
+                ),
+            )
+            database.execute(
+                """
+                UPDATE mail_checkpoints SET last_seen_uid = ?, updated_at = ?
+                WHERE mailbox = ?
+                """,
+                (max(last_seen_uid, newest_uid), now, mailbox),
             )
 
     def retryable(self, mailbox: str, uidvalidity: int) -> tuple[MailJob, ...]:
@@ -601,6 +699,69 @@ def _response_value(
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class BackfillSummary:
+    scanned: int
+    move_matches: int
+    moved: int
+    iris_skipped: int
+    unmatched: int
+
+
+def ensure_folders(client: IMAPClient, routes: MailRoutes) -> None:
+    """Create the configured filing folders without touching any messages."""
+    listed = client.list_folders()
+    existing = {
+        name.decode() if isinstance(name, bytes) else str(name)
+        for _flags, _delimiter, name in listed
+    }
+    for folder in routes.folders.values():
+        if folder not in existing:
+            client.create_folder(folder)
+
+
+def backfill_inbox(
+    client: IMAPClient,
+    routes: MailRoutes,
+    *,
+    apply: bool = False,
+    batch_size: int = 100,
+) -> BackfillSummary:
+    """Apply only deterministic move rules to mail already in INBOX.
+
+    This operator path never creates a Codex conversation, calls Iris, or applies
+    an `iris` rule. Without `apply`, it is a read-only preview.
+    """
+    client.select_folder(MAILBOX, readonly=not apply)
+    uids = tuple(int(uid) for uid in client.search(["ALL"]))
+    scanned = move_matches = moved = iris_skipped = unmatched = 0
+    for start in range(0, len(uids), batch_size):
+        batch = uids[start : start + batch_size]
+        response = client.fetch(batch, [HEADER_QUERY])
+        for uid in batch:
+            raw = _response_value(response, uid, b"BODY[")
+            if raw is None:
+                continue
+            scanned += 1
+            route = routes.match(parse_metadata(raw))
+            if route is None:
+                unmatched += 1
+            elif route.action == "iris":
+                iris_skipped += 1
+            else:
+                move_matches += 1
+                if apply:
+                    client.move([uid], routes.folders[route.classification])
+                    moved += 1
+    return BackfillSummary(
+        scanned=scanned,
+        move_matches=move_matches,
+        moved=moved,
+        iris_skipped=iris_skipped,
+        unmatched=unmatched,
+    )
+
+
 class MailProcessor:
     """Reconcile one selected mailbox and process a snapshot sequentially."""
 
@@ -623,8 +784,15 @@ class MailProcessor:
         if value is None:
             raise RuntimeError("IMAP did not return UIDVALIDITY.")
         self.uidvalidity = int(value)
+        uidnext = selected.get(b"UIDNEXT", selected.get("UIDNEXT"))
+        initial_baseline_uid = max(int(uidnext) - 1, 0) if uidnext is not None else None
         uids = await asyncio.to_thread(self.client.search, ["ALL"])
-        self.state.discover(MAILBOX, self.uidvalidity, (int(uid) for uid in uids))
+        self.state.catch_up(
+            MAILBOX,
+            self.uidvalidity,
+            (int(uid) for uid in uids),
+            initial_baseline_uid=initial_baseline_uid,
+        )
 
     async def process_available(self) -> None:
         jobs = self.state.retryable(MAILBOX, self.uidvalidity)
@@ -841,11 +1009,4 @@ class MailLoop:
                 pass
 
     async def _ensure_folders(self, client: IMAPClient) -> None:
-        listed = await asyncio.to_thread(client.list_folders)
-        existing = {
-            name.decode() if isinstance(name, bytes) else str(name)
-            for _flags, _delimiter, name in listed
-        }
-        for folder in self.routes.folders.values():
-            if folder not in existing:
-                await asyncio.to_thread(client.create_folder, folder)
+        await asyncio.to_thread(ensure_folders, client, self.routes)

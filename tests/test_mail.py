@@ -17,6 +17,7 @@ from ariadne.mail import (
     MailProcessor,
     MailRoutes,
     MailState,
+    backfill_inbox,
     parse_metadata,
     render_message,
 )
@@ -100,9 +101,12 @@ class FakeIMAP:
         self.flags: list[tuple[list[int], list[bytes]]] = []
         self.created: list[str] = []
 
-    def select_folder(self, mailbox: str) -> dict[bytes, int]:
+    def select_folder(self, mailbox: str, readonly: bool = False) -> dict[bytes, int]:
         assert mailbox == "INBOX"
-        return {b"UIDVALIDITY": self.uidvalidity}
+        return {
+            b"UIDVALIDITY": self.uidvalidity,
+            b"UIDNEXT": max(self.messages, default=0) + 1,
+        }
 
     def search(self, criteria: list[str]) -> list[int]:
         assert criteria == ["ALL"]
@@ -111,14 +115,15 @@ class FakeIMAP:
     def fetch(
         self, uids: list[int], queries: list[bytes]
     ) -> dict[int, dict[bytes, bytes]]:
-        uid = uids[0]
         query = queries[0]
-        self.fetches.append((uid, query))
-        raw = self.messages.get(uid)
-        if raw is None:
-            return {}
         key = b"BODY[]" if query == FULL_QUERY else b"BODY[HEADER.FIELDS (...)]"
-        return {uid: {key: raw}}
+        response = {}
+        for uid in uids:
+            self.fetches.append((uid, query))
+            raw = self.messages.get(uid)
+            if raw is not None:
+                response[uid] = {key: raw}
+        return response
 
     def move(self, uids: list[int], destination: str) -> None:
         self.moves.append((uids, destination))
@@ -142,9 +147,9 @@ class IdlingIMAP(FakeIMAP):
         assert (username, password) == ("person@icloud.com", "password")
         self.calls.append("login")
 
-    def select_folder(self, mailbox: str) -> dict[bytes, int]:
+    def select_folder(self, mailbox: str, readonly: bool = False) -> dict[bytes, int]:
         self.calls.append("select")
-        return super().select_folder(mailbox)
+        return super().select_folder(mailbox, readonly)
 
     def search(self, criteria: list[str]) -> list[int]:
         self.calls.append("search")
@@ -187,21 +192,12 @@ class DecidingConversation:
         self.closed = True
 
 
-async def test_catch_up_routes_moves_and_only_fetches_full_mail_for_iris(
+async def test_first_start_baselines_then_new_mail_is_processed(
     tmp_path: Path,
 ) -> None:
     client = FakeIMAP(
         {
             1: message("shop@example.com", "Receipt", message_id="<receipt>"),
-            2: message(
-                "same@example.com", "Action needed now", message_id="<important>"
-            ),
-            3: message(
-                "bulk@example.com",
-                "Weekly digest",
-                message_id="<bulk>",
-                list_unsubscribe=True,
-            ),
         }
     )
     state = MailState(tmp_path / "mail.sqlite3")
@@ -217,8 +213,29 @@ async def test_catch_up_routes_moves_and_only_fetches_full_mail_for_iris(
     await processor.reconcile()
     await processor.process_available()
 
-    assert client.moves == [([1], "Receipts")]
-    assert client.flags == [([2], [b"\\Flagged"])]
+    assert client.fetches == []
+    assert client.moves == []
+    assert conversations == []
+
+    client.messages.update(
+        {
+            2: message("shop@example.com", "Receipt", message_id="<receipt-2>"),
+            3: message(
+                "same@example.com", "Action needed now", message_id="<important>"
+            ),
+            4: message(
+                "bulk@example.com",
+                "Weekly digest",
+                message_id="<bulk>",
+                list_unsubscribe=True,
+            ),
+        }
+    )
+    await processor.reconcile()
+    await processor.process_available()
+
+    assert client.moves == [([2], "Receipts")]
+    assert client.flags == [([3], [b"\\Flagged"])]
     assert len(conversations) == 1
     assert "Useful body text" in conversations[0].prompts[0]
     assert conversations[0].closed
@@ -226,8 +243,25 @@ async def test_catch_up_routes_moves_and_only_fetches_full_mail_for_iris(
     assert [query for _uid, query in client.fetches].count(HEADER_QUERY) == 3
     assert all(
         state.get(MailState.job_id("INBOX", 10, uid)).status == "done"
-        for uid in (1, 2, 3)
+        for uid in (2, 3, 4)
     )
+    assert state.get(MailState.job_id("INBOX", 10, 1)) is None
+
+
+def test_restart_catches_up_mail_received_after_the_saved_watermark(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / "mail.sqlite3"
+    initial = MailState(state_path)
+    initial.initialize()
+    initial.catch_up("INBOX", 10, [1, 2])
+    assert initial.retryable("INBOX", 10) == ()
+
+    restarted = MailState(state_path)
+    restarted.initialize()
+    restarted.catch_up("INBOX", 10, [1, 2, 3])
+
+    assert [job.uid for job in restarted.retryable("INBOX", 10)] == [3]
 
 
 async def test_restart_recovers_running_jobs_and_deduplicates_by_message_id(
@@ -271,6 +305,32 @@ async def test_mail_loop_ensures_every_configured_folder() -> None:
         "Travel",
         "Notifications",
     ]
+
+
+def test_backfill_only_previews_or_applies_deterministic_moves() -> None:
+    client = FakeIMAP(
+        {
+            1: message("shop@example.com", "Receipt", message_id="<receipt>"),
+            2: message(
+                "same@example.com", "Action needed now", message_id="<important>"
+            ),
+            3: message("other@example.com", "Hello", message_id="<other>"),
+        }
+    )
+
+    preview = backfill_inbox(cast(Any, client), routes())
+
+    assert preview.scanned == 3
+    assert preview.move_matches == 1
+    assert preview.moved == 0
+    assert preview.iris_skipped == 1
+    assert preview.unmatched == 1
+    assert client.moves == []
+
+    applied = backfill_inbox(cast(Any, client), routes(), apply=True)
+
+    assert applied.moved == 1
+    assert client.moves == [([1], "Receipts")]
 
 
 async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -> None:
