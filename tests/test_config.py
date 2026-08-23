@@ -21,7 +21,7 @@ def write_config(
     config.write_text(
         f'''\
 version = 1
-human_name = "Divy"
+human_name = "Example User"
 vault = "{vault}"
 
 [telegram]
@@ -47,7 +47,7 @@ web_search = "live"
 
     settings = load_settings(config, environ={})
 
-    assert settings.human_name == "Divy"
+    assert settings.human_name == "Example User"
     assert settings.codex_turn_settings == CodexTurnSettings(
         model="gpt-5.6-luna",
         effort=ReasoningEffort.low,
@@ -80,7 +80,7 @@ def test_environment_variables_do_not_override_toml(tmp_path: Path) -> None:
         },
     )
 
-    assert settings.human_name == "Divy"
+    assert settings.human_name == "Example User"
     assert settings.telegram_bot_token == "token"
 
 
@@ -108,7 +108,7 @@ def test_enabled_incomplete_mail_is_rejected(tmp_path: Path) -> None:
 
 [mail]
 enabled = true
-username = "person@icloud.com"
+username = "person@example.com"
 """,
     )
 
@@ -126,7 +126,7 @@ def test_enabled_mail_expands_paths(tmp_path: Path) -> None:
 
 [mail]
 enabled = true
-username = "person@icloud.com"
+username = "person@example.com"
 app_password = "app-password"
 routes = "{routes}"
 state = "{state}"
@@ -141,7 +141,7 @@ state = "{state}"
     assert configured.app_password.get_secret_value() == "app-password"
 
     settings = load_settings(config, environ={})
-    assert settings.mcp_environment["ARIADNE_MAIL_USERNAME"] == "person@icloud.com"
+    assert settings.mcp_environment["ARIADNE_MAIL_USERNAME"] == "person@example.com"
     assert settings.mcp_environment["ARIADNE_MAIL_APP_PASSWORD"] == "app-password"
 
 
@@ -195,7 +195,7 @@ def test_validation_errors_never_contain_mail_passwords(tmp_path: Path) -> None:
 
 [mail]
 enabled = true
-username = "person@icloud.com"
+username = "person@example.com"
 app_password = "super-secret-password"
 routes = "/does/not/exist.yaml"
 """,

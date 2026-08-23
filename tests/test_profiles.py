@@ -49,7 +49,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
         TELEGRAM_PROFILE,
         vault=tmp_path,
         settings=TELEGRAM_SETTINGS,
-        human="Divy",
+        human="Example User",
     )
 
     assert profile.name == "telegram"
@@ -81,7 +81,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
         MAIL_PROFILE,
         vault=tmp_path,
         settings=MAIL_SETTINGS,
-        human="Divy",
+        human="Example User",
         mcp_environment={
             "ARIADNE_MAIL_JOB_ID": "INBOX:1:2",
             "ARIADNE_MAIL_STATE": str(tmp_path / "mail.sqlite3"),
@@ -98,7 +98,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
             TELEGRAM_PROFILE,
             vault=tmp_path,
             settings=TELEGRAM_SETTINGS,
-            human="Divy",
+            human="Example User",
         ).enabled_tools
     )
     assert "ARIADNE_MAIL_JOB_ID" in profile.mcp_environment_names
@@ -113,7 +113,7 @@ def test_profile_inspection_never_contains_environment_values(
         MAIL_PROFILE,
         vault=tmp_path,
         settings=MAIL_SETTINGS,
-        human="Divy",
+        human="Example User",
         mcp_environment={
             "TELEGRAM_BOT_TOKEN": "super-secret-token",
             "TELEGRAM_ALLOWED_USER_ID": "7",

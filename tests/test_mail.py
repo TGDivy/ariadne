@@ -187,7 +187,7 @@ class IdlingIMAP(FakeIMAP):
         self.calls: list[str] = []
 
     def login(self, username: str, password: str) -> None:
-        assert (username, password) == ("person@icloud.com", "password")
+        assert (username, password) == ("person@example.com", "password")
         self.calls.append("login")
 
     def select_folder(self, mailbox: str, readonly: bool = False) -> dict[bytes, int]:
@@ -416,7 +416,7 @@ async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -
     loop.settings = cast(
         Any,
         SimpleNamespace(
-            username="person@icloud.com", app_password=SecretStr("password")
+            username="person@example.com", app_password=SecretStr("password")
         ),
     )
     loop.routes = routes()
@@ -445,7 +445,7 @@ def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) 
             TELEGRAM_PROFILE,
             vault=tmp_path,
             settings=TURN_SETTINGS,
-            human="Divy",
+            human="Example User",
         )
     )
     mail = _mcp_config_overrides(
@@ -453,7 +453,7 @@ def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) 
             MAIL_PROFILE,
             vault=tmp_path,
             settings=TURN_SETTINGS,
-            human="Divy",
+            human="Example User",
             mcp_environment={
                 "ARIADNE_MAIL_JOB_ID": "INBOX:1:2",
                 "ARIADNE_MAIL_STATE": str(tmp_path / "mail.sqlite3"),

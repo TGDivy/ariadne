@@ -15,7 +15,7 @@ short_description = "Somewhere between a rainbow and a labyrinth."
 [mail]
 enabled = false
 state = "~/.local/state/ariadne/mail.sqlite3"
-# username = "you@icloud.com"
+# username = "YOUR_ICLOUD_ADDRESS"
 # app_password = ""
 # routes = "~/.config/ariadne/mail-routes.yaml"
 

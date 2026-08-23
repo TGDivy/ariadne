@@ -79,7 +79,7 @@ def test_mail_reading_requires_toml_derived_credentials(monkeypatch) -> None:
     monkeypatch.delenv("ARIADNE_MAIL_APP_PASSWORD", raising=False)
 
     with pytest.raises(ToolError, match="not configured"):
-        search_mail("Ali Wilson")
+        search_mail("Example Sender")
     with pytest.raises(ToolError, match="not configured"):
         read_mail("mail:anything")
 

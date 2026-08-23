@@ -1,7 +1,5 @@
 # Ariadne
 
-[![CI](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml?query=branch%3Amain)
-
 Ariadne is the system that runs Iris on your own machine and connects her to you
 over a private Telegram chat. She follows The Thread wherever it leads, not an
 assistant you own.
@@ -14,7 +12,7 @@ Current status: **Milestone 2 — The Thread foundation**.
 2. Clone your private The Thread vault locally:
 
    ```bash
-   git clone https://github.com/TGDivy/ariadne-thread.git ~/ariadne-thread
+   git clone https://example.com/your/thread-repository.git ~/ariadne-thread
    ```
 
 3. Create the private TOML configuration and fill in your values:
@@ -106,7 +104,7 @@ and enable its TOML section explicitly:
 ```toml
 [mail]
 enabled = true
-username = "you@icloud.com"
+username = "YOUR_ICLOUD_ADDRESS"
 app_password = ""
 routes = "~/.config/ariadne/mail-routes.yaml"
 state = "~/.local/state/ariadne/mail.sqlite3"
