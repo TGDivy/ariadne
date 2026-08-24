@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
@@ -58,7 +59,7 @@ class MailRoute(BaseModel):
     id: str = Field(min_length=1)
     match: RouteMatch
     classification: str = Field(min_length=1)
-    action: Literal["move", "iris"]
+    action: Literal["move", "iris", "iris_then_move"]
 
 
 class MailDefaults(BaseModel):
@@ -88,13 +89,27 @@ class MailRoutes(BaseModel):
         invalid = {
             rule.classification
             for rule in self.rules
-            if rule.action == "move" and rule.classification not in self.folders
+            if rule.action in {"move", "iris_then_move"}
+            and rule.classification not in self.folders
         }
         if invalid:
             raise ValueError(
                 "Move classifications need a folder: " + ", ".join(sorted(invalid))
             )
+        duplicates = {
+            route_id
+            for route_id, count in Counter(rule.id for rule in self.rules).items()
+            if count > 1
+        }
+        if duplicates:
+            raise ValueError(
+                "Mail route ids must be unique: " + ", ".join(sorted(duplicates))
+            )
         return self
+
+    def matches(self, message: MailMetadata) -> tuple[MailRoute, ...]:
+        """Return every matching rule in configured order."""
+        return tuple(rule for rule in self.rules if _matches(rule.match, message))
 
     def match(self, message: MailMetadata) -> MailRoute | None:
         """Return the first matching rule."""
@@ -153,6 +168,7 @@ class MailJob:
     uid: int
     message_id: str | None
     status: JobStatus
+    route_id: str | None
     action: str | None
     destination: str | None
     classification: str | None
@@ -174,3 +190,28 @@ class BackfillSummary:
 class RestoreSummary:
     found: int
     moved: int
+
+
+@dataclass(frozen=True, slots=True)
+class RuleLint:
+    route_id: str
+    action: str
+    matches: int
+    selected: int
+    shadowed: int
+    sample_subjects: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class RouteOverlap:
+    earlier_route_id: str
+    later_route_id: str
+    matches: int
+
+
+@dataclass(frozen=True, slots=True)
+class RouteLintReport:
+    scanned: int
+    unmatched: int
+    rules: tuple[RuleLint, ...]
+    overlaps: tuple[RouteOverlap, ...]

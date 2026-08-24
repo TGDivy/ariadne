@@ -115,13 +115,25 @@ state = "~/.local/state/ariadne/mail.sqlite3"
 records the current `INBOX` UID as its first-run baseline without processing old
 mail. From then on it catches up mail received during downtime, drains jobs
 sequentially, and waits with IMAP IDLE. Inspection uses `BODY.PEEK`; rules that
-say `move` do not invoke Iris. Mail turns can keep, flag, or move the current
-message and may draft, but never send, email. The configured routes file can
-contain personal data and must stay outside Git.
+say `move` do not invoke Iris; `iris_then_move` rules run Iris successfully
+before filing into their configured folder. Mail turns can keep, flag, or move
+the current message and may draft, but never send, email. Each mail turn receives
+the external routes-file path so Iris can read it and propose a correction when
+a route was inappropriate. The configured routes file can contain personal data
+and must stay outside Git.
 
 By default, every unmatched message gets an Iris inspection that defaults to
 keeping it in `INBOX`. Set `defaults.unmatched_action` to `cheap_triage` to keep
 clearly routine unmatched mail in `INBOX` without starting an Iris turn.
+
+Lint the ordered rules against the mailbox without changing any mail:
+
+```bash
+uv run python -m ariadne.scripts.mail_route_lint
+```
+
+The report includes total and first-match counts per rule, shadowed matches,
+pairwise overlaps, and up to five sample subjects per rule.
 
 Mailbox moves use IMAP `MOVE` when available. On iCloud, Ariadne uses its
 `UIDPLUS` support to copy, mark deleted, and expunge only the exact source UIDs.
@@ -138,8 +150,9 @@ uv run python -m ariadne.scripts.mail_backfill
 uv run python -m ariadne.scripts.mail_backfill --apply
 ```
 
-The backfill never starts a Codex turn: it skips every `iris` rule and unmatched
-message. Its default mode is read-only and reports what `--apply` would move.
+The backfill never starts a Codex turn: it skips every `iris` or
+`iris_then_move` rule and every unmatched message. Its default mode is read-only
+and reports what `--apply` would move.
 Backfill and mail export show progress when run in an interactive terminal while
 keeping redirected output clean. Applied backfills group each fetched batch by
 destination and move matching messages in bounded bulk operations.

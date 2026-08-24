@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Callable
 from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
@@ -18,10 +19,12 @@ from ariadne.mail import (
     HEADER_QUERY,
     MailLoop,
     MailProcessor,
+    MailRoute,
     MailRoutes,
     MailState,
     backfill_inbox,
     cheap_triage,
+    lint_mail_routes,
     load_routes,
     move_messages,
     parse_metadata,
@@ -29,6 +32,7 @@ from ariadne.mail import (
     restore_folder_to_inbox,
 )
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
+from ariadne.scripts.mail_route_lint import render_report
 
 TURN_SETTINGS = CodexTurnSettings("gpt-5.6-luna", ReasoningEffort.low, "disabled")
 
@@ -71,6 +75,12 @@ def routes(
                     "match": {"from": ["shop@example.com"]},
                     "classification": "receipts",
                     "action": "move",
+                },
+                {
+                    "id": "review-then-file",
+                    "match": {"from": ["review@example.com"]},
+                    "classification": "travel",
+                    "action": "iris_then_move",
                 },
             ],
         }
@@ -117,6 +127,14 @@ def test_ordered_routes_use_the_first_complete_match() -> None:
     assert matched is not None
     assert matched.id == "important-first"
     assert matched.action == "iris"
+
+
+def test_route_ids_must_be_unique() -> None:
+    data = routes().model_dump(by_alias=True)
+    data["rules"] = [*data["rules"], data["rules"][0]]
+
+    with pytest.raises(ValueError, match="Mail route ids must be unique"):
+        MailRoutes.model_validate(data)
 
 
 @pytest.mark.parametrize(
@@ -254,6 +272,20 @@ class IdlingIMAP(FakeIMAP):
         self.calls.append("logout")
 
 
+class FailingMoveIMAP(FakeIMAP):
+    def __init__(self, messages: dict[int, bytes], failures: int) -> None:
+        super().__init__(messages)
+        self.failures = failures
+        self.move_attempts: list[tuple[tuple[int, ...], str]] = []
+
+    def move(self, uids: tuple[int, ...], destination: str) -> None:
+        self.move_attempts.append((uids, destination))
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError("move failed")
+        super().move(uids, destination)
+
+
 class DecidingConversation:
     def __init__(self, state: MailState, job_id: str) -> None:
         self.state = state
@@ -276,6 +308,40 @@ class DecidingConversation:
         self.closed = True
 
 
+class FailingConversation:
+    def __init__(self) -> None:
+        self.prompts: list[str] = []
+        self.closed = False
+
+    async def stream_reply(self, prompt: str):
+        self.prompts.append(prompt)
+        if False:
+            yield ""
+        raise RuntimeError("Iris failed")
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def queued_processor(
+    tmp_path: Path,
+    client: FakeIMAP,
+    conversation_factory: Callable[[str], CodexConversation],
+) -> tuple[MailProcessor, MailState]:
+    state = MailState(tmp_path / "mail.sqlite3")
+    state.initialize()
+    state.discover("INBOX", 10, client.messages)
+    processor = MailProcessor(
+        cast(Any, client),
+        routes(),
+        state,
+        conversation_factory,
+        Path("/config/mail-routes.yaml"),
+    )
+    processor.uidvalidity = 10
+    return processor, state
+
+
 async def test_first_start_baselines_then_new_mail_is_processed(
     tmp_path: Path,
 ) -> None:
@@ -293,7 +359,13 @@ async def test_first_start_baselines_then_new_mail_is_processed(
         conversations.append(value)
         return cast(CodexConversation, value)
 
-    processor = MailProcessor(cast(Any, client), routes(), state, conversation)
+    processor = MailProcessor(
+        cast(Any, client),
+        routes(),
+        state,
+        conversation,
+        Path("/config/mail-routes.yaml"),
+    )
     await processor.reconcile()
     await processor.process_available()
 
@@ -367,7 +439,11 @@ async def test_cheap_triage_can_keep_routine_unmatched_mail_without_iris(
         return cast(CodexConversation, value)
 
     processor = MailProcessor(
-        cast(Any, client), routes("cheap_triage"), state, conversation
+        cast(Any, client),
+        routes("cheap_triage"),
+        state,
+        conversation,
+        Path("/config/mail-routes.yaml"),
     )
     processor.uidvalidity = 10
     await processor.process_available()
@@ -379,6 +455,182 @@ async def test_cheap_triage_can_keep_routine_unmatched_mail_without_iris(
     assert job.suggested_action == "keep_in_inbox"
     assert conversations == []
     assert [query for _uid, query in client.fetches] == [HEADER_QUERY]
+
+
+async def test_iris_then_move_runs_iris_then_moves_to_the_route_folder(
+    tmp_path: Path,
+) -> None:
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    conversations: list[DecidingConversation] = []
+    state: MailState
+
+    def conversation(job_id: str) -> CodexConversation:
+        value = DecidingConversation(state, job_id)
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "done"
+    assert job.route_id == "review-then-file"
+    assert job.action == "move"
+    assert job.destination == "Travel"
+    assert client.moves == [((1,), "Travel")]
+    assert client.flags == []
+    assert len(conversations) == 1
+    assert "before moving it to 'Travel'" in conversations[0].prompts[0]
+    assert (
+        "Mail route configuration: /config/mail-routes.yaml"
+        in conversations[0].prompts[0]
+    )
+
+
+async def test_iris_then_move_does_not_move_when_iris_fails(tmp_path: Path) -> None:
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    conversations: list[FailingConversation] = []
+
+    def conversation(_job_id: str) -> CodexConversation:
+        value = FailingConversation()
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "failed"
+    assert job.action == "iris_then_move"
+    assert job.destination == "Travel"
+    assert client.moves == []
+    assert len(conversations) == 1
+    assert conversations[0].closed
+
+
+async def test_iris_then_move_retries_iris_after_iris_failure(tmp_path: Path) -> None:
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    attempts: list[FailingConversation | DecidingConversation] = []
+    state: MailState
+
+    def conversation(job_id: str) -> CodexConversation:
+        if not attempts:
+            value: FailingConversation | DecidingConversation = FailingConversation()
+        else:
+            value = DecidingConversation(state, job_id)
+        attempts.append(value)
+        return cast(CodexConversation, value)
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+
+    await processor.process_available()
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "done"
+    assert client.moves == [((1,), "Travel")]
+    assert len(attempts) == 2
+
+
+async def test_iris_then_move_records_move_failure_for_retry(tmp_path: Path) -> None:
+    client = FailingMoveIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")},
+        failures=2,
+    )
+    conversations: list[DecidingConversation] = []
+    state: MailState
+
+    def conversation(job_id: str) -> CodexConversation:
+        value = DecidingConversation(state, job_id)
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "failed"
+    assert job.action == "move"
+    assert job.destination == "Travel"
+    assert client.move_attempts == [((1,), "Travel")]
+    assert len(conversations) == 1
+
+
+async def test_iris_then_move_retries_only_the_failed_move(tmp_path: Path) -> None:
+    client = FailingMoveIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")},
+        failures=1,
+    )
+    conversations: list[DecidingConversation] = []
+    state: MailState
+
+    def conversation(job_id: str) -> CodexConversation:
+        value = DecidingConversation(state, job_id)
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+
+    await processor.process_available()
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "done"
+    assert client.move_attempts == [((1,), "Travel"), ((1,), "Travel")]
+    assert client.moves == [((1,), "Travel")]
+    assert len(conversations) == 1
+
+
+async def test_iris_then_move_skips_duplicate_message_id(tmp_path: Path) -> None:
+    client = FakeIMAP(
+        {2: message("review@example.com", "Trip review", message_id="<duplicate>")}
+    )
+    conversations: list[DecidingConversation] = []
+    state = MailState(tmp_path / "mail.sqlite3")
+    state.initialize()
+    state.discover("INBOX", 10, [1])
+    original = MailState.job_id("INBOX", 10, 1)
+    state.start(original)
+    state.identify(original, "<duplicate>")
+    state.finish(original)
+    state.discover("INBOX", 10, [2])
+
+    def conversation(job_id: str) -> CodexConversation:
+        value = DecidingConversation(state, job_id)
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor = MailProcessor(
+        cast(Any, client),
+        routes(),
+        state,
+        conversation,
+        Path("/config/mail-routes.yaml"),
+    )
+    processor.uidvalidity = 10
+
+    await processor.process_available()
+
+    duplicate = state.get(MailState.job_id("INBOX", 10, 2))
+    assert duplicate is not None
+    assert duplicate.status == "done"
+    assert duplicate.action is None
+    assert client.moves == []
+    assert conversations == []
 
 
 def test_restart_catches_up_mail_received_after_the_saved_watermark(
@@ -455,6 +707,7 @@ def test_backfill_previews_and_bulk_applies_deterministic_moves() -> None:
             ),
             4: message("shop@example.com", "Another receipt", message_id="<second>"),
             5: message("same@example.com", "Special offer", message_id="<offer>"),
+            6: message("review@example.com", "Trip review", message_id="<review>"),
         },
         capabilities=("UIDPLUS",),
     )
@@ -466,16 +719,16 @@ def test_backfill_previews_and_bulk_applies_deterministic_moves() -> None:
         progress=lambda done, total: updates.append((done, total)),
     )
 
-    assert preview.scanned == 5
+    assert preview.scanned == 6
     assert preview.move_matches == 3
     assert preview.moved == 0
-    assert preview.iris_skipped == 1
+    assert preview.iris_skipped == 2
     assert preview.unmatched == 1
     assert preview.scanned == (
         preview.move_matches + preview.iris_skipped + preview.unmatched
     )
     assert client.moves == []
-    assert updates == [(0, 5), (5, 5)]
+    assert updates == [(0, 6), (6, 6)]
 
     applied = backfill_inbox(cast(Any, client), routes(), apply=True)
 
@@ -488,6 +741,63 @@ def test_backfill_previews_and_bulk_applies_deterministic_moves() -> None:
     assert client.copies == [((1, 4), "Receipts"), ((5,), "Promotions")]
     assert client.deletions == [((1, 4), True), ((5,), True)]
     assert client.uid_expunges == [(1, 4), (5,)]
+
+
+def test_route_lint_reports_counts_overlaps_shadowing_and_five_samples() -> None:
+    configured = routes()
+    shadowed = MailRoute.model_validate(
+        {
+            "id": "shadowed-same-sender",
+            "match": {"from": ["same@example.com"]},
+            "classification": "notifications",
+            "action": "iris",
+        }
+    )
+    configured = configured.model_copy(update={"rules": (*configured.rules, shadowed)})
+    messages = {
+        uid: message("same@example.com", f"Action needed {uid}", message_id=f"<{uid}>")
+        for uid in range(1, 7)
+    }
+    messages[7] = message("same@example.com", "Special offer", message_id="<7>")
+    messages[8] = message("other@example.com", "Hello", message_id="<8>")
+    client = FakeIMAP(messages)
+    updates: list[tuple[int, int]] = []
+
+    report = lint_mail_routes(
+        cast(Any, client),
+        configured,
+        batch_size=3,
+        progress=lambda done, total: updates.append((done, total)),
+    )
+
+    assert report.scanned == 8
+    assert report.unmatched == 1
+    by_id = {rule.route_id: rule for rule in report.rules}
+    assert (by_id["important-first"].matches, by_id["important-first"].selected) == (
+        6,
+        6,
+    )
+    assert (by_id["bulk-second"].matches, by_id["bulk-second"].shadowed) == (
+        7,
+        6,
+    )
+    assert by_id["shadowed-same-sender"].selected == 0
+    assert by_id["shadowed-same-sender"].shadowed == 7
+    assert len(by_id["important-first"].sample_subjects) == 5
+    assert [
+        (item.earlier_route_id, item.later_route_id, item.matches)
+        for item in report.overlaps
+    ] == [
+        ("important-first", "bulk-second", 6),
+        ("important-first", "shadowed-same-sender", 6),
+        ("bulk-second", "shadowed-same-sender", 7),
+    ]
+    assert client.selections == [("INBOX", True)]
+    assert updates == [(0, 8), (3, 8), (6, 8), (8, 8)]
+    rendered = render_report(report)
+    assert "shadowed-same-sender [iris]: matches=7, selected=0, shadowed=7" in rendered
+    assert "fully_shadowed=yes" in rendered
+    assert "important-first + bulk-second: 6" in rendered
 
 
 def test_move_messages_uses_iclouds_uidplus_fallback_without_global_expunge() -> None:
@@ -559,7 +869,9 @@ async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -
     loop.settings = cast(
         Any,
         SimpleNamespace(
-            username="person@example.com", app_password=SecretStr("password")
+            username="person@example.com",
+            app_password=SecretStr("password"),
+            routes=Path("/config/mail-routes.yaml"),
         ),
     )
     loop.routes = routes()

@@ -103,6 +103,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     )
     assert "ARIADNE_MAIL_JOB_ID" in profile.mcp_environment_names
     assert "A mail event arrived." in profile.base_instructions
+    assert "external mail-routes YAML file" in profile.base_instructions
 
 
 def test_profile_inspection_never_contains_environment_values(

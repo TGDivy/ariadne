@@ -14,6 +14,8 @@ defaults:
   unmatched_keep_in_inbox: true
 
 # Rules are ordered; the first match wins. Match values are case-insensitive.
+# Actions are "move", "iris", or "iris_then_move". The last runs Iris before
+# filing the message into the classification's configured folder.
 rules:
   - id: important-example
     match:
