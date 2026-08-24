@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from datetime import date
 from typing import cast
 from unittest.mock import AsyncMock
@@ -275,8 +276,9 @@ async def test_file_delivery_uses_the_configured_bot_token(
 
 
 async def test_a_streamed_reply_leaves_only_the_final_answer_behind(
-    message: FakeMessage,
+    message: FakeMessage, caplog
 ) -> None:
+    caplog.set_level(logging.INFO)
     conversation = FakeConversation(["Hello", "Hello, Ariadne!"])
     bot = AriadneBot(7, cast(CodexConversation, conversation))
 
@@ -286,6 +288,10 @@ async def test_a_streamed_reply_leaves_only_the_final_answer_behind(
     assert message.replies == ["Hello, Ariadne!"]
     assert message.edits == []
     assert message.draft_ids == [11]
+    assert "Telegram message received message_id=11" in caplog.text
+    assert "Telegram turn started message_id=11" in caplog.text
+    assert "Telegram turn finished message_id=11 status=success" in caplog.text
+    assert "Say hello" not in caplog.text
 
 
 async def test_telegram_reply_includes_the_replied_message_text() -> None:

@@ -99,6 +99,12 @@ Using Telegram's Reply action includes the immediate replied-to message's full
 text or caption and message ID as labelled context. Replies to old media include
 its caption, but do not re-download the old file or image.
 
+At the default INFO log level, stdout shows privacy-safe operational progress:
+Telegram message and turn lifecycle events, plus mail connection, discovery,
+queue, routing, Codex-processing, and mailbox-action events. These logs use IDs,
+counts, models, routes, actions, and durations; they do not include Telegram
+message text, mail subjects/bodies/addresses, or credentials.
+
 ### OpenTelemetry and Grafana Cloud
 
 Ariadne can send Codex metrics and traces directly to any OTLP/HTTP endpoint.

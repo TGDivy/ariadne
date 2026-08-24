@@ -719,12 +719,35 @@ class AriadneBot:
         if not self._is_allowed(user_id):
             return
 
+        reply_to = (
+            message.reply_to_message.message_id
+            if message.reply_to_message is not None
+            else None
+        )
+        LOGGER.info(
+            "Telegram message received message_id=%s reply_to=%s images=%d",
+            message.message_id,
+            reply_to,
+            len(image_paths),
+        )
         prompt = turn_text(text, message.message_id, message.reply_to_message)
         if self._busy:
+            LOGGER.info(
+                "Telegram message steering active turn message_id=%s",
+                message.message_id,
+            )
             await self._steer_active_turn(message, prompt, image_paths)
             return
 
+        started_at = time.monotonic()
+        status = "cancelled"
         self._busy = True
+        LOGGER.info(
+            "Telegram turn started message_id=%s model=%s effort=%s",
+            message.message_id,
+            self._conversation.settings.model,
+            self._conversation.settings.effort.value,
+        )
         draft = _Draft(message)
         await draft.keep_alive()
         live_turn = asyncio.create_task(self._keep_turn_alive(draft, send_typing))
@@ -735,11 +758,18 @@ class AriadneBot:
 
             try:
                 await self._stream_response(message, draft, prompt, image_paths)
+                status = "success"
             except TurnInterrupted:
-                LOGGER.info("Codex turn interrupted")
+                status = "cancelled"
+                LOGGER.info(
+                    "Telegram turn interrupted message_id=%s", message.message_id
+                )
                 await self._send_stopped(message)
             except Exception:
-                LOGGER.exception("Codex turn failed")
+                status = "failure"
+                LOGGER.exception(
+                    "Telegram turn failed message_id=%s", message.message_id
+                )
                 await self._send_failure(message)
         finally:
             live_turn.cancel()
@@ -748,6 +778,12 @@ class AriadneBot:
             self._stop_notice = None
             self._stopping = False
             self._busy = False
+            LOGGER.info(
+                "Telegram turn finished message_id=%s status=%s duration=%.2fs",
+                message.message_id,
+                status,
+                time.monotonic() - started_at,
+            )
 
     async def _accept_attachment(
         self,
@@ -823,10 +859,15 @@ class AriadneBot:
             return
 
         if steered:
+            LOGGER.info("Telegram steering accepted message_id=%s", message.message_id)
             await self._reply_safely(message, STEERED_MESSAGE)
             return
 
         # The turn is starting but Codex has not accepted it yet.
+        LOGGER.info(
+            "Telegram steering deferred message_id=%s turn_not_ready=true",
+            message.message_id,
+        )
         await self._reply_safely(message, BUSY_MESSAGE)
 
     async def _keep_turn_alive(
