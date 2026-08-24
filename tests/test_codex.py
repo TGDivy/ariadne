@@ -480,7 +480,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     assert "/private/path" not in caplog.text
 
 
-def test_failed_telegram_mcp_call_logs_duration_request_and_error(
+def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
     caplog, monkeypatch
 ) -> None:
     caplog.set_level(logging.INFO)
@@ -498,7 +498,7 @@ def test_failed_telegram_mcp_call_logs_duration_request_and_error(
         update={
             "duration_ms": 0,
             "error": McpToolCallError(
-                message="Telegram connection timed out before message delivery."
+                message="This action was rejected due to unacceptable risk."
             ),
             "status": McpToolCallStatus.failed,
         }
@@ -507,9 +507,9 @@ def test_failed_telegram_mcp_call_logs_duration_request_and_error(
     started_at = conversation_module._log_mcp_started(started, "mail")
     conversation_module._log_mcp_finished(failed, "mail", started_at)
 
-    assert "status=failed failure=connect_timeout duration=11.00s" in caplog.text
+    assert "status=failed failure=policy_rejected duration=11.00s" in caplog.text
     assert 'request={"text": "private message"}' in caplog.text
-    assert "Telegram connection timed out before message delivery." in caplog.text
+    assert "This action was rejected due to unacceptable risk." in caplog.text
 
 
 @pytest.mark.parametrize(
