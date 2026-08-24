@@ -86,7 +86,7 @@ def main() -> None:
         return
 
     mail_settings = settings.mail_settings
-    telemetry = configure_telemetry()
+    telemetry = configure_telemetry(settings.telemetry)
 
     conversation = CodexConversation(
         resolve_profile(

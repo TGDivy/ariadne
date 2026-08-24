@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     ConfigDict,
     DirectoryPath,
@@ -144,6 +145,48 @@ class MailConfig(BaseModel):
         return self
 
 
+class TelemetryConfig(BaseModel):
+    """Opt-in OTLP/HTTP export configuration."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    endpoint: AnyHttpUrl | None = None
+    authorization: SecretStr | None = None
+    service_name: str = Field(default="ariadne", min_length=1)
+    metrics: bool = True
+    traces: bool = True
+    export_interval_seconds: PositiveInt = 60
+
+    @field_validator("authorization", mode="before")
+    @classmethod
+    def empty_authorization_is_absent(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @field_validator("service_name", mode="before")
+    @classmethod
+    def strip_service_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def require_complete_enabled_telemetry(self) -> TelemetryConfig:
+        if not self.enabled:
+            return self
+        missing = []
+        if self.endpoint is None:
+            missing.append("endpoint")
+        if self.authorization is None:
+            missing.append("authorization")
+        if missing:
+            raise ValueError("Enabled telemetry requires: " + ", ".join(missing) + ".")
+        if not self.metrics and not self.traces:
+            raise ValueError("Enabled telemetry requires metrics or traces.")
+        return self
+
+
 class Settings(BaseModel):
     """Complete validated Ariadne configuration."""
 
@@ -154,6 +197,7 @@ class Settings(BaseModel):
     vault: DirectoryPath
     telegram: TelegramConfig
     mail: MailConfig = Field(default_factory=MailConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
 
     @field_validator("human_name", mode="before")
@@ -304,6 +348,21 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             ),
             "routes": str(settings.mail.routes) if settings.mail.routes else None,
             "state": str(settings.mail.state),
+        },
+        "telemetry": {
+            "enabled": settings.telemetry.enabled,
+            "endpoint": (
+                str(settings.telemetry.endpoint)
+                if settings.telemetry.endpoint is not None
+                else None
+            ),
+            "authorization": (
+                "<redacted>" if settings.telemetry.authorization is not None else None
+            ),
+            "service_name": settings.telemetry.service_name,
+            "metrics": settings.telemetry.metrics,
+            "traces": settings.telemetry.traces,
+            "export_interval_seconds": settings.telemetry.export_interval_seconds,
         },
         "profiles": {
             name: {

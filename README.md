@@ -99,30 +99,32 @@ turn that is already running, so Codex folds them into the work in flight.
 ### OpenTelemetry and Grafana Cloud
 
 Ariadne can send Codex metrics and traces directly to any OTLP/HTTP endpoint.
-Export is disabled unless an OTLP endpoint is present, so telemetry is opt-in
-and the ordinary runtime has no additional service to operate.
+Telemetry is opt-in under `[telemetry]`, so the ordinary runtime has no
+additional service to operate. Ariadne does not read `OTEL_*` environment
+variables or fall back to them.
 
 For Grafana Cloud, follow its
 [OTLP endpoint guide](https://grafana.com/docs/grafana-cloud/send-data/otlp/send-data-otlp/):
 open the stack's **Configure → OpenTelemetry** tile, generate an access token,
-and copy its connection values into the environment that starts Ariadne. The
-Python exporter uses binary OTLP over HTTP:
+and put the base endpoint and authorization value in Ariadne's existing private
+TOML file:
 
-```bash
-export OTEL_SERVICE_NAME="ariadne"
-export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
-export OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-REGION.grafana.net/otlp"
-export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic%20YOUR_TOKEN"
-uv run python -m ariadne
+```toml
+[telemetry]
+enabled = true
+endpoint = "https://otlp-gateway-REGION.grafana.net/otlp"
+authorization = "Basic YOUR_TOKEN"
+service_name = "ariadne"
+metrics = true
+traces = true
+export_interval_seconds = 60
 ```
 
-Grafana's Python instructions require the space after `Basic` to be encoded as
-`%20`. Keep the header out of checked-in configuration. A signal-specific
-`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` or
-`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` also works, but it must include the full
-`/v1/metrics` or `/v1/traces` path. The standard
-`OTEL_METRIC_EXPORT_INTERVAL` variable changes the 60-second default metrics
-interval.
+Use the exact stack-specific base endpoint ending in `/otlp`; Ariadne appends
+`/v1/metrics` and `/v1/traces`. Both `Basic YOUR_TOKEN` and Grafana's encoded
+`Basic%20YOUR_TOKEN` form are accepted. The authorization value is redacted by
+`python -m ariadne config show`. Keep the TOML at the documented `chmod 600`
+permissions and never check it into the repository.
 
 Import `docs/grafana/ariadne-observability.json` in Grafana and select the
 stack's Prometheus data source. The dashboard covers tokens, caching, usage by

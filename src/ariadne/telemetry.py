@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+from urllib.parse import unquote
 
 from openai_codex.generated.v2_all import (
     CommandExecutionThreadItem,
@@ -28,6 +28,9 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode, Tracer
+
+if TYPE_CHECKING:
+    from .config import TelemetryConfig
 
 LOGGER = logging.getLogger(__name__)
 
@@ -60,10 +63,10 @@ def _package_version() -> str:
         return "unknown"
 
 
-def _resource() -> Resource:
+def _resource(service_name: str) -> Resource:
     return Resource.create(
         {
-            "service.name": os.environ.get("OTEL_SERVICE_NAME", "ariadne"),
+            "service.name": service_name,
             "service.version": _package_version(),
         }
     )
@@ -490,25 +493,28 @@ def _usage_delta(
     )
 
 
-def configure_telemetry() -> Telemetry:
-    """Configure direct OTLP/HTTP export when an endpoint is present."""
-    common_endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
-    metrics_enabled = bool(
-        common_endpoint or os.environ.get("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
-    )
-    traces_enabled = bool(
-        common_endpoint or os.environ.get("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-    )
-    if not metrics_enabled and not traces_enabled:
-        LOGGER.info("OpenTelemetry export is disabled; no OTLP endpoint is configured")
+def configure_telemetry(config: TelemetryConfig | None = None) -> Telemetry:
+    """Configure direct OTLP/HTTP export exclusively from Ariadne's TOML."""
+    if config is None or not config.enabled:
+        LOGGER.info("OpenTelemetry export is disabled in Ariadne configuration")
         return Telemetry()
 
-    resource = _resource()
+    assert config.endpoint is not None
+    assert config.authorization is not None
+    base_endpoint = str(config.endpoint).rstrip("/")
+    headers = {"Authorization": unquote(config.authorization.get_secret_value())}
+    resource = _resource(config.service_name)
     meter_provider: MeterProvider | None = None
     tracer_provider: TracerProvider | None = None
     try:
-        if metrics_enabled:
-            reader = PeriodicExportingMetricReader(OTLPMetricExporter())
+        if config.metrics:
+            reader = PeriodicExportingMetricReader(
+                OTLPMetricExporter(
+                    endpoint=f"{base_endpoint}/v1/metrics",
+                    headers=headers,
+                ),
+                export_interval_millis=config.export_interval_seconds * 1000,
+            )
             token_buckets = ExplicitBucketHistogramAggregation(
                 boundaries=_TOKEN_BUCKETS
             )
@@ -526,9 +532,16 @@ def configure_telemetry() -> Telemetry:
                     ),
                 ],
             )
-        if traces_enabled:
+        if config.traces:
             tracer_provider = TracerProvider(resource=resource)
-            tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+            tracer_provider.add_span_processor(
+                BatchSpanProcessor(
+                    OTLPSpanExporter(
+                        endpoint=f"{base_endpoint}/v1/traces",
+                        headers=headers,
+                    )
+                )
+            )
     except Exception:
         LOGGER.exception("OpenTelemetry setup failed; continuing without export")
         if tracer_provider is not None:
@@ -539,8 +552,8 @@ def configure_telemetry() -> Telemetry:
 
     LOGGER.info(
         "OpenTelemetry OTLP/HTTP export enabled (metrics=%s, traces=%s)",
-        metrics_enabled,
-        traces_enabled,
+        config.metrics,
+        config.traces,
     )
     return Telemetry(
         meter_provider=meter_provider,

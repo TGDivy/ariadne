@@ -175,16 +175,68 @@ def test_config_example_is_a_valid_disabled_mail_template(tmp_path: Path) -> Non
 
     assert settings.mail.enabled is False
     assert settings.mail_settings is None
+    assert settings.telemetry.enabled is False
+
+
+def test_enabled_telemetry_loads_from_toml(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[telemetry]
+enabled = true
+endpoint = "https://otlp.example.com/otlp"
+authorization = "Basic telemetry-secret"
+service_name = "iris"
+metrics = true
+traces = false
+export_interval_seconds = 15
+""",
+    )
+
+    telemetry = load_settings(config, environ={}).telemetry
+
+    assert str(telemetry.endpoint) == "https://otlp.example.com/otlp"
+    assert telemetry.authorization is not None
+    assert telemetry.authorization.get_secret_value() == "Basic telemetry-secret"
+    assert telemetry.service_name == "iris"
+    assert telemetry.metrics is True
+    assert telemetry.traces is False
+    assert telemetry.export_interval_seconds == 15
+
+
+def test_enabled_incomplete_telemetry_is_rejected(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[telemetry]
+enabled = true
+endpoint = "https://otlp.example.com/otlp"
+""",
+    )
+
+    with pytest.raises(ValidationError, match="authorization"):
+        load_settings(config, environ={})
 
 
 def test_redacted_configuration_never_contains_secrets(tmp_path: Path) -> None:
     config = write_config(
-        tmp_path, telegram='bot_token = "secret"\nallowed_user_id = 7'
+        tmp_path,
+        telegram='bot_token = "secret"\nallowed_user_id = 7',
+        extra="""\
+
+[telemetry]
+enabled = true
+endpoint = "https://otlp.example.com/otlp"
+authorization = "Basic telemetry-secret"
+""",
     )
 
     serialized = json.dumps(settings_payload(load_settings(config, environ={})))
 
     assert "secret" not in serialized
+    assert "telemetry-secret" not in serialized
     assert "<redacted>" in serialized
 
 

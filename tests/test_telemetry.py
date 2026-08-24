@@ -13,10 +13,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from ariadne.telemetry import Telemetry, configure_telemetry
 
 
-def test_telemetry_is_disabled_without_an_otlp_endpoint(monkeypatch) -> None:
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", raising=False)
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", raising=False)
+def test_telemetry_does_not_fall_back_to_environment(monkeypatch) -> None:
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://ignored.example/otlp")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=ignored")
 
     telemetry = configure_telemetry()
 
