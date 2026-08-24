@@ -130,14 +130,11 @@ async def _send_chunks(
 async def send_telegram_message(
     text: str, reply_to_message_id: int | None = None
 ) -> list[int]:
-    """Send a persistent message to the human's private Telegram chat now.
+    """Send a persistent message to the human's configured private Telegram.
 
-    Use this when something must reach the human outside a Telegram turn, or
-    when a Telegram turn should speak before its final response. The message
-    stays in the chat as your own. The destination is the same human's private
-    Telegram account fixed in Ariadne's runtime configuration; it is not a third
-    party, and callers cannot select or override it. Ariadne handles Markdown
-    rendering and Telegram's length limit.
+    The only destination belongs to the same human and cannot be supplied or
+    changed by the caller. Use this for notifications outside Telegram turns or
+    to speak before a Telegram turn ends. Ariadne handles Markdown and splitting.
     """
     if not text.strip():
         raise ToolError("A message needs something to say.")
