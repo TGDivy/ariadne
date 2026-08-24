@@ -68,6 +68,7 @@ def resolve_profile(
     *,
     vault: Path,
     human: str,
+    personality: Path | None = None,
     settings: CodexTurnSettings | None = None,
     mcp_environment: Mapping[str, str] | None = None,
 ) -> ResolvedTurnProfile:
@@ -85,6 +86,14 @@ def resolve_profile(
         human=human,
         repository=repository,
     )
+    if personality is not None:
+        personality_text = personality.read_text(encoding="utf-8").strip()
+        developer_sources += ("config/personality.md",)
+        developer_instructions = (
+            f"{developer_instructions}\n\n"
+            "## Shared personality and standing preferences\n\n"
+            f"{personality_text}"
+        )
 
     values = {
         "ARIADNE_VAULT": str(vault),

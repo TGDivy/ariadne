@@ -1136,6 +1136,7 @@ class MailLoop:
         turn_settings: CodexTurnSettings,
         *,
         human: str,
+        personality: Path | None = None,
         mcp_environment: Mapping[str, str] | None = None,
         client_factory: ClientFactory | None = None,
         telemetry: Telemetry | None = None,
@@ -1144,6 +1145,7 @@ class MailLoop:
         self.vault = vault
         self.turn_settings = turn_settings
         self.human = human
+        self.personality = personality
         self.mcp_environment = dict(mcp_environment or {})
         self.telemetry = telemetry or Telemetry()
         self.routes = load_routes(settings.routes)
@@ -1164,6 +1166,7 @@ class MailLoop:
                 vault=self.vault,
                 settings=self.turn_settings,
                 human=self.human,
+                personality=self.personality,
                 mcp_environment={
                     **self.mcp_environment,
                     "ARIADNE_MAIL_JOB_ID": job_id,

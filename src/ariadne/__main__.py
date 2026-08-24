@@ -94,6 +94,7 @@ def main() -> None:
             vault=settings.vault,
             settings=settings.codex_turn_settings,
             human=settings.human_name,
+            personality=settings.personality,
             mcp_environment=settings.mcp_environment,
         ),
         telemetry=telemetry,
@@ -110,6 +111,7 @@ def main() -> None:
                 settings.vault,
                 settings.mail_turn_settings,
                 human=settings.human_name,
+                personality=settings.personality,
                 mcp_environment=settings.mcp_environment,
                 telemetry=telemetry,
             )
