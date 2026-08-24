@@ -28,6 +28,7 @@ from ..codex import CodexConversation, CodexTurnSettings
 from ..codex.resolver import resolve_profile
 from ..config import MailSettings
 from ..profile import MAIL_PROFILE
+from ..telemetry import Telemetry
 from .models import (
     BackfillSummary,
     Importance,
@@ -1037,12 +1038,14 @@ class MailLoop:
         human: str,
         mcp_environment: Mapping[str, str] | None = None,
         client_factory: ClientFactory | None = None,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self.settings = settings
         self.vault = vault
         self.turn_settings = turn_settings
         self.human = human
         self.mcp_environment = dict(mcp_environment or {})
+        self.telemetry = telemetry or Telemetry()
         self.routes = load_routes(settings.routes)
         self.state = MailState(settings.state)
         self.state.initialize()
@@ -1066,7 +1069,8 @@ class MailLoop:
                     "ARIADNE_MAIL_JOB_ID": job_id,
                     "ARIADNE_MAIL_STATE": str(self.settings.state),
                 },
-            )
+            ),
+            telemetry=self.telemetry,
         )
 
     async def run_forever(self) -> None:

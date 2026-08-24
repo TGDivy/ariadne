@@ -25,6 +25,7 @@ from .config import Settings, config_path, load_settings, settings_payload
 from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
 from .telegram.bot import AriadneBot
+from .telemetry import configure_telemetry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ def main() -> None:
         return
 
     mail_settings = settings.mail_settings
+    telemetry = configure_telemetry(settings.telemetry)
 
     conversation = CodexConversation(
         resolve_profile(
@@ -93,7 +95,8 @@ def main() -> None:
             settings=settings.codex_turn_settings,
             human=settings.human_name,
             mcp_environment=settings.mcp_environment,
-        )
+        ),
+        telemetry=telemetry,
     )
     ariadne = AriadneBot(
         settings.allowed_user_id,
@@ -108,11 +111,13 @@ def main() -> None:
                 settings.mail_turn_settings,
                 human=settings.human_name,
                 mcp_environment=settings.mcp_environment,
+                telemetry=telemetry,
             )
             if mail_settings is not None
             else None
         )
     except ValueError as error:
+        telemetry.shutdown()
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
     mail_task: asyncio.Task[None] | None = None
@@ -135,6 +140,7 @@ def main() -> None:
             await conversation.close()
         except Exception:
             LOGGER.exception("Failed to close Codex client")
+        await asyncio.to_thread(telemetry.shutdown)
 
     application = (
         ApplicationBuilder()

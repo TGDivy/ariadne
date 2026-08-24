@@ -21,12 +21,17 @@ from openai_codex.generated.v2_all import (
     MessagePhase,
     ReasoningEffort,
     ThreadItem,
+    ThreadTokenUsage,
+    ThreadTokenUsageUpdatedNotification,
+    TokenUsageBreakdown,
     Turn,
     TurnCompletedNotification,
     TurnStatus,
     WebSearchThreadItem,
 )
 from openai_codex.models import AgentMessageDeltaNotification
+from opentelemetry.sdk.metrics import MeterProvider
+from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from ariadne.codex import (
     CodexConversation,
@@ -36,6 +41,7 @@ from ariadne.codex import (
 )
 from ariadne.codex.resolver import resolve_profile
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
+from ariadne.telemetry import Telemetry
 
 HUMAN = "Example User"
 
@@ -52,6 +58,7 @@ def make_conversation(
     *,
     human: str,
     client: AsyncCodex,
+    telemetry: Telemetry | None = None,
 ) -> CodexConversation:
     return CodexConversation(
         resolve_profile(
@@ -61,6 +68,7 @@ def make_conversation(
             human=human,
         ),
         client=client,
+        telemetry=telemetry,
     )
 
 
@@ -103,11 +111,13 @@ class FakeTurn:
         final_answer: str | None = None,
         started_items: list[ThreadItem] | None = None,
         completed_items: list[ThreadItem] | None = None,
+        usage_updates: list[ThreadTokenUsage] | None = None,
     ) -> None:
         self._deltas = deltas
         self._final_answer = final_answer
         self._started_items = started_items or []
         self._completed_items = completed_items or []
+        self._usage_updates = usage_updates or []
         self.interrupt_calls = 0
 
     async def interrupt(self) -> None:
@@ -137,6 +147,14 @@ class FakeTurn:
                 delta=delta,
                 itemId="item",
                 threadId="thread",
+                turnId="turn",
+            )
+            yield SimpleNamespace(payload=payload)
+
+        for usage in self._usage_updates:
+            payload = ThreadTokenUsageUpdatedNotification(
+                threadId="thread",
+                tokenUsage=usage,
                 turnId="turn",
             )
             yield SimpleNamespace(payload=payload)
@@ -187,9 +205,11 @@ class FakeThread:
         *,
         final_answer: str | None = None,
         turn: FakeTurn | InterruptibleTurn | None = None,
+        turns: list[FakeTurn | InterruptibleTurn] | None = None,
     ) -> None:
         self._final_answer = final_answer
         self._turn = turn
+        self._turns = turns
         self.inputs: list[RunInput] = []
         self.turn_options: list[dict[str, object]] = []
 
@@ -198,6 +218,8 @@ class FakeThread:
     ) -> FakeTurn | InterruptibleTurn:
         self.inputs.append(input)
         self.turn_options.append(options)
+        if self._turns is not None:
+            return self._turns[len(self.inputs) - 1]
         if self._turn is not None:
             return self._turn
         return FakeTurn(["Hello", " world"], final_answer=self._final_answer)
@@ -264,6 +286,76 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
             "sandbox": Sandbox.workspace_write,
         },
     ]
+
+
+async def test_codex_conversation_emits_the_cumulative_turn_usage_delta_once(
+    tmp_path: Path,
+) -> None:
+    def usage(
+        last_input_tokens: int,
+        cumulative_input_tokens: int,
+        cumulative_output_tokens: int,
+    ) -> ThreadTokenUsage:
+        last = TokenUsageBreakdown(
+            inputTokens=last_input_tokens,
+            cachedInputTokens=last_input_tokens // 2,
+            outputTokens=5,
+            reasoningOutputTokens=2,
+            totalTokens=last_input_tokens + 5,
+        )
+        total = TokenUsageBreakdown(
+            inputTokens=cumulative_input_tokens,
+            cachedInputTokens=cumulative_input_tokens // 2,
+            outputTokens=cumulative_output_tokens,
+            reasoningOutputTokens=4,
+            totalTokens=cumulative_input_tokens + cumulative_output_tokens,
+        )
+        return ThreadTokenUsage(last=last, total=total, modelContextWindow=100_000)
+
+    reader = InMemoryMetricReader()
+    provider = MeterProvider(metric_readers=[reader])
+    telemetry = Telemetry(meter_provider=provider)
+    thread = FakeThread(
+        turns=[
+            FakeTurn(
+                ["First"],
+                usage_updates=[usage(10, 10, 5), usage(20, 30, 10)],
+            ),
+            FakeTurn(
+                ["Second"],
+                usage_updates=[usage(20, 50, 15)],
+            ),
+        ]
+    )
+    conversation = make_conversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        human=HUMAN,
+        client=cast(AsyncCodex, FakeCodex(thread)),
+        telemetry=telemetry,
+    )
+
+    _ = [text async for text in conversation.stream_reply("First question")]
+    _ = [text async for text in conversation.stream_reply("Second question")]
+
+    values = {
+        metric.name: tuple(
+            point.value for point in metric.data.data_points if hasattr(point, "value")
+        )
+        for resource in reader.get_metrics_data().resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+    }
+    assert values["ariadne.codex.input_tokens"] == (50,)
+    assert values["ariadne.codex.cached_input_tokens"] == (25,)
+    assert values["ariadne.codex.usage_reports"] == (2,)
+    assert values["ariadne.codex.flex_credits_equivalent"] == pytest.approx(
+        (0.0005875,)
+    )
+    assert values["ariadne.codex.flex_cost_equivalent_usd"] == pytest.approx(
+        (0.0000235,)
+    )
+    provider.shutdown()
 
 
 async def test_codex_conversation_enables_live_web_search_explicitly(

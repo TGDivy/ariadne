@@ -96,6 +96,84 @@ number of messages per request.
 Messages sent while Ariadne is working are not rejected: they steer the Codex
 turn that is already running, so Codex folds them into the work in flight.
 
+### OpenTelemetry and Grafana Cloud
+
+Ariadne can send Codex metrics and traces directly to any OTLP/HTTP endpoint.
+Telemetry is opt-in under `[telemetry]`, so the ordinary runtime has no
+additional service to operate. Ariadne does not read `OTEL_*` environment
+variables or fall back to them.
+
+For Grafana Cloud, follow its
+[OTLP endpoint guide](https://grafana.com/docs/grafana-cloud/send-data/otlp/send-data-otlp/):
+open the stack's **Configure → OpenTelemetry** tile, generate an access token,
+and put the base endpoint and authorization value in Ariadne's existing private
+TOML file:
+
+```toml
+[telemetry]
+enabled = true
+endpoint = "https://otlp-gateway-REGION.grafana.net/otlp"
+authorization = "Basic YOUR_TOKEN"
+service_name = "ariadne"
+metrics = true
+traces = true
+export_interval_seconds = 60
+```
+
+Use the exact stack-specific base endpoint ending in `/otlp`; Ariadne appends
+`/v1/metrics` and `/v1/traces`. Both `Basic YOUR_TOKEN` and Grafana's encoded
+`Basic%20YOUR_TOKEN` form are accepted. The authorization value is redacted by
+`python -m ariadne config show`. Keep the TOML at the documented `chmod 600`
+permissions and never check it into the repository.
+
+Import `docs/grafana/ariadne-observability.json` in Grafana and select the
+stack's Prometheus data source. The dashboard covers tokens, caching, usage by
+source and model, flexible-usage equivalents, failures, latency, cumulative
+thread usage, and tool calls.
+Use **Explore → Tempo** for individual traces. Turn spans use OpenTelemetry
+GenAI attributes; child tool spans include only the safe tool name and timing.
+
+The detailed Ariadne metrics are:
+
+- `ariadne.codex.turns`, `active_turns`, `threads`, and `usage_reports`
+- `input_tokens`, `cached_input_tokens`, `uncached_input_tokens`,
+  `cache_write_input_tokens`, `output_tokens`, and `reasoning_tokens`
+- `flex_credits_equivalent`, `flex_cost_equivalent_usd`,
+  `turn.flex_cost_equivalent_usd`, and `unpriced_usage_reports`
+- `turn.duration`, `turn.time_to_first_response`,
+  `thread.total_tokens`, and `compactions`
+- `tool.calls` and `tool.duration`
+
+They use the bounded labels `source`, `model`, `reasoning_effort`, and `status`;
+tool metrics add `tool`. `source` comes from the turn profile, currently
+`telegram` or `mail`. Ariadne also emits the conventional
+`gen_ai.client.operation.duration` and `gen_ai.client.token.usage` histograms.
+It never adds prompts, responses, commands, tool arguments/results, thread IDs,
+turn IDs, Telegram IDs, or mail IDs to metrics or traces.
+
+Ariadne derives a **gross Codex flexible-usage equivalent** from the exact
+input, cached-input, and output token breakdown reported by Codex. The pricing
+snapshot dated 2026-08-24 is kept in `src/ariadne/pricing.py`:
+
+| Model | Input credits / 1M | Cached credits / 1M | Output credits / 1M |
+| --- | ---: | ---: | ---: |
+| GPT-5.6 Sol | 125 | 12.5 | 750 |
+| GPT-5.6 Terra | 50 | 5 | 300 |
+| GPT-5.6 Luna | 5 | 0.5 | 30 |
+
+The SDK's cached-input count is a subset of its input count, so Ariadne applies
+the full rate only to `input - cached input`. Output already includes reasoning
+tokens; reasoning is not charged a second time. At 25 credits per USD, the same
+calculation is emitted as `flex_cost_equivalent_usd` and as a per-turn
+histogram. Models absent from the dated table do not receive a guessed price;
+they increment `unpriced_usage_reports` instead.
+
+These values are **not amounts charged to the account**. They represent what
+the observed tokens would consume as paid Codex flexible usage at the snapshot
+rate. Included Plus/Pro usage is consumed before purchased credits, and Ariadne
+cannot determine that allowance or the resulting overage from token events.
+Re-check and update the dated rate table when OpenAI changes Codex pricing.
+
 ### iCloud Mail loop
 
 Mail is opt-in. Copy `mail-routes.example.yaml` outside the repository, edit it,

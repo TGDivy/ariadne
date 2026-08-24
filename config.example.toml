@@ -19,6 +19,15 @@ state = "~/.local/state/ariadne/mail.sqlite3"
 # app_password = ""
 # routes = "~/.config/ariadne/mail-routes.yaml"
 
+[telemetry]
+enabled = false
+service_name = "ariadne"
+metrics = true
+traces = true
+export_interval_seconds = 60
+# endpoint = "https://otlp-gateway-REGION.grafana.net/otlp"
+# authorization = "Basic YOUR_TOKEN"
+
 # Profile overrides are optional. Omitted values come from src/ariadne/profile.py.
 # [profiles.telegram]
 # model = "gpt-5.6-luna"
