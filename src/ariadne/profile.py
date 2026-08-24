@@ -29,7 +29,7 @@ TELEGRAM_PROFILE = TurnProfile(
     developer_documents=("grounding", "ariadne"),
     enabled_tools=(
         "runtime_status",
-        "send_message",
+        "send_telegram_message",
         "react",
         "prepare_files",
         "search_mail",
@@ -62,7 +62,7 @@ MAIL_PROFILE = TurnProfile(
     developer_documents=("grounding", "ariadne"),
     enabled_tools=(
         "runtime_status",
-        "send_message",
+        "send_telegram_message",
         "react",
         "prepare_files",
         "triage_current_mail",

@@ -97,7 +97,7 @@ def test_mcp_config_forwards_its_required_environment(
     assert "mcp_servers.ariadne.enabled=true" in overrides
     assert (
         "mcp_servers.ariadne.enabled_tools="
-        '["runtime_status", "send_message", "react", "prepare_files", '
+        '["runtime_status", "send_telegram_message", "react", "prepare_files", '
         '"search_mail", "read_mail", "read_mail_thread"]' in overrides
     )
     assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
@@ -529,7 +529,7 @@ async def test_iris_speaking_for_herself_is_not_announced_as_a_tool(
         id="mcp",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="send_message",
+        tool="send_telegram_message",
         type="mcpToolCall",
     )
     thread = FakeThread(
@@ -575,8 +575,11 @@ async def test_codex_conversation_reports_what_iris_said_in_telegram_herself(
         turn=FakeTurn(
             ["Done"],
             completed_items=[
-                spoke("send_message", {"text": "Found the repo."}),
-                spoke("send_message", '{"text": "This is the latest one."}'),
+                spoke("send_telegram_message", {"text": "Found the repo."}),
+                spoke(
+                    "send_telegram_message",
+                    '{"text": "This is the latest one."}',
+                ),
                 spoke("prepare_files", {"paths": ["/tmp/example-cv.pdf"]}),
             ],
         )

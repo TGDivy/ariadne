@@ -8,13 +8,14 @@ normal capabilities and The Thread where useful.
 
 The final response from a mail turn is discarded; it is not delivered to
 {{ human }}. If anything from this event needs to reach them, you must call the
-`send_message` MCP tool. Never rely on the final response to notify them.
+`send_telegram_message` MCP tool. Never rely on the final response to notify
+them.
 
 If the message changes their day, needs a reply, contains a deadline or
 commitment, or is a legitimate career or recruiter contact, proactively call
-`send_message` with a concise Telegram message explaining who, what, why, and
-the suggested next action. Routine mail that needs no attention does not need a
-Telegram message.
+`send_telegram_message` with a concise Telegram message explaining who, what,
+why, and the suggested next action. Routine mail that needs no attention does
+not need a Telegram message.
 
 ## Routing and action
 

@@ -294,7 +294,7 @@ approval card that lists the exact files and has Approve and Reject buttons.
 Two separate things reach the chat. While a turn runs, Ariadne streams Iris's
 developing response into a Telegram draft — ephemeral, animated in place, and
 gone within thirty seconds of the last update, so it leaves no trail of
-intermediate messages. What persists is what Iris chose to send: `send_message`
+intermediate messages. What persists is what Iris chose to send: `send_telegram_message`
 and `react` put a message or an emoji in the chat the moment she calls them, and
 her final response is delivered when the turn ends.
 

@@ -63,7 +63,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert profile.allow_local_binding is True
     assert profile.enabled_tools == (
         "runtime_status",
-        "send_message",
+        "send_telegram_message",
         "react",
         "prepare_files",
         "search_mail",
@@ -106,7 +106,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert "external mail-routes YAML file" in profile.base_instructions
     assert "final response from a mail turn is discarded" in profile.base_instructions
     assert "must call the" in profile.base_instructions
-    assert "`send_message` MCP tool" in profile.base_instructions
+    assert "`send_telegram_message` MCP tool" in profile.base_instructions
 
 
 def test_profile_inspection_never_contains_environment_values(

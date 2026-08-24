@@ -48,7 +48,7 @@ StopRequested = Callable[[], bool]
 
 WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_SERVER_NAME = "ariadne"
-TELEGRAM_MESSAGE_TOOL = "send_message"
+TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
 TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react")
 MAIL_ACTIVITY = {
     "search_mail": "Searching mail…",
