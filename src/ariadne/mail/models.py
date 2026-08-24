@@ -168,6 +168,7 @@ class MailJob:
     uid: int
     message_id: str | None
     status: JobStatus
+    attempts: int
     route_id: str | None
     action: str | None
     destination: str | None

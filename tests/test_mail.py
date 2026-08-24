@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import Callable
 from email.message import EmailMessage
 from io import BytesIO
@@ -372,8 +373,9 @@ def queued_processor(
 
 
 async def test_first_start_baselines_then_new_mail_is_processed(
-    tmp_path: Path,
+    tmp_path: Path, caplog
 ) -> None:
+    caplog.set_level(logging.INFO)
     client = FakeIMAP(
         {
             1: message("shop@example.com", "Receipt", message_id="<receipt>"),
@@ -442,6 +444,14 @@ async def test_first_start_baselines_then_new_mail_is_processed(
         for uid in (2, 3, 4, 5)
     )
     assert state.get(MailState.job_id("INBOX", 10, 1)) is None
+    assert "Mail discovered mailbox=INBOX uidvalidity=10 count=4" in caplog.text
+    assert "Mail queue ready mailbox=INBOX jobs=4" in caplog.text
+    assert "Mail job started job_id=INBOX:10:2" in caplog.text
+    assert "Mail Codex turn started job_id=INBOX:10:3" in caplog.text
+    assert "Mail decision recorded job_id=INBOX:10:3" in caplog.text
+    assert "Mail action applied job_id=INBOX:10:2 action=move" in caplog.text
+    assert "Action needed now" not in caplog.text
+    assert "same@example.com" not in caplog.text
 
 
 async def test_cheap_triage_can_keep_routine_unmatched_mail_without_iris(
@@ -724,12 +734,12 @@ def test_restart_catches_up_mail_received_after_the_saved_watermark(
     state_path = tmp_path / "mail.sqlite3"
     initial = MailState(state_path)
     initial.initialize()
-    initial.catch_up("INBOX", 10, [1, 2])
+    assert initial.catch_up("INBOX", 10, [1, 2]) == ()
     assert initial.retryable("INBOX", 10) == ()
 
     restarted = MailState(state_path)
     restarted.initialize()
-    restarted.catch_up("INBOX", 10, [1, 2, 3])
+    assert restarted.catch_up("INBOX", 10, [1, 2, 3]) == (3,)
 
     assert [job.uid for job in restarted.retryable("INBOX", 10)] == [3]
 
