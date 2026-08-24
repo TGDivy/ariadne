@@ -349,6 +349,12 @@ async def test_codex_conversation_emits_the_cumulative_turn_usage_delta_once(
     assert values["ariadne.codex.input_tokens"] == (50,)
     assert values["ariadne.codex.cached_input_tokens"] == (25,)
     assert values["ariadne.codex.usage_reports"] == (2,)
+    assert values["ariadne.codex.flex_credits_equivalent"] == pytest.approx(
+        (0.0005875,)
+    )
+    assert values["ariadne.codex.flex_cost_equivalent_usd"] == pytest.approx(
+        (0.0000235,)
+    )
     provider.shutdown()
 
 

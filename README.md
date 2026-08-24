@@ -128,7 +128,8 @@ permissions and never check it into the repository.
 
 Import `docs/grafana/ariadne-observability.json` in Grafana and select the
 stack's Prometheus data source. The dashboard covers tokens, caching, usage by
-source and model, failures, latency, cumulative thread usage, and tool calls.
+source and model, flexible-usage equivalents, failures, latency, cumulative
+thread usage, and tool calls.
 Use **Explore → Tempo** for individual traces. Turn spans use OpenTelemetry
 GenAI attributes; child tool spans include only the safe tool name and timing.
 
@@ -137,6 +138,8 @@ The detailed Ariadne metrics are:
 - `ariadne.codex.turns`, `active_turns`, `threads`, and `usage_reports`
 - `input_tokens`, `cached_input_tokens`, `uncached_input_tokens`,
   `cache_write_input_tokens`, `output_tokens`, and `reasoning_tokens`
+- `flex_credits_equivalent`, `flex_cost_equivalent_usd`,
+  `turn.flex_cost_equivalent_usd`, and `unpriced_usage_reports`
 - `turn.duration`, `turn.time_to_first_response`,
   `thread.total_tokens`, and `compactions`
 - `tool.calls` and `tool.duration`
@@ -148,12 +151,28 @@ tool metrics add `tool`. `source` comes from the turn profile, currently
 It never adds prompts, responses, commands, tool arguments/results, thread IDs,
 turn IDs, Telegram IDs, or mail IDs to metrics or traces.
 
-There is deliberately no `credits` or monetary-cost metric yet. The pinned
-Codex event reports exact token breakdowns but no per-turn credit charge, and a
-token-price estimate would not represent Codex subscription credits reliably.
-The dashboard therefore treats tokens by source and model as the honest v1 cost
-proxy. A real cost counter can be added when Codex exposes an authoritative
-per-turn value.
+Ariadne derives a **gross Codex flexible-usage equivalent** from the exact
+input, cached-input, and output token breakdown reported by Codex. The pricing
+snapshot dated 2026-08-24 is kept in `src/ariadne/pricing.py`:
+
+| Model | Input credits / 1M | Cached credits / 1M | Output credits / 1M |
+| --- | ---: | ---: | ---: |
+| GPT-5.6 Sol | 125 | 12.5 | 750 |
+| GPT-5.6 Terra | 50 | 5 | 300 |
+| GPT-5.6 Luna | 5 | 0.5 | 30 |
+
+The SDK's cached-input count is a subset of its input count, so Ariadne applies
+the full rate only to `input - cached input`. Output already includes reasoning
+tokens; reasoning is not charged a second time. At 25 credits per USD, the same
+calculation is emitted as `flex_cost_equivalent_usd` and as a per-turn
+histogram. Models absent from the dated table do not receive a guessed price;
+they increment `unpriced_usage_reports` instead.
+
+These values are **not amounts charged to the account**. They represent what
+the observed tokens would consume as paid Codex flexible usage at the snapshot
+rate. Included Plus/Pro usage is consumed before purchased credits, and Ariadne
+cannot determine that allowance or the resulting overage from token events.
+Re-check and update the dated rate table when OpenAI changes Codex pricing.
 
 ### iCloud Mail loop
 

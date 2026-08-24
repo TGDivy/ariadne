@@ -29,6 +29,8 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode, Tracer
 
+from .pricing import CODEX_FLEX_PRICING_SNAPSHOT, codex_flex_equivalent
+
 if TYPE_CHECKING:
     from .config import TelemetryConfig
 
@@ -54,6 +56,23 @@ _TOKEN_BUCKETS = (
     5_000_000,
     10_000_000,
 )
+_USD_BUCKETS = (
+    0.001,
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1,
+    2.5,
+    5,
+    10,
+    25,
+    50,
+    100,
+)
 
 
 def _package_version() -> str:
@@ -68,6 +87,7 @@ def _resource(service_name: str) -> Resource:
         {
             "service.name": service_name,
             "service.version": _package_version(),
+            "ariadne.codex.flex_pricing.snapshot": CODEX_FLEX_PRICING_SNAPSHOT,
         }
     )
 
@@ -176,6 +196,32 @@ class Telemetry:
         )
         self._reasoning_tokens = self._token_counter(
             "reasoning_tokens", "Reasoning output tokens reported by Codex."
+        )
+        self._flex_credits_equivalent: Counter = self._meter.create_counter(
+            "ariadne.codex.flex_credits_equivalent",
+            description=(
+                "Gross Codex flexible-usage credit equivalent before included plan "
+                "allowance."
+            ),
+            unit="{credit}",
+        )
+        self._flex_cost_equivalent_usd: Counter = self._meter.create_counter(
+            "ariadne.codex.flex_cost_equivalent_usd",
+            description=(
+                "Gross Codex flexible-usage USD equivalent before included plan "
+                "allowance."
+            ),
+            unit="USD",
+        )
+        self._turn_flex_cost_equivalent_usd: Histogram = self._meter.create_histogram(
+            "ariadne.codex.turn.flex_cost_equivalent_usd",
+            description="Gross Codex flexible-usage USD equivalent per turn.",
+            unit="USD",
+        )
+        self._unpriced_usage_reports: Counter = self._meter.create_counter(
+            "ariadne.codex.unpriced_usage_reports",
+            description="Usage reports whose model has no Codex flexible-usage rate.",
+            unit="{report}",
         )
         self._turn_duration: Histogram = self._meter.create_histogram(
             "ariadne.codex.turn.duration",
@@ -426,6 +472,28 @@ class TurnObservation:
         )
         self._telemetry._output_tokens.add(usage.output_tokens, attributes)
         self._telemetry._reasoning_tokens.add(usage.reasoning_output_tokens, attributes)
+        equivalent = codex_flex_equivalent(
+            self._attributes["model"],
+            input_tokens=usage.input_tokens,
+            cached_input_tokens=usage.cached_input_tokens,
+            output_tokens=usage.output_tokens,
+        )
+        if equivalent is None:
+            self._telemetry._unpriced_usage_reports.add(1, attributes)
+            self._span.set_attribute("ariadne.codex.flex_pricing.available", False)
+        else:
+            credits = float(equivalent.credits)
+            usd = float(equivalent.usd)
+            self._telemetry._flex_credits_equivalent.add(credits, attributes)
+            self._telemetry._flex_cost_equivalent_usd.add(usd, attributes)
+            self._telemetry._turn_flex_cost_equivalent_usd.record(usd, attributes)
+            self._span.set_attribute("ariadne.codex.flex_pricing.available", True)
+            self._span.set_attribute("ariadne.codex.flex_credits_equivalent", credits)
+            self._span.set_attribute("ariadne.codex.flex_cost_equivalent_usd", usd)
+            self._span.set_attribute(
+                "ariadne.codex.flex_pricing.snapshot",
+                CODEX_FLEX_PRICING_SNAPSHOT,
+            )
         self._telemetry._thread_total_tokens.record(
             self._usage.total.total_tokens, attributes
         )
@@ -518,6 +586,7 @@ def configure_telemetry(config: TelemetryConfig | None = None) -> Telemetry:
             token_buckets = ExplicitBucketHistogramAggregation(
                 boundaries=_TOKEN_BUCKETS
             )
+            usd_buckets = ExplicitBucketHistogramAggregation(boundaries=_USD_BUCKETS)
             meter_provider = MeterProvider(
                 metric_readers=[reader],
                 resource=resource,
@@ -529,6 +598,10 @@ def configure_telemetry(config: TelemetryConfig | None = None) -> Telemetry:
                     View(
                         instrument_name="gen_ai.client.token.usage",
                         aggregation=token_buckets,
+                    ),
+                    View(
+                        instrument_name="ariadne.codex.turn.flex_cost_equivalent_usd",
+                        aggregation=usd_buckets,
                     ),
                 ],
             )

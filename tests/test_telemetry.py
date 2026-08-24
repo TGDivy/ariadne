@@ -1,6 +1,8 @@
 from openai_codex.generated.v2_all import (
     McpToolCallStatus,
     McpToolCallThreadItem,
+    ThreadTokenUsage,
+    TokenUsageBreakdown,
 )
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
@@ -77,4 +79,36 @@ def test_tool_traces_contain_metadata_but_not_arguments() -> None:
         "status": "success",
     }
     tracer_provider.shutdown()
+    meter_provider.shutdown()
+
+
+def test_unknown_model_usage_is_reported_as_unpriced() -> None:
+    reader = InMemoryMetricReader()
+    meter_provider = MeterProvider(metric_readers=[reader])
+    telemetry = Telemetry(meter_provider=meter_provider)
+    observation = telemetry.start_turn(
+        source="background",
+        model="gpt-unknown",
+        reasoning_effort="medium",
+    )
+    usage = TokenUsageBreakdown(
+        inputTokens=1_000,
+        cachedInputTokens=500,
+        outputTokens=100,
+        reasoningOutputTokens=20,
+        totalTokens=1_100,
+    )
+
+    observation.usage(ThreadTokenUsage(last=usage, total=usage))
+    observation.finish("success")
+
+    metrics = {
+        metric.name: metric
+        for resource in reader.get_metrics_data().resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+    }
+    point = metrics["ariadne.codex.unpriced_usage_reports"].data.data_points[0]
+    assert point.value == 1
+    assert "ariadne.codex.flex_cost_equivalent_usd" not in metrics
     meter_provider.shutdown()
