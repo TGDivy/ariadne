@@ -17,6 +17,7 @@ from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    McpToolCallError,
     McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
@@ -34,6 +35,7 @@ from openai_codex.models import AgentMessageDeltaNotification
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
+import ariadne.codex.conversation as conversation_module
 from ariadne.codex import (
     CodexConversation,
     CodexTurnSettings,
@@ -476,6 +478,38 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
         "tool=prepare_files call_id=mcp status=completed duration=1.25s" in caplog.text
     )
     assert "/private/path" not in caplog.text
+
+
+def test_failed_telegram_mcp_call_logs_duration_request_and_error(
+    caplog, monkeypatch
+) -> None:
+    caplog.set_level(logging.INFO)
+    clock = iter((10.0, 21.0))
+    monkeypatch.setattr(conversation_module.time, "monotonic", lambda: next(clock))
+    started = McpToolCallThreadItem(
+        arguments={"text": "private message"},
+        id="mcp",
+        server="ariadne",
+        status=McpToolCallStatus.in_progress,
+        tool="send_telegram_message",
+        type="mcpToolCall",
+    )
+    failed = started.model_copy(
+        update={
+            "duration_ms": 0,
+            "error": McpToolCallError(
+                message="Telegram connection timed out before message delivery."
+            ),
+            "status": McpToolCallStatus.failed,
+        }
+    )
+
+    started_at = conversation_module._log_mcp_started(started, "mail")
+    conversation_module._log_mcp_finished(failed, "mail", started_at)
+
+    assert "status=failed failure=connect_timeout duration=11.00s" in caplog.text
+    assert 'request={"text": "private message"}' in caplog.text
+    assert "Telegram connection timed out before message delivery." in caplog.text
 
 
 @pytest.mark.parametrize(

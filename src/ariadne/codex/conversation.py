@@ -115,26 +115,58 @@ def _log_mcp_started(item: object, source: str) -> float | None:
 
 
 def _log_mcp_finished(item: object, source: str, started_at: float | None) -> None:
-    """Log an MCP outcome without exposing arguments, results, or errors."""
+    """Log an MCP outcome, including failed Telegram delivery details."""
     if not isinstance(item, McpToolCallThreadItem):
         return
-    if item.duration_ms is not None:
+    if item.duration_ms is not None and item.duration_ms > 0:
         duration = item.duration_ms / 1000
     elif started_at is not None:
         duration = time.monotonic() - started_at
     else:
         duration = 0.0
-    log = LOGGER.warning if item.status == McpToolCallStatus.failed else LOGGER.info
-    log(
-        "Codex MCP call finished source=%s server=%s tool=%s call_id=%s "
-        "status=%s duration=%.2fs",
-        source,
-        item.server,
-        item.tool,
-        item.id,
-        item.status.value,
-        duration,
-    )
+    if item.status == McpToolCallStatus.failed:
+        message = item.error.message.lower() if item.error is not None else ""
+        if "connection timed out" in message:
+            failure = "connect_timeout"
+        elif "timed out while sending" in message:
+            failure = "delivery_timeout"
+        elif "connection failed" in message:
+            failure = "connection"
+        elif "not reachable" in message or "not configured" in message:
+            failure = "unavailable"
+        else:
+            failure = "tool_error"
+        LOGGER.warning(
+            "Codex MCP call finished source=%s server=%s tool=%s call_id=%s "
+            "status=%s failure=%s duration=%.2fs",
+            source,
+            item.server,
+            item.tool,
+            item.id,
+            item.status.value,
+            failure,
+            duration,
+        )
+        if item.server == MCP_SERVER_NAME and item.tool == TELEGRAM_MESSAGE_TOOL:
+            request = json.dumps(item.arguments, ensure_ascii=False, default=repr)
+            error = item.error.message if item.error is not None else "unknown"
+            LOGGER.warning(
+                "Failed Telegram MCP request call_id=%s request=%s error=%s",
+                item.id,
+                request,
+                json.dumps(error, ensure_ascii=False),
+            )
+    else:
+        LOGGER.info(
+            "Codex MCP call finished source=%s server=%s tool=%s call_id=%s "
+            "status=%s duration=%.2fs",
+            source,
+            item.server,
+            item.tool,
+            item.id,
+            item.status.value,
+            duration,
+        )
 
 
 def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:

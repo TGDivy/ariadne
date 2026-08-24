@@ -104,7 +104,10 @@ Telegram message and turn lifecycle events, plus mail connection, discovery,
 queue, routing, Codex-processing, mailbox-action, and MCP call lifecycle events.
 These logs use IDs, counts, models, routes, tool names, actions, statuses, and
 durations; they do not include Telegram message text, mail subjects/bodies/
-addresses, MCP arguments/results, or credentials.
+addresses, MCP arguments/results, or credentials. One deliberate exception is
+a failed `send_telegram_message` call: its attempted message arguments and tool
+error are logged so a missed notification can be diagnosed. Credentials and
+authorization headers are never part of that MCP request.
 
 ### OpenTelemetry and Grafana Cloud
 

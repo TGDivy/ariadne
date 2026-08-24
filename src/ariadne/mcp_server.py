@@ -1,5 +1,6 @@
 """Local FastMCP capabilities for Ariadne's Codex conversation."""
 
+import asyncio
 import os
 import subprocess
 from collections.abc import Callable
@@ -11,7 +12,8 @@ from fastmcp.exceptions import ToolError
 from imapclient import IMAPClient  # type: ignore[import-untyped]
 from telegram import Bot, ReplyParameters
 from telegram.constants import ParseMode, ReactionEmoji
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, TelegramError, TimedOut
+from telegram.request import HTTPXRequest
 
 from .mail import (
     IMAP_HOST,
@@ -38,6 +40,9 @@ VARIATION_SELECTOR = "\ufe0f"
 REACTIONS = {
     emoji.value.replace(VARIATION_SELECTOR, ""): emoji.value for emoji in ReactionEmoji
 }
+TELEGRAM_CONNECT_ATTEMPTS = 3
+TELEGRAM_CONNECT_RETRY_SECONDS = 0.5
+TELEGRAM_TIMEOUT_SECONDS = 15.0
 
 
 def _git_status(vault: Path) -> dict[str, Any] | None:
@@ -126,6 +131,32 @@ async def _send_chunks(
     return sent
 
 
+async def _open_telegram_bot(token: str) -> tuple[Bot, Bot]:
+    """Initialize a Telegram client, retrying only the idempotent connection step."""
+    for attempt in range(1, TELEGRAM_CONNECT_ATTEMPTS + 1):
+        context = Bot(
+            token,
+            request=HTTPXRequest(
+                connect_timeout=TELEGRAM_TIMEOUT_SECONDS,
+                read_timeout=TELEGRAM_TIMEOUT_SECONDS,
+                write_timeout=TELEGRAM_TIMEOUT_SECONDS,
+            ),
+        )
+        try:
+            return context, await context.__aenter__()
+        except TimedOut as error:
+            if attempt == TELEGRAM_CONNECT_ATTEMPTS:
+                raise ToolError(
+                    "Telegram connection timed out before message delivery."
+                ) from error
+            await asyncio.sleep(TELEGRAM_CONNECT_RETRY_SECONDS * attempt)
+        except TelegramError as error:
+            raise ToolError(
+                "Telegram connection failed before message delivery."
+            ) from error
+    raise AssertionError("unreachable")
+
+
 @mcp.tool
 async def send_telegram_message(
     text: str, reply_to_message_id: int | None = None
@@ -147,24 +178,30 @@ async def send_telegram_message(
         if reply_to_message_id is not None
         else None
     )
+    context, bot = await _open_telegram_bot(token)
     try:
-        async with Bot(token) as bot:
-            try:
-                return await _send_chunks(
-                    bot,
-                    chat_id,
-                    chunks,
-                    ParseMode.HTML if is_html else None,
-                    reply_to,
-                )
-            except BadRequest:
-                if not is_html:
-                    raise
-                return await _send_chunks(
-                    bot, chat_id, split_for_telegram(text), None, reply_to
-                )
+        try:
+            return await _send_chunks(
+                bot,
+                chat_id,
+                chunks,
+                ParseMode.HTML if is_html else None,
+                reply_to,
+            )
+        except BadRequest:
+            if not is_html:
+                raise
+            return await _send_chunks(
+                bot, chat_id, split_for_telegram(text), None, reply_to
+            )
+    except TimedOut as error:
+        raise ToolError(
+            "Telegram timed out while sending; the message may have been delivered."
+        ) from error
     except TelegramError as error:
         raise ToolError("Telegram could not deliver that message.") from error
+    finally:
+        await context.__aexit__(None, None, None)
 
 
 @mcp.tool
