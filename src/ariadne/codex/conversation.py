@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Literal, cast
@@ -97,6 +98,43 @@ def _spoken_text(item: object) -> str | None:
         return None
     text = arguments.get("text")
     return text if isinstance(text, str) else None
+
+
+def _log_mcp_started(item: object, source: str) -> float | None:
+    """Log one privacy-safe MCP call boundary and return its start time."""
+    if not isinstance(item, McpToolCallThreadItem):
+        return None
+    LOGGER.info(
+        "Codex MCP call started source=%s server=%s tool=%s call_id=%s",
+        source,
+        item.server,
+        item.tool,
+        item.id,
+    )
+    return time.monotonic()
+
+
+def _log_mcp_finished(item: object, source: str, started_at: float | None) -> None:
+    """Log an MCP outcome without exposing arguments, results, or errors."""
+    if not isinstance(item, McpToolCallThreadItem):
+        return
+    if item.duration_ms is not None:
+        duration = item.duration_ms / 1000
+    elif started_at is not None:
+        duration = time.monotonic() - started_at
+    else:
+        duration = 0.0
+    log = LOGGER.warning if item.status == McpToolCallStatus.failed else LOGGER.info
+    log(
+        "Codex MCP call finished source=%s server=%s tool=%s call_id=%s "
+        "status=%s duration=%.2fs",
+        source,
+        item.server,
+        item.tool,
+        item.id,
+        item.status.value,
+        duration,
+    )
 
 
 def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:
@@ -260,6 +298,7 @@ class CodexConversation:
         turn: AsyncTurnHandle | None = None
         status: Literal["success", "failure", "cancelled"] = "failure"
         error: BaseException | None = None
+        mcp_started_at: dict[str, float] = {}
 
         try:
             thread = await self._thread_for_conversation()
@@ -286,6 +325,9 @@ class CodexConversation:
                 elif isinstance(event.payload, ItemStartedNotification):
                     item = event.payload.item.root
                     observation.tool_started(item)
+                    started_at = _log_mcp_started(item, self._profile.name)
+                    if started_at is not None:
+                        mcp_started_at[item.id] = started_at
                     activity_message = _activity_message(item)
                     if activity_message is not None and activity is not None:
                         LOGGER.info("Codex activity: %s", activity_message)
@@ -293,6 +335,12 @@ class CodexConversation:
                 elif isinstance(event.payload, ItemCompletedNotification):
                     item = event.payload.item.root
                     observation.tool_completed(item)
+                    if isinstance(item, McpToolCallThreadItem):
+                        _log_mcp_finished(
+                            item,
+                            self._profile.name,
+                            mcp_started_at.pop(item.id, None),
+                        )
                     if (
                         isinstance(item, AgentMessageThreadItem)
                         and item.phase == MessagePhase.final_answer

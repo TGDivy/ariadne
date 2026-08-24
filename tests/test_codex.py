@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -425,8 +426,9 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
 
 
 async def test_codex_conversation_reports_mcp_activity_without_tool_details(
-    tmp_path: Path,
+    tmp_path: Path, caplog
 ) -> None:
+    caplog.set_level(logging.INFO)
     mcp_item = McpToolCallThreadItem(
         arguments={"paths": ["/private/path"]},
         id="mcp",
@@ -435,10 +437,14 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
         tool="prepare_files",
         type="mcpToolCall",
     )
+    completed_mcp_item = mcp_item.model_copy(
+        update={"duration_ms": 1250, "status": McpToolCallStatus.completed}
+    )
     thread = FakeThread(
         turn=FakeTurn(
             ["Answer"],
             started_items=[ThreadItem(root=mcp_item)],
+            completed_items=[ThreadItem(root=completed_mcp_item)],
         )
     )
     conversation = make_conversation(
@@ -461,6 +467,15 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
 
     assert activities == ["Using Ariadne's local capability…"]
     assert "private" not in activities[0]
+    assert (
+        "Codex MCP call started source=telegram server=ariadne "
+        "tool=prepare_files call_id=mcp" in caplog.text
+    )
+    assert (
+        "Codex MCP call finished source=telegram server=ariadne "
+        "tool=prepare_files call_id=mcp status=completed duration=1.25s" in caplog.text
+    )
+    assert "/private/path" not in caplog.text
 
 
 @pytest.mark.parametrize(
