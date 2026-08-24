@@ -21,6 +21,7 @@ from typing import Any, Literal, cast
 
 import yaml  # type: ignore[import-untyped]
 from imapclient import IMAPClient  # type: ignore[import-untyped]
+from imapclient.exceptions import IMAPClientError  # type: ignore[import-untyped]
 from pydantic import ValidationError
 from pypdf import PdfReader
 
@@ -70,6 +71,36 @@ IMPORTANT_SUBJECT_WORDS = (
     "reservation",
     "booking confirmation",
 )
+_UNEXPECTED_IDLE_RESPONSE = "Unexpected IDLE response:"
+
+
+def _enter_idle(client: IMAPClient) -> None:
+    """Enter IMAP IDLE while preserving unsolicited mailbox updates.
+
+    IMAP servers may legally send untagged updates before the continuation for
+    the IDLE command. IMAPClient currently treats the first such update as an
+    error even though it has already parsed and retained it. Continue reading
+    until the expected continuation arrives, but preserve genuine command
+    failures.
+    """
+    try:
+        client.idle()
+        return
+    except IMAPClientError as error:
+        if not str(error).startswith(_UNEXPECTED_IDLE_RESPONSE):
+            raise
+
+        imap = getattr(client, "_imap", None)
+        idle_tag = getattr(client, "_idle_tag", None)
+        if imap is None or idle_tag is None:
+            raise
+
+        while True:
+            if imap.tagged_commands.get(idle_tag) is not None:
+                raise error
+            if imap._get_response() is None:
+                LOGGER.debug("Accepted unsolicited IMAP update while entering IDLE")
+                return
 
 
 def load_routes(path: Path) -> MailRoutes:
@@ -1105,7 +1136,7 @@ class MailLoop:
             while not self._stop.is_set():
                 await processor.reconcile()
                 await processor.process_available()
-                await asyncio.to_thread(client.idle)
+                await asyncio.to_thread(_enter_idle, client)
                 try:
                     await asyncio.to_thread(client.idle_check, timeout=30)
                 finally:

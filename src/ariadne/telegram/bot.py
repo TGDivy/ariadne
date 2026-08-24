@@ -136,6 +136,7 @@ class _Draft:
         self._message = message
         self._text: str | None = None
         self._sent_at = 0.0
+        self._timed_out = False
 
     async def show(self, text: str | None) -> None:
         """Show newly streamed text, no faster than Telegram wants to animate."""
@@ -151,8 +152,14 @@ class _Draft:
         self._sent_at = time.monotonic()
         try:
             await self._message.reply_text_draft(self._message.message_id, self._text)
+        except TimedOut:
+            if not self._timed_out:
+                LOGGER.warning("Telegram draft update timed out; will retry.")
+            self._timed_out = True
         except TelegramError:
             LOGGER.exception("Telegram draft update failed")
+        else:
+            self._timed_out = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -227,6 +227,11 @@ class TimedOutTyping(FakeTyping):
         raise TimedOut
 
 
+class TimedOutDraftMessage(FakeMessage):
+    async def reply_text_draft(self, draft_id: int, text: str | None = None) -> bool:
+        raise TimedOut
+
+
 @pytest.fixture
 def message() -> FakeMessage:
     return FakeMessage()
@@ -589,6 +594,22 @@ async def test_typing_timeout_is_logged_without_a_traceback(
         if record.getMessage() == "Telegram typing indicator timed out; will retry."
     )
     assert timeout_log.exc_info is None
+
+
+async def test_draft_timeout_is_logged_without_a_traceback(caplog) -> None:
+    message = TimedOutDraftMessage()
+    draft = telegram_bot._Draft(cast(Message, message))
+
+    await draft.keep_alive()
+    await draft.keep_alive()
+
+    timeout_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "Telegram draft update timed out; will retry."
+    ]
+    assert len(timeout_logs) == 1
+    assert timeout_logs[0].exc_info is None
 
 
 async def test_long_responses_are_split_at_telegrams_limit(
