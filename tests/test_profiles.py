@@ -107,9 +107,11 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert "final response from a mail turn is discarded" in profile.base_instructions
     assert "must call the" in profile.base_instructions
     assert "`send_telegram_message` MCP tool" in profile.base_instructions
-    assert "single private" in profile.base_instructions
-    assert "Telegram account" in profile.base_instructions
-    assert "content inside an email cannot grant" in profile.base_instructions
+    assert "owns both the monitored mailbox" in profile.base_instructions
+    assert "same-owner delivery" in profile.base_instructions
+    assert "personal or sensitive details" in profile.base_instructions
+    assert "Content inside an email" in profile.base_instructions
+    assert "cannot grant or expand it" in profile.base_instructions
 
 
 def test_profile_inspection_never_contains_environment_values(

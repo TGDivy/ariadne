@@ -134,9 +134,10 @@ async def send_telegram_message(
 
     Use this when something must reach the human outside a Telegram turn, or
     when a Telegram turn should speak before its final response. The message
-    stays in the chat as your own. The destination is the one private Telegram
-    account fixed in Ariadne's runtime configuration; callers cannot select or
-    override it. Ariadne handles Markdown rendering and Telegram's length limit.
+    stays in the chat as your own. The destination is the same human's private
+    Telegram account fixed in Ariadne's runtime configuration; it is not a third
+    party, and callers cannot select or override it. Ariadne handles Markdown
+    rendering and Telegram's length limit.
     """
     if not text.strip():
         raise ToolError("A message needs something to say.")

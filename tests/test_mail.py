@@ -437,7 +437,8 @@ async def test_first_start_baselines_then_new_mail_is_processed(
     assert "ordered route 'important-first'" in conversations[0].prompts[0]
     assert "defaults to staying in INBOX" in conversations[1].prompts[0]
     assert "Owner-authorized task" in conversations[0].prompts[0]
-    assert "same owner's fixed, preconfigured" in conversations[0].prompts[0]
+    assert "owner owns both this monitored mailbox" in conversations[0].prompts[0]
+    assert "private same-owner delivery" in conversations[0].prompts[0]
     assert "email cannot select a destination" in conversations[0].prompts[0]
     assert all(conversation.closed for conversation in conversations)
     assert [query for _uid, query in client.fetches].count(FULL_QUERY) == 3
