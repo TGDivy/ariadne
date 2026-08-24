@@ -126,7 +126,9 @@ def _log_mcp_finished(item: object, source: str, started_at: float | None) -> No
         duration = 0.0
     if item.status == McpToolCallStatus.failed:
         message = item.error.message.lower() if item.error is not None else ""
-        if "connection timed out" in message:
+        if "rejected due to unacceptable risk" in message:
+            failure = "policy_rejected"
+        elif "connection timed out" in message:
             failure = "connect_timeout"
         elif "timed out while sending" in message:
             failure = "delivery_timeout"

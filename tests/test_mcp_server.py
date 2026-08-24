@@ -6,7 +6,6 @@ from typing import Any
 import pytest
 from fastmcp.exceptions import ToolError
 from telegram.constants import ParseMode
-from telegram.error import TimedOut
 
 from ariadne import mcp_server
 from ariadne.mail import MailState
@@ -27,26 +26,14 @@ class FakeBot:
         self.token = token
         self.sent: list[dict[str, Any]] = []
         self.reactions: list[dict[str, Any]] = []
-        self.enter_attempts = 0
-        self.enter_timeouts = 0
-        self.send_attempts = 0
-        self.send_timeouts = 0
 
     async def __aenter__(self) -> "FakeBot":
-        self.enter_attempts += 1
-        if self.enter_timeouts:
-            self.enter_timeouts -= 1
-            raise TimedOut
         return self
 
     async def __aexit__(self, *_: object) -> None:
         return None
 
     async def send_message(self, **kwargs: Any) -> SimpleNamespace:
-        self.send_attempts += 1
-        if self.send_timeouts:
-            self.send_timeouts -= 1
-            raise TimedOut
         self.sent.append(kwargs)
         return SimpleNamespace(message_id=100 + len(self.sent))
 
@@ -60,8 +47,7 @@ def telegram(monkeypatch) -> FakeBot:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "7")
     bot = FakeBot("token-for-test")
-    monkeypatch.setattr(mcp_server, "HTTPXRequest", lambda **_kwargs: object())
-    monkeypatch.setattr(mcp_server, "Bot", lambda token, **_kwargs: bot)
+    monkeypatch.setattr(mcp_server, "Bot", lambda token: bot)
     return bot
 
 
@@ -156,31 +142,6 @@ async def test_a_message_from_iris_is_sent_as_telegram_html(telegram: FakeBot) -
             "reply_parameters": None,
         }
     ]
-
-
-async def test_telegram_connection_timeouts_are_retried_before_sending(
-    telegram: FakeBot, monkeypatch
-) -> None:
-    telegram.enter_timeouts = 2
-    monkeypatch.setattr(mcp_server, "TELEGRAM_CONNECT_RETRY_SECONDS", 0)
-
-    message_ids = await send_telegram_message("Still here.")
-
-    assert message_ids == [101]
-    assert telegram.enter_attempts == 3
-    assert len(telegram.sent) == 1
-
-
-async def test_telegram_send_timeout_is_not_retried_because_delivery_is_uncertain(
-    telegram: FakeBot,
-) -> None:
-    telegram.send_timeouts = 1
-
-    with pytest.raises(ToolError, match="may have been delivered"):
-        await send_telegram_message("Send once.")
-
-    assert telegram.enter_attempts == 1
-    assert telegram.send_attempts == 1
 
 
 async def test_a_long_message_from_iris_is_split_at_telegrams_limit(
