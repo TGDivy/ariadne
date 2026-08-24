@@ -46,6 +46,14 @@ async def publish_commands(application: AriadneApplication) -> None:
         LOGGER.exception("Telegram command menu could not be published")
 
 
+def _run_polling(application: AriadneApplication) -> None:
+    """Run Telegram indefinitely, including through transient startup failures."""
+    application.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        bootstrap_retries=-1,
+    )
+
+
 def configure_logging() -> None:
     """Configure Ariadne logs without exposing Telegram request URLs."""
     logging.basicConfig(
@@ -172,7 +180,7 @@ def main() -> None:
 
     LOGGER.info("Starting Ariadne with The Thread vault %s", settings.vault)
     try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
+        _run_polling(application)
     except Exception:
         LOGGER.exception("Telegram polling stopped unexpectedly")
         raise
