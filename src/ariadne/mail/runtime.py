@@ -931,7 +931,10 @@ class MailProcessor:
             decided = self.state.get(job.job_id)
             if decided is None or decided.suggested_action is None:
                 raise RuntimeError("Iris finished without recording a mail decision.")
-            if move_after_iris is not None:
+            if (
+                move_after_iris is not None
+                and decided.suggested_action == "keep_in_inbox"
+            ):
                 self.state.set_action(job.job_id, "move", move_after_iris)
                 decided = self.state.get(job.job_id)
                 assert decided is not None
@@ -955,12 +958,12 @@ class MailProcessor:
         if move_after_iris is not None:
             route_note = (
                 f"ordered route {route.id!r} classified this as "
-                f"{route.classification!r} and requested Iris before moving it "
-                f"to {move_after_iris!r}"
+                f"{route.classification!r} and requested Iris; if Iris keeps it "
+                f"in INBOX, move it to {move_after_iris!r}"
                 if route is not None
                 else (
-                    "a previous route requested Iris before moving it to "
-                    f"{move_after_iris!r}"
+                    "a previous route requested Iris with a default move to "
+                    f"{move_after_iris!r} when Iris keeps it in INBOX"
                 )
             )
         elif route is not None:

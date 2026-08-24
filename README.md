@@ -115,12 +115,12 @@ state = "~/.local/state/ariadne/mail.sqlite3"
 records the current `INBOX` UID as its first-run baseline without processing old
 mail. From then on it catches up mail received during downtime, drains jobs
 sequentially, and waits with IMAP IDLE. Inspection uses `BODY.PEEK`; rules that
-say `move` do not invoke Iris; `iris_then_move` rules run Iris successfully
-before filing into their configured folder. Mail turns can keep, flag, or move
-the current message and may draft, but never send, email. Each mail turn receives
-the external routes-file path so Iris can read it and propose a correction when
-a route was inappropriate. The configured routes file can contain personal data
-and must stay outside Git.
+say `move` do not invoke Iris. For `iris_then_move`, an explicit Iris `flag` or
+`move_to_*` decision wins; `keep_in_inbox` falls back to the route's configured
+folder. Mail turns can keep, flag, or move the current message and may draft, but
+never send, email. Each mail turn receives the external routes-file path so Iris
+can read it and propose a correction when a route was inappropriate. The
+configured routes file can contain personal data and must stay outside Git.
 
 By default, every unmatched message gets an Iris inspection that defaults to
 keeping it in `INBOX`. Set `defaults.unmatched_action` to `cheap_triage` to keep

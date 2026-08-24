@@ -22,6 +22,7 @@ from ariadne.mail import (
     MailRoute,
     MailRoutes,
     MailState,
+    SuggestedAction,
     backfill_inbox,
     cheap_triage,
     lint_mail_routes,
@@ -287,9 +288,15 @@ class FailingMoveIMAP(FakeIMAP):
 
 
 class DecidingConversation:
-    def __init__(self, state: MailState, job_id: str) -> None:
+    def __init__(
+        self,
+        state: MailState,
+        job_id: str,
+        suggested_action: SuggestedAction = "flag",
+    ) -> None:
         self.state = state
         self.job_id = job_id
+        self.suggested_action = suggested_action
         self.prompts: list[str] = []
         self.closed = False
 
@@ -299,7 +306,7 @@ class DecidingConversation:
             self.job_id,
             "notifications",
             "important",
-            "flag",
+            self.suggested_action,
             "A draft, not sent.",
         )
         yield "done"
@@ -457,7 +464,7 @@ async def test_cheap_triage_can_keep_routine_unmatched_mail_without_iris(
     assert [query for _uid, query in client.fetches] == [HEADER_QUERY]
 
 
-async def test_iris_then_move_runs_iris_then_moves_to_the_route_folder(
+async def test_iris_then_move_honors_iris_flag_and_leaves_mail_in_inbox(
     tmp_path: Path,
 ) -> None:
     client = FakeIMAP(
@@ -479,16 +486,72 @@ async def test_iris_then_move_runs_iris_then_moves_to_the_route_folder(
     assert job is not None
     assert job.status == "done"
     assert job.route_id == "review-then-file"
-    assert job.action == "move"
-    assert job.destination == "Travel"
-    assert client.moves == [((1,), "Travel")]
-    assert client.flags == []
+    assert job.action == "flag"
+    assert job.destination is None
+    assert client.moves == []
+    assert client.flags == [([1], [b"\\Flagged"])]
     assert len(conversations) == 1
-    assert "before moving it to 'Travel'" in conversations[0].prompts[0]
+    assert (
+        "if Iris keeps it in INBOX, move it to 'Travel'" in conversations[0].prompts[0]
+    )
     assert (
         "Mail route configuration: /config/mail-routes.yaml"
         in conversations[0].prompts[0]
     )
+
+
+async def test_iris_then_move_honors_iris_destination_without_duplicate_move(
+    tmp_path: Path,
+) -> None:
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    conversations: list[DecidingConversation] = []
+    state: MailState
+
+    def conversation(job_id: str) -> CodexConversation:
+        value = DecidingConversation(state, job_id, "move_to_notifications")
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "done"
+    assert job.action == "move"
+    assert job.destination == "Notifications"
+    assert client.moves == [((1,), "Notifications")]
+    assert len(conversations) == 1
+
+
+async def test_iris_then_move_uses_route_destination_when_iris_keeps_inbox(
+    tmp_path: Path,
+) -> None:
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    conversations: list[DecidingConversation] = []
+    state: MailState
+
+    def conversation(job_id: str) -> CodexConversation:
+        value = DecidingConversation(state, job_id, "keep_in_inbox")
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "done"
+    assert job.action == "move"
+    assert job.destination == "Travel"
+    assert client.moves == [((1,), "Travel")]
+    assert len(conversations) == 1
 
 
 async def test_iris_then_move_does_not_move_when_iris_fails(tmp_path: Path) -> None:
@@ -527,7 +590,7 @@ async def test_iris_then_move_retries_iris_after_iris_failure(tmp_path: Path) ->
         if not attempts:
             value: FailingConversation | DecidingConversation = FailingConversation()
         else:
-            value = DecidingConversation(state, job_id)
+            value = DecidingConversation(state, job_id, "keep_in_inbox")
         attempts.append(value)
         return cast(CodexConversation, value)
 
@@ -552,7 +615,7 @@ async def test_iris_then_move_records_move_failure_for_retry(tmp_path: Path) -> 
     state: MailState
 
     def conversation(job_id: str) -> CodexConversation:
-        value = DecidingConversation(state, job_id)
+        value = DecidingConversation(state, job_id, "keep_in_inbox")
         conversations.append(value)
         return cast(CodexConversation, value)
 
@@ -578,7 +641,7 @@ async def test_iris_then_move_retries_only_the_failed_move(tmp_path: Path) -> No
     state: MailState
 
     def conversation(job_id: str) -> CodexConversation:
-        value = DecidingConversation(state, job_id)
+        value = DecidingConversation(state, job_id, "keep_in_inbox")
         conversations.append(value)
         return cast(CodexConversation, value)
 
