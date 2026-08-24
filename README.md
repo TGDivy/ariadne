@@ -1,5 +1,8 @@
 # Ariadne
 
+[![CI](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml)
+[![Grafana](https://img.shields.io/badge/Grafana-observability-orange?logo=grafana)](https://niftytortoise1067.grafana.net/d/tggz4bj/ariadne-codex-ai-agent-overview?from=now-7d&to=now&timezone=browser&refresh=auto&kiosk=true)
+
 Ariadne is the system that runs Iris on your own machine and connects her to you
 over a private Telegram chat. She follows The Thread wherever it leads, not an
 assistant you own.
