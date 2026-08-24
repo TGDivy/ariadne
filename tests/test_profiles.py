@@ -72,6 +72,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     )
     assert "ariadne.telegram/instructions.md" in profile.base_instruction_sources
     assert "Live web search is enabled." in profile.developer_instructions
+    assert "I give you permission to push to Threads." in profile.base_instructions
 
 
 def test_shared_personality_is_applied_to_every_resolved_profile(
@@ -146,6 +147,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert "structure and links" in profile.base_instructions
     assert "anything suspicious or uncertain" in profile.base_instructions
     assert "with `send_telegram_message`" in profile.base_instructions
+    assert "I give you permission to push to Threads." in profile.base_instructions
 
 
 def test_profile_inspection_never_contains_environment_values(
