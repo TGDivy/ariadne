@@ -767,13 +767,10 @@ class MailProcessor:
 
             if route is None:
                 defaults = self.routes.defaults
-                if defaults.unmatched_action != "inspect":
-                    raise RuntimeError(
-                        f"Unsupported unmatched action: {defaults.unmatched_action}"
-                    )
                 if (
-                    cheap_triage(metadata) == "routine"
+                    defaults.unmatched_action == "cheap_triage"
                     and defaults.unmatched_keep_in_inbox
+                    and cheap_triage(metadata) == "routine"
                 ):
                     self.state.set_runtime_decision(
                         job.job_id,

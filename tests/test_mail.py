@@ -3,7 +3,7 @@ from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 from openai_codex.generated.v2_all import ReasoningEffort
@@ -33,7 +33,9 @@ from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 TURN_SETTINGS = CodexTurnSettings("gpt-5.6-luna", ReasoningEffort.low, "disabled")
 
 
-def routes() -> MailRoutes:
+def routes(
+    unmatched_action: Literal["inspect", "cheap_triage"] = "inspect",
+) -> MailRoutes:
     return MailRoutes.model_validate(
         {
             "version": 1,
@@ -45,7 +47,7 @@ def routes() -> MailRoutes:
                 "notifications": "Notifications",
             },
             "defaults": {
-                "unmatched_action": "inspect",
+                "unmatched_action": unmatched_action,
                 "unmatched_keep_in_inbox": True,
             },
             "rules": [
@@ -322,23 +324,61 @@ async def test_first_start_baselines_then_new_mail_is_processed(
     await processor.process_available()
 
     assert client.moves == [((2,), "Receipts")]
-    assert client.flags == [([3], [b"\\Flagged"]), ([5], [b"\\Flagged"])]
-    assert len(conversations) == 2
+    assert client.flags == [
+        ([3], [b"\\Flagged"]),
+        ([4], [b"\\Flagged"]),
+        ([5], [b"\\Flagged"]),
+    ]
+    assert len(conversations) == 3
     assert "Useful body text" in conversations[0].prompts[0]
     assert "ordered route 'important-first'" in conversations[0].prompts[0]
     assert "defaults to staying in INBOX" in conversations[1].prompts[0]
     assert all(conversation.closed for conversation in conversations)
-    assert [query for _uid, query in client.fetches].count(FULL_QUERY) == 2
+    assert [query for _uid, query in client.fetches].count(FULL_QUERY) == 3
     assert [query for _uid, query in client.fetches].count(HEADER_QUERY) == 4
     assert all(
         state.get(MailState.job_id("INBOX", 10, uid)).status == "done"
         for uid in (2, 3, 4, 5)
     )
-    routine = state.get(MailState.job_id("INBOX", 10, 4))
-    assert routine is not None
-    assert routine.action == "keep"
-    assert routine.suggested_action == "keep_in_inbox"
     assert state.get(MailState.job_id("INBOX", 10, 1)) is None
+
+
+async def test_cheap_triage_can_keep_routine_unmatched_mail_without_iris(
+    tmp_path: Path,
+) -> None:
+    client = FakeIMAP(
+        {
+            1: message(
+                "list@example.com",
+                "Weekly digest",
+                message_id="<digest>",
+                list_unsubscribe=True,
+            )
+        }
+    )
+    state = MailState(tmp_path / "mail.sqlite3")
+    state.initialize()
+    state.discover("INBOX", 10, [1])
+    conversations: list[DecidingConversation] = []
+
+    def conversation(job_id: str) -> CodexConversation:
+        value = DecidingConversation(state, job_id)
+        conversations.append(value)
+        return cast(CodexConversation, value)
+
+    processor = MailProcessor(
+        cast(Any, client), routes("cheap_triage"), state, conversation
+    )
+    processor.uidvalidity = 10
+    await processor.process_available()
+
+    job = state.get(MailState.job_id("INBOX", 10, 1))
+    assert job is not None
+    assert job.status == "done"
+    assert job.action == "keep"
+    assert job.suggested_action == "keep_in_inbox"
+    assert conversations == []
+    assert [query for _uid, query in client.fetches] == [HEADER_QUERY]
 
 
 def test_restart_catches_up_mail_received_after_the_saved_watermark(

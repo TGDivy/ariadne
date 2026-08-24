@@ -64,7 +64,7 @@ class MailRoute(BaseModel):
 class MailDefaults(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    unmatched_action: Literal["inspect"] = "inspect"
+    unmatched_action: Literal["inspect", "cheap_triage"] = "inspect"
     unmatched_keep_in_inbox: Literal[True] = True
 
 

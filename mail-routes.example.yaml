@@ -8,8 +8,8 @@ folders:
   notifications: Notifications
 
 defaults:
-  # Cheap header triage keeps clearly routine unmatched mail in INBOX. Other
-  # unmatched mail is inspected by Iris, with keeping it in INBOX as the default.
+  # "inspect" sends every unmatched message to Iris. Use "cheap_triage" to
+  # keep clearly routine unmatched mail in INBOX without an Iris turn.
   unmatched_action: inspect
   unmatched_keep_in_inbox: true
 
