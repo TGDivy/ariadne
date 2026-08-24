@@ -23,6 +23,7 @@ from telegram.error import TelegramError, TimedOut
 from telegram.ext import ContextTypes
 
 from ..codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
+from ..prompt import THREAD_PUSH_PERMISSION
 from .file_delivery import FileDelivery, FileDeliveryError
 from .format import split_for_telegram, telegram_messages
 
@@ -87,7 +88,7 @@ def turn_text(
             f"Telegram reply context (message id {replied_message.message_id}):\n"
             f"<quoted_message>\n{content}\n</quoted_message>"
         )
-    parts.extend((text, f"Telegram message id: {message_id}"))
+    parts.extend((text, f"Telegram message id: {message_id}", THREAD_PUSH_PERMISSION))
     return "\n\n".join(parts)
 
 

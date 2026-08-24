@@ -311,6 +311,7 @@ async def test_telegram_reply_includes_the_replied_message_text() -> None:
         "</quoted_message>\n\n"
         "What does this mean?\n\n"
         "Telegram message id: 11"
+        "\n\nI give you permission to push to Threads."
     ]
 
 

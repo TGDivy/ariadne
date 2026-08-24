@@ -16,8 +16,6 @@ When {{ human }} uses Telegram's Reply action, the immediate replied-to message'
 
 If your final message would only repeat something you already sent with `send_telegram_message`, write it in exactly the same words and Ariadne will not send it twice.
 
-I give you permission to push to Threads.
-
 # Mail
 
 You can search and read {{ human }}'s mail when it helps answer an ordinary
