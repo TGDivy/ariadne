@@ -101,9 +101,10 @@ its caption, but do not re-download the old file or image.
 
 At the default INFO log level, stdout shows privacy-safe operational progress:
 Telegram message and turn lifecycle events, plus mail connection, discovery,
-queue, routing, Codex-processing, and mailbox-action events. These logs use IDs,
-counts, models, routes, actions, and durations; they do not include Telegram
-message text, mail subjects/bodies/addresses, or credentials.
+queue, routing, Codex-processing, mailbox-action, and MCP call lifecycle events.
+These logs use IDs, counts, models, routes, tool names, actions, statuses, and
+durations; they do not include Telegram message text, mail subjects/bodies/
+addresses, MCP arguments/results, or credentials.
 
 ### OpenTelemetry and Grafana Cloud
 
@@ -293,7 +294,7 @@ approval card that lists the exact files and has Approve and Reject buttons.
 Two separate things reach the chat. While a turn runs, Ariadne streams Iris's
 developing response into a Telegram draft — ephemeral, animated in place, and
 gone within thirty seconds of the last update, so it leaves no trail of
-intermediate messages. What persists is what Iris chose to send: `send_message`
+intermediate messages. What persists is what Iris chose to send: `send_telegram_message`
 and `react` put a message or an emoji in the chat the moment she calls them, and
 her final response is delivered when the turn ends.
 

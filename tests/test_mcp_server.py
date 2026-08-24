@@ -15,7 +15,7 @@ from ariadne.mcp_server import (
     read_mail,
     runtime_status,
     search_mail,
-    send_message,
+    send_telegram_message,
     triage_current_mail,
 )
 from ariadne.telegram.format import TELEGRAM_MESSAGE_LIMIT
@@ -56,7 +56,7 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
 
     assert [tool.name for tool in tools] == [
         "runtime_status",
-        "send_message",
+        "send_telegram_message",
         "react",
         "prepare_files",
         "search_mail",
@@ -131,7 +131,7 @@ def test_runtime_status_reports_the_current_profiles_capabilities(monkeypatch) -
 
 
 async def test_a_message_from_iris_is_sent_as_telegram_html(telegram: FakeBot) -> None:
-    message_ids = await send_message("The **latest** one is from June.")
+    message_ids = await send_telegram_message("The **latest** one is from June.")
 
     assert message_ids == [101]
     assert telegram.sent == [
@@ -149,7 +149,7 @@ async def test_a_long_message_from_iris_is_split_at_telegrams_limit(
 ) -> None:
     text = "x" * (TELEGRAM_MESSAGE_LIMIT + 1)
 
-    message_ids = await send_message(text)
+    message_ids = await send_telegram_message(text)
 
     assert message_ids == [101, 102]
     assert [sent["text"] for sent in telegram.sent] == [
@@ -162,14 +162,14 @@ async def test_a_long_message_from_iris_is_split_at_telegrams_limit(
 async def test_iris_can_reply_to_the_message_she_is_answering(
     telegram: FakeBot,
 ) -> None:
-    await send_message("Found it.", reply_to_message_id=42)
+    await send_telegram_message("Found it.", reply_to_message_id=42)
 
     assert telegram.sent[0]["reply_parameters"].message_id == 42
 
 
 async def test_an_empty_message_is_refused(telegram: FakeBot) -> None:
     with pytest.raises(ToolError):
-        await send_message("   ")
+        await send_telegram_message("   ")
 
     assert telegram.sent == []
 
