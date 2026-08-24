@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from typing import Any, Literal, cast
 
 import pytest
+from imapclient.exceptions import IMAPClientError
 from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import SecretStr
 from pypdf import PdfWriter
@@ -32,6 +33,7 @@ from ariadne.mail import (
     render_message,
     restore_folder_to_inbox,
 )
+from ariadne.mail.runtime import _enter_idle
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 from ariadne.scripts.mail_route_lint import render_report
 
@@ -271,6 +273,26 @@ class IdlingIMAP(FakeIMAP):
 
     def logout(self) -> None:
         self.calls.append("logout")
+
+
+class _IdleProtocol:
+    def __init__(self, responses: list[bytes | None]) -> None:
+        self.responses = responses
+        self.tagged_commands = {b"IDLE-1": None}
+
+    def _get_response(self) -> bytes | None:
+        return self.responses.pop(0)
+
+
+class UnsolicitedIdleIMAP:
+    def __init__(self, responses: list[bytes | None]) -> None:
+        self._idle_tag = b"IDLE-1"
+        self._imap = _IdleProtocol(responses)
+
+    def idle(self) -> None:
+        raise IMAPClientError(
+            "Unexpected IDLE response: b'* 1228 FETCH (UID 7003 FLAGS (\\Seen))'"
+        )
 
 
 class FailingMoveIMAP(FakeIMAP):
@@ -955,6 +977,22 @@ async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -
         "idle_done",
         "logout",
     ]
+
+
+def test_enter_idle_accepts_unsolicited_updates_before_continuation() -> None:
+    client = UnsolicitedIdleIMAP([b"* 1229 EXISTS", None])
+
+    _enter_idle(cast(Any, client))
+
+    assert client._imap.responses == []
+
+
+def test_enter_idle_preserves_genuine_failures() -> None:
+    client = UnsolicitedIdleIMAP([])
+    client._imap.tagged_commands[client._idle_tag] = ("BAD", [b"rejected"])
+
+    with pytest.raises(IMAPClientError, match="Unexpected IDLE response"):
+        _enter_idle(cast(Any, client))
 
 
 def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) -> None:
