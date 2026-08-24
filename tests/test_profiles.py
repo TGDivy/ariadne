@@ -74,6 +74,28 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert "Live web search is enabled." in profile.developer_instructions
 
 
+def test_shared_personality_is_applied_to_every_resolved_profile(
+    tmp_path: Path,
+) -> None:
+    personality = tmp_path / "personality.md"
+    personality.write_text(
+        "Always read Iris.md and maintain The Thread.", encoding="utf-8"
+    )
+
+    for surface in (TELEGRAM_PROFILE, MAIL_PROFILE):
+        profile = resolve_profile(
+            surface,
+            vault=tmp_path,
+            human="Example User",
+            personality=personality,
+        )
+
+        assert "config/personality.md" in profile.developer_instruction_sources
+        assert "Always read Iris.md and maintain The Thread." in (
+            profile.developer_instructions
+        )
+
+
 def test_mail_profile_has_independent_settings_and_mail_authority(
     tmp_path: Path,
 ) -> None:

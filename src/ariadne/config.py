@@ -195,6 +195,7 @@ class Settings(BaseModel):
     version: Literal[1]
     human_name: str = Field(min_length=1)
     vault: DirectoryPath
+    personality: Path | None = None
     telegram: TelegramConfig
     mail: MailConfig = Field(default_factory=MailConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
@@ -222,6 +223,20 @@ class Settings(BaseModel):
         if not (vault / ".git").exists():
             raise ValueError("Vault must point to a Git repository.")
         return vault
+
+    @field_validator("personality", mode="before")
+    @classmethod
+    def expand_personality(cls, value: object) -> object:
+        if isinstance(value, str):
+            return Path(value).expanduser() if value.strip() else None
+        return value.expanduser() if isinstance(value, Path) else value
+
+    @field_validator("personality")
+    @classmethod
+    def validate_personality(cls, value: Path | None) -> Path | None:
+        if value is not None and not value.is_file():
+            raise ValueError("Personality must point to a readable Markdown file.")
+        return value
 
     @model_validator(mode="after")
     def reject_unknown_profiles(self) -> Settings:
@@ -328,6 +343,7 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "version": settings.version,
         "human_name": settings.human_name,
         "vault": str(settings.vault),
+        "personality": str(settings.personality) if settings.personality else None,
         "telegram": {
             "bot_token": "<redacted>",
             "allowed_user_id": settings.allowed_user_id,

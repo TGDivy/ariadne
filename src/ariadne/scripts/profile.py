@@ -84,6 +84,7 @@ def main() -> None:
         vault=settings.vault,
         settings=settings.turn_settings(args.profile),
         human=settings.human_name,
+        personality=settings.personality,
         mcp_environment=settings.mcp_environment,
     )
 
