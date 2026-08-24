@@ -59,6 +59,8 @@ class FakeMessage:
         self.message_id = message_id
         self.media_group_id: str | None = None
         self.text: str | None = None
+        self.caption: str | None = None
+        self.reply_to_message: FakeMessage | None = None
         self.replies: list[str] = []
         self.reply_parse_modes: list[ParseMode | None] = []
         self.reply_markups: list[object | None] = []
@@ -286,6 +288,36 @@ async def test_a_streamed_reply_leaves_only_the_final_answer_behind(
     assert message.draft_ids == [11]
 
 
+async def test_telegram_reply_includes_the_replied_message_text() -> None:
+    conversation = FakeConversation(["It means the cache was effective."])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    replied_message = FakeMessage(message_id=10)
+    replied_message.text = "The cache hit rate was 96%."
+    message = FakeMessage(message_id=11)
+    message.reply_to_message = replied_message
+
+    await bot.handle_text(cast(Message, message), 7, "What does this mean?")
+
+    assert conversation.prompts == [
+        "Telegram reply context (message id 10):\n"
+        "<quoted_message>\n"
+        "The cache hit rate was 96%.\n"
+        "</quoted_message>\n\n"
+        "What does this mean?\n\n"
+        "Telegram message id: 11"
+    ]
+
+
+def test_telegram_reply_uses_the_replied_message_caption() -> None:
+    replied_message = FakeMessage(message_id=10)
+    replied_message.caption = "The first dashboard after setup"
+
+    prompt = turn_text("Why is this empty?", 11, cast(Message, replied_message))
+
+    assert "The first dashboard after setup" in prompt
+    assert "Telegram reply context (message id 10)" in prompt
+
+
 async def test_streamed_text_is_shown_as_an_ephemeral_draft(
     message: FakeMessage, unthrottled_drafts: None
 ) -> None:
@@ -386,6 +418,27 @@ async def test_message_during_an_active_turn_steers_it_instead_of_being_rejected
     assert conversation.interrupt_calls == 0
     assert second_message.replies == [STEERED_MESSAGE]
     assert first_message.replies == ["Finished"]
+
+
+async def test_reply_context_is_preserved_when_steering_an_active_turn() -> None:
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    first_message = FakeMessage(message_id=10)
+    second_message = FakeMessage(message_id=11)
+    second_message.reply_to_message = first_message
+    first_message.text = "Review the vault"
+
+    first_turn = asyncio.create_task(
+        bot.handle_text(cast(Message, first_message), 7, first_message.text)
+    )
+    await conversation.started.wait()
+    await bot.handle_text(cast(Message, second_message), 7, "Focus on this request")
+    conversation.release.set()
+    await first_turn
+
+    assert len(conversation.steered) == 1
+    assert "Review the vault" in conversation.steered[0]
+    assert "Telegram reply context (message id 10)" in conversation.steered[0]
 
 
 async def test_steering_failure_leaves_the_active_turn_running() -> None:

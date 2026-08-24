@@ -95,6 +95,9 @@ number of messages per request.
 
 Messages sent while Ariadne is working are not rejected: they steer the Codex
 turn that is already running, so Codex folds them into the work in flight.
+Using Telegram's Reply action includes the immediate replied-to message's full
+text or caption and message ID as labelled context. Replies to old media include
+its caption, but do not re-download the old file or image.
 
 ### OpenTelemetry and Grafana Cloud
 

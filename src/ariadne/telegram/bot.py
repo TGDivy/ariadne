@@ -68,9 +68,27 @@ SETTINGS_BACK_CALLBACK = "settings:back"
 TypingSender = Callable[[], Awaitable[None]]
 
 
-def turn_text(text: str, message_id: int) -> str:
-    """Tag one Telegram message with the id Iris needs to reply or react to it."""
-    return f"{text}\n\nTelegram message id: {message_id}"
+def turn_text(
+    text: str,
+    message_id: int,
+    replied_message: Message | None = None,
+) -> str:
+    """Add Telegram identity and immediate reply context to one turn."""
+    parts: list[str] = []
+    if replied_message is not None:
+        content = (
+            replied_message.text
+            if replied_message.text is not None
+            else replied_message.caption
+        )
+        if content is None:
+            content = "[The replied-to message has no text or caption.]"
+        parts.append(
+            f"Telegram reply context (message id {replied_message.message_id}):\n"
+            f"<quoted_message>\n{content}\n</quoted_message>"
+        )
+    parts.extend((text, f"Telegram message id: {message_id}"))
+    return "\n\n".join(parts)
 
 
 def _already_said(response: str, spoken: Sequence[str]) -> bool:
@@ -701,7 +719,7 @@ class AriadneBot:
         if not self._is_allowed(user_id):
             return
 
-        prompt = turn_text(text, message.message_id)
+        prompt = turn_text(text, message.message_id, message.reply_to_message)
         if self._busy:
             await self._steer_active_turn(message, prompt, image_paths)
             return
