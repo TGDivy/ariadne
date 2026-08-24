@@ -1,11 +1,12 @@
 """A small in-memory Codex conversation for Ariadne."""
 
+import asyncio
 import json
 import logging
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from typing import cast
+from typing import Literal, cast
 
 from openai_codex import (
     AsyncCodex,
@@ -20,18 +21,22 @@ from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
     CommandExecutionThreadItem,
+    ContextCompactedNotification,
     FileChangeThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
     McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
+    ThreadTokenUsageUpdatedNotification,
+    TokenUsageBreakdown,
     TurnCompletedNotification,
     TurnStatus,
     WebSearchThreadItem,
 )
 from openai_codex.models import JsonObject
 
+from ..telemetry import Telemetry
 from .models import CodexModel, CodexTurnSettings, ResolvedTurnProfile
 
 LOGGER = logging.getLogger(__name__)
@@ -150,8 +155,10 @@ class CodexConversation:
         profile: ResolvedTurnProfile,
         *,
         client: AsyncCodex | None = None,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self._profile = profile
+        self._telemetry = telemetry or Telemetry()
         self._client = (
             client
             if client is not None
@@ -164,6 +171,7 @@ class CodexConversation:
             )
         )
         self._thread: AsyncThread | None = None
+        self._thread_token_usage_total: TokenUsageBreakdown | None = None
         self._active_turn: AsyncTurnHandle | None = None
         self._interrupting_turn: AsyncTurnHandle | None = None
 
@@ -243,18 +251,27 @@ class CodexConversation:
         `spoken` receives every message Iris sends to Telegram herself during
         the turn, so Ariadne knows what has already reached the chat.
         """
-        thread = await self._thread_for_conversation()
-        turn = await thread.turn(
-            _turn_input(message, image_paths),
-            approval_mode=self._profile.approval_mode,
-            cwd=str(self._profile.cwd),
-            effort=self._profile.effort,
+        observation = self._telemetry.start_turn(
+            source=self._profile.name,
             model=self._profile.model,
-            sandbox=self._profile.sandbox,
+            reasoning_effort=self._profile.effort.value,
         )
-        self._active_turn = turn
+        usage_baseline = self._thread_token_usage_total
+        turn: AsyncTurnHandle | None = None
+        status: Literal["success", "failure", "cancelled"] = "failure"
+        error: BaseException | None = None
 
         try:
+            thread = await self._thread_for_conversation()
+            turn = await thread.turn(
+                _turn_input(message, image_paths),
+                approval_mode=self._profile.approval_mode,
+                cwd=str(self._profile.cwd),
+                effort=self._profile.effort,
+                model=self._profile.model,
+                sandbox=self._profile.sandbox,
+            )
+            self._active_turn = turn
             if stop_requested is not None and stop_requested():
                 await self.interrupt()
 
@@ -263,16 +280,19 @@ class CodexConversation:
             async for event in turn.stream():
                 if isinstance(event.payload, AgentMessageDeltaNotification):
                     if event.payload.delta:
+                        observation.first_response()
                         response += event.payload.delta
                         yield response
                 elif isinstance(event.payload, ItemStartedNotification):
                     item = event.payload.item.root
+                    observation.tool_started(item)
                     activity_message = _activity_message(item)
                     if activity_message is not None and activity is not None:
                         LOGGER.info("Codex activity: %s", activity_message)
                         await activity(activity_message)
                 elif isinstance(event.payload, ItemCompletedNotification):
                     item = event.payload.item.root
+                    observation.tool_completed(item)
                     if (
                         isinstance(item, AgentMessageThreadItem)
                         and item.phase == MessagePhase.final_answer
@@ -281,6 +301,11 @@ class CodexConversation:
                     spoken_text = _spoken_text(item)
                     if spoken_text is not None and spoken is not None:
                         spoken(spoken_text)
+                elif isinstance(event.payload, ThreadTokenUsageUpdatedNotification):
+                    observation.usage(event.payload.token_usage, usage_baseline)
+                    self._thread_token_usage_total = event.payload.token_usage.total
+                elif isinstance(event.payload, ContextCompactedNotification):
+                    observation.compacted()
                 elif isinstance(event.payload, TurnCompletedNotification):
                     if event.payload.turn.status == TurnStatus.interrupted:
                         raise TurnInterrupted()
@@ -298,13 +323,22 @@ class CodexConversation:
 
             if not response:
                 raise RuntimeError("Codex completed without an agent response.")
+            status = "success"
+        except (TurnInterrupted, asyncio.CancelledError) as caught:
+            status = "cancelled"
+            error = caught
+            raise
+        except BaseException as caught:
+            error = caught
+            raise
         finally:
-            if self._active_turn is turn:
+            observation.finish(status, error)
+            if turn is not None and self._active_turn is turn:
                 self._active_turn = None
-            if self._interrupting_turn is turn:
+            if turn is not None and self._interrupting_turn is turn:
                 self._interrupting_turn = None
             if self._profile.thread_policy == "fresh-per-event":
-                self._thread = None
+                self.reset()
 
     async def close(self) -> None:
         """Release the process-wide Codex client during shutdown."""
@@ -313,9 +347,11 @@ class CodexConversation:
     def reset(self) -> None:
         """Discard the in-memory thread while retaining The Thread vault."""
         self._thread = None
+        self._thread_token_usage_total = None
 
     async def _thread_for_conversation(self) -> AsyncThread:
         if self._thread is None:
+            self._thread_token_usage_total = None
             self._thread = await self._client.thread_start(
                 approval_mode=self._profile.approval_mode,
                 base_instructions=self._profile.base_instructions,
@@ -324,6 +360,11 @@ class CodexConversation:
                 developer_instructions=self._profile.developer_instructions,
                 model=self._profile.model,
                 sandbox=self._profile.sandbox,
+            )
+            self._telemetry.thread_started(
+                source=self._profile.name,
+                model=self._profile.model,
+                reasoning_effort=self._profile.effort.value,
             )
         return self._thread
 

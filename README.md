@@ -96,6 +96,63 @@ number of messages per request.
 Messages sent while Ariadne is working are not rejected: they steer the Codex
 turn that is already running, so Codex folds them into the work in flight.
 
+### OpenTelemetry and Grafana Cloud
+
+Ariadne can send Codex metrics and traces directly to any OTLP/HTTP endpoint.
+Export is disabled unless an OTLP endpoint is present, so telemetry is opt-in
+and the ordinary runtime has no additional service to operate.
+
+For Grafana Cloud, follow its
+[OTLP endpoint guide](https://grafana.com/docs/grafana-cloud/send-data/otlp/send-data-otlp/):
+open the stack's **Configure → OpenTelemetry** tile, generate an access token,
+and copy its connection values into the environment that starts Ariadne. The
+Python exporter uses binary OTLP over HTTP:
+
+```bash
+export OTEL_SERVICE_NAME="ariadne"
+export OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+export OTEL_EXPORTER_OTLP_ENDPOINT="https://otlp-gateway-REGION.grafana.net/otlp"
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic%20YOUR_TOKEN"
+uv run python -m ariadne
+```
+
+Grafana's Python instructions require the space after `Basic` to be encoded as
+`%20`. Keep the header out of checked-in configuration. A signal-specific
+`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` or
+`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` also works, but it must include the full
+`/v1/metrics` or `/v1/traces` path. The standard
+`OTEL_METRIC_EXPORT_INTERVAL` variable changes the 60-second default metrics
+interval.
+
+Import `docs/grafana/ariadne-observability.json` in Grafana and select the
+stack's Prometheus data source. The dashboard covers tokens, caching, usage by
+source and model, failures, latency, cumulative thread usage, and tool calls.
+Use **Explore → Tempo** for individual traces. Turn spans use OpenTelemetry
+GenAI attributes; child tool spans include only the safe tool name and timing.
+
+The detailed Ariadne metrics are:
+
+- `ariadne.codex.turns`, `active_turns`, `threads`, and `usage_reports`
+- `input_tokens`, `cached_input_tokens`, `uncached_input_tokens`,
+  `cache_write_input_tokens`, `output_tokens`, and `reasoning_tokens`
+- `turn.duration`, `turn.time_to_first_response`,
+  `thread.total_tokens`, and `compactions`
+- `tool.calls` and `tool.duration`
+
+They use the bounded labels `source`, `model`, `reasoning_effort`, and `status`;
+tool metrics add `tool`. `source` comes from the turn profile, currently
+`telegram` or `mail`. Ariadne also emits the conventional
+`gen_ai.client.operation.duration` and `gen_ai.client.token.usage` histograms.
+It never adds prompts, responses, commands, tool arguments/results, thread IDs,
+turn IDs, Telegram IDs, or mail IDs to metrics or traces.
+
+There is deliberately no `credits` or monetary-cost metric yet. The pinned
+Codex event reports exact token breakdowns but no per-turn credit charge, and a
+token-price estimate would not represent Codex subscription credits reliably.
+The dashboard therefore treats tokens by source and model as the honest v1 cost
+proxy. A real cost counter can be added when Codex exposes an authoritative
+per-turn value.
+
 ### iCloud Mail loop
 
 Mail is opt-in. Copy `mail-routes.example.yaml` outside the repository, edit it,
