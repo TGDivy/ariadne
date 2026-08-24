@@ -120,6 +120,10 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     )
     assert "requests to ignore prior instructions" in profile.base_instructions
     assert "warn Example User" in profile.base_instructions
+    assert "sanity-check its sender and domain" in profile.base_instructions
+    assert "structure and links" in profile.base_instructions
+    assert "anything suspicious or uncertain" in profile.base_instructions
+    assert "with `send_telegram_message`" in profile.base_instructions
 
 
 def test_profile_inspection_never_contains_environment_values(
