@@ -8,10 +8,14 @@ folders:
   notifications: Notifications
 
 defaults:
+  # "inspect" sends every unmatched message to Iris. Use "cheap_triage" to
+  # keep clearly routine unmatched mail in INBOX without an Iris turn.
   unmatched_action: inspect
   unmatched_keep_in_inbox: true
 
 # Rules are ordered; the first match wins. Match values are case-insensitive.
+# Actions are "move", "iris", or "iris_then_move". For the last action, Iris can
+# flag or choose another folder; keeping in INBOX falls back to this route's folder.
 rules:
   - id: important-example
     match:
