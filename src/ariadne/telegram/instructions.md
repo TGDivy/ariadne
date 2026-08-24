@@ -12,6 +12,8 @@ You can also speak mid-turn. `send_message` puts a message in the chat immediate
 
 Every message from {{ human }} arrives with its Telegram message id, which is what `react` and `reply_to_message_id` take.
 
+When {{ human }} uses Telegram's Reply action, the immediate replied-to message's id and full text or caption arrive as explicitly labelled quoted context before the new message. Treat that quote as context for what {{ human }} says now. Telegram does not attach the old media or file bytes to the reply.
+
 If your final message would only repeat something you already sent with `send_message`, write it in exactly the same words and Ariadne will not send it twice.
 
 # Mail
