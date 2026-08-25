@@ -824,3 +824,15 @@ def test_attachments_are_kept_under_a_folder_for_today(tmp_path, monkeypatch) ->
     assert first.parent == tmp_path / date.today().isoformat()
     assert first.name == "cv.pdf"
     assert second.name == "cv-2.pdf"
+
+
+def test_attachment_path_reserves_names_before_download(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(telegram_bot, "ATTACHMENT_ROOT", tmp_path)
+
+    first = telegram_bot.attachment_path("photo.jpg")
+    second = telegram_bot.attachment_path("photo.jpg")
+
+    assert first.name == "photo.jpg"
+    assert second.name == "photo-2.jpg"
+    assert first.exists()
+    assert second.exists()

@@ -122,10 +122,17 @@ def attachment_path(name: str) -> Path:
     candidate = directory / name
     stem, suffix = candidate.stem, candidate.suffix
     attempt = 2
-    while candidate.exists():
-        candidate = directory / f"{stem}-{attempt}{suffix}"
-        attempt += 1
-    return candidate
+    while True:
+        try:
+            # Telegram can deliver the files in an album concurrently.  The
+            # empty file is a reservation: checking `exists()` and creating it
+            # later leaves a race in which every download picks the same path.
+            candidate.touch(mode=0o600, exist_ok=False)
+        except FileExistsError:
+            candidate = directory / f"{stem}-{attempt}{suffix}"
+            attempt += 1
+        else:
+            return candidate
 
 
 def document_message(
