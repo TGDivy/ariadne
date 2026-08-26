@@ -13,6 +13,9 @@ from ariadne import mcp_server
 from ariadne.mail import MailState
 from ariadne.mcp_server import (
     ask_telegram_question,
+    create_calendar_event,
+    delete_calendar_event,
+    list_calendars,
     mcp,
     react,
     read_mail,
@@ -92,6 +95,14 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "search_mail",
         "read_mail",
         "read_mail_thread",
+        "list_calendars",
+        "search_calendar",
+        "read_calendar_event",
+        "calendar_free_busy",
+        "create_calendar_event",
+        "update_calendar_event",
+        "delete_calendar_event",
+        "respond_to_calendar_invitation",
         "triage_current_mail",
     ]
 
@@ -112,6 +123,70 @@ def test_mail_reading_requires_toml_derived_credentials(monkeypatch) -> None:
         search_mail("Example Sender")
     with pytest.raises(ToolError, match="not configured"):
         read_mail("mail:anything")
+
+
+def test_calendar_requires_toml_derived_credentials(monkeypatch) -> None:
+    for name in (
+        "ARIADNE_ICLOUD_USERNAME",
+        "ARIADNE_ICLOUD_APP_PASSWORD",
+        "ARIADNE_CALENDAR_TIMEZONE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    with pytest.raises(ToolError, match="not configured"):
+        list_calendars()
+    with pytest.raises(ToolError, match="not configured"):
+        create_calendar_event("Title", "2026-09-01", "2026-09-02")
+
+
+def test_calendar_mutations_use_only_configured_account_and_calendar(
+    monkeypatch,
+) -> None:
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    class FakeCalendar:
+        def __init__(self, username: str, password: str, **kwargs: object) -> None:
+            assert username == "person@example.com"
+            assert password == "app-password"
+            assert kwargs == {
+                "timezone": "Europe/London",
+                "default_calendar": "Personal",
+            }
+
+        def __enter__(self) -> "FakeCalendar":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def create_event(self, **kwargs: Any) -> dict[str, Any]:
+            calls.append(("create", kwargs))
+            return {"id": "calendar-event:new"}
+
+        def delete_event(self, value: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append(("delete", {"id": value, **kwargs}))
+            return {"status": "deleted"}
+
+    monkeypatch.setenv("ARIADNE_ICLOUD_USERNAME", "person@example.com")
+    monkeypatch.setenv("ARIADNE_ICLOUD_APP_PASSWORD", "app-password")
+    monkeypatch.setenv("ARIADNE_CALENDAR_TIMEZONE", "Europe/London")
+    monkeypatch.setenv("ARIADNE_CALENDAR_DEFAULT", "Personal")
+    monkeypatch.setattr(mcp_server, "ICloudCalendar", FakeCalendar)
+
+    created = create_calendar_event(
+        "Review", "2026-09-01T09:00:00", "2026-09-01T10:00:00"
+    )
+    deleted = delete_calendar_event("calendar-event:new", scope="series")
+
+    assert created == {"id": "calendar-event:new"}
+    assert deleted == {"status": "deleted"}
+    assert calls[0][0] == "create"
+    assert calls[0][1]["title"] == "Review"
+    assert calls[0][1]["timezone"] is None
+    assert calls[1] == (
+        "delete",
+        {"id": "calendar-event:new", "scope": "series", "expected_etag": None},
+    )
 
 
 def test_a_mail_turn_can_record_but_not_execute_its_decision(

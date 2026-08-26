@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -100,9 +101,8 @@ def test_mcp_config_forwards_its_required_environment(
     assert "mcp_servers.ariadne.tool_timeout_sec=960" in overrides
     assert (
         "mcp_servers.ariadne.enabled_tools="
-        '["runtime_status", "send_telegram_message", "react", '
-        '"ask_telegram_question", "prepare_files", '
-        '"search_mail", "read_mail", "read_mail_thread"]' in overrides
+        + json.dumps(TELEGRAM_PROFILE.enabled_tools)
+        in overrides
     )
     assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
     assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
@@ -520,9 +520,20 @@ def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
         ("search_mail", "Searching mail…"),
         ("read_mail", "Reading mail…"),
         ("read_mail_thread", "Reading mail thread…"),
+        ("list_calendars", "Checking calendars…"),
+        ("search_calendar", "Searching the calendar…"),
+        ("read_calendar_event", "Reading a calendar event…"),
+        ("calendar_free_busy", "Checking availability…"),
+        ("create_calendar_event", "Creating a calendar event…"),
+        ("update_calendar_event", "Updating a calendar event…"),
+        ("delete_calendar_event", "Deleting a calendar event…"),
+        (
+            "respond_to_calendar_invitation",
+            "Responding to a calendar invitation…",
+        ),
     ],
 )
-async def test_codex_conversation_reports_specific_mail_activity(
+async def test_codex_conversation_reports_specific_service_activity(
     tmp_path: Path, tool: str, expected: str
 ) -> None:
     item = McpToolCallThreadItem(
