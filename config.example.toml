@@ -5,6 +5,7 @@ vault = "~/ariadne-thread"
 [telegram]
 bot_token = ""
 allowed_user_id = 0
+state = "~/.local/state/ariadne/telegram.sqlite3"
 
 [telegram.identity]
 name = "Iris"

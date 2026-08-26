@@ -24,6 +24,10 @@ from pydantic import (
 
 from .codex.models import CodexTurnSettings, WebSearchSetting
 from .profile import PROFILES
+from .telegram.questions import (
+    QUESTION_STATE_ENVIRONMENT,
+    default_question_state_path,
+)
 
 DEFAULT_CONFIG_PATH = Path("~/.config/ariadne/config.toml")
 CONFIG_PATH_ENVIRONMENT = "ARIADNE_CONFIG"
@@ -74,6 +78,7 @@ class TelegramConfig(BaseModel):
 
     bot_token: SecretStr
     allowed_user_id: PositiveInt
+    state: Path = Field(default_factory=default_question_state_path)
     identity: TelegramIdentity = Field(default_factory=TelegramIdentity)
 
     @field_validator("bot_token", mode="before")
@@ -88,6 +93,13 @@ class TelegramConfig(BaseModel):
             if not value:
                 raise ValueError("Telegram bot token must not be empty.")
         return value
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def expand_state_path(cls, value: object) -> object:
+        if isinstance(value, str):
+            return Path(value).expanduser()
+        return value.expanduser() if isinstance(value, Path) else value
 
 
 class MailConfig(BaseModel):
@@ -275,6 +287,7 @@ class Settings(BaseModel):
         values = {
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_ALLOWED_USER_ID": str(self.allowed_user_id),
+            QUESTION_STATE_ENVIRONMENT: str(self.telegram.state.resolve()),
         }
         if self.mail.enabled:
             assert self.mail.username is not None
@@ -347,6 +360,7 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "telegram": {
             "bot_token": "<redacted>",
             "allowed_user_id": settings.allowed_user_id,
+            "state": str(settings.telegram.state),
             "identity": {
                 "name": identity.name,
                 "description": identity.description,

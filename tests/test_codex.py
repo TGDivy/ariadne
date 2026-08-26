@@ -97,9 +97,11 @@ def test_mcp_config_forwards_its_required_environment(
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
     assert 'mcp_servers.ariadne.env.ARIADNE_PROFILE="telegram"' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
+    assert "mcp_servers.ariadne.tool_timeout_sec=960" in overrides
     assert (
         "mcp_servers.ariadne.enabled_tools="
-        '["runtime_status", "send_telegram_message", "react", "prepare_files", '
+        '["runtime_status", "send_telegram_message", "react", '
+        '"ask_telegram_question", "prepare_files", '
         '"search_mail", "read_mail", "read_mail_thread"]' in overrides
     )
     assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides

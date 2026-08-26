@@ -1,8 +1,12 @@
 """Local FastMCP capabilities for Ariadne's Codex conversation."""
 
+import asyncio
+import logging
 import os
+import sqlite3
 import subprocess
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,7 +15,7 @@ from fastmcp.exceptions import ToolError
 from imapclient import IMAPClient  # type: ignore[import-untyped]
 from telegram import Bot, ReplyParameters
 from telegram.constants import ParseMode, ReactionEmoji
-from telegram.error import BadRequest, TelegramError
+from telegram.error import BadRequest, EndPointNotFound, TelegramError
 
 from .mail import (
     IMAP_HOST,
@@ -23,6 +27,17 @@ from .mail import (
 from .profile import PROFILES
 from .telegram.file_delivery import FileDelivery, FileDeliveryError
 from .telegram.format import split_for_telegram, telegram_messages
+from .telegram.questions import (
+    QUESTION_TIMEOUT_SECONDS,
+    ActiveQuestionError,
+    TelegramQuestionCard,
+    TelegramQuestionStore,
+    question_state_path,
+    validate_question,
+)
+from .telegram.rich import RichBotAPI, split_rich_markdown
+
+LOGGER = logging.getLogger(__name__)
 
 mcp = FastMCP(
     "Ariadne",
@@ -126,6 +141,25 @@ async def _send_chunks(
     return sent
 
 
+async def _send_rich_chunks(
+    bot: Bot,
+    chat_id: int,
+    chunks: list[str],
+    reply_to_message_id: int | None,
+) -> list[int]:
+    """Send complete Rich Markdown blocks through Bot API forward compatibility."""
+    api = RichBotAPI(bot)
+    sent: list[int] = []
+    for chunk in chunks:
+        message = await api.send(
+            chat_id=chat_id,
+            markdown=chunk,
+            reply_to_message_id=(reply_to_message_id if not sent else None),
+        )
+        sent.append(message.message_id)
+    return sent
+
+
 @mcp.tool
 async def send_telegram_message(
     text: str, reply_to_message_id: int | None = None
@@ -148,6 +182,15 @@ async def send_telegram_message(
     )
     try:
         async with Bot(token) as bot:
+            try:
+                return await _send_rich_chunks(
+                    bot,
+                    chat_id,
+                    split_rich_markdown(text),
+                    reply_to_message_id,
+                )
+            except (BadRequest, EndPointNotFound):
+                pass
             try:
                 return await _send_chunks(
                     bot,
@@ -184,6 +227,88 @@ async def react(message_id: int, reaction: str) -> None:
             )
     except TelegramError as error:
         raise ToolError("Telegram could not add that reaction.") from error
+
+
+@mcp.tool
+async def ask_telegram_question(
+    prompt: str,
+    choices: list[str],
+    reply_to_message_id: int | None = None,
+) -> dict[str, str]:
+    """Ask the human one choice question and wait for their answer.
+
+    Telegram renders 2-6 trusted native buttons, while an ordinary typed reply
+    remains valid. The tool returns only after the human answers, resuming this
+    same model turn. Use it for a decision that genuinely blocks the work, not
+    for rhetorical questions or information that can be inferred safely.
+    """
+    try:
+        prompt, normalized_choices = validate_question(prompt, choices)
+    except ValueError as error:
+        raise ToolError(str(error)) from error
+    if reply_to_message_id is not None and reply_to_message_id < 1:
+        raise ToolError("A reply message id must be positive.")
+
+    token, chat_id = _telegram_chat()
+    store = TelegramQuestionStore(question_state_path())
+    try:
+        question = store.create(
+            chat_id,
+            prompt,
+            normalized_choices,
+            ttl_seconds=QUESTION_TIMEOUT_SECONDS,
+        )
+    except (ActiveQuestionError, OSError, ValueError, sqlite3.Error) as error:
+        raise ToolError(str(error)) from error
+
+    try:
+        async with Bot(token) as bot:
+            card = TelegramQuestionCard(bot)
+            try:
+                message, rich = await card.send(
+                    question, reply_to_message_id=reply_to_message_id
+                )
+                attached = store.attach_message(
+                    question.question_id, message.message_id, rich=rich
+                )
+                if attached is None:
+                    raise RuntimeError("The Telegram question state disappeared.")
+                question = attached
+                if question.status != "pending":
+                    await card.settle(question)
+
+                while question.status == "pending":
+                    await asyncio.sleep(0.2)
+                    current = store.get(question.question_id)
+                    if current is None:
+                        raise RuntimeError("The Telegram question state disappeared.")
+                    question = current
+
+                if question.status == "answered" and question.answer is not None:
+                    return {
+                        "status": "answered",
+                        "answer": question.answer,
+                        "source": question.answer_source or "text",
+                    }
+                if question.status == "expired":
+                    await card.settle(question)
+                    raise ToolError("The Telegram question expired without an answer.")
+                raise ToolError("The Telegram question was cancelled.")
+            except asyncio.CancelledError:
+                cancelled = store.cancel(question.question_id)
+                if cancelled is not None:
+                    with suppress(TelegramError):
+                        await card.settle(cancelled)
+                raise
+    except ToolError:
+        raise
+    except TelegramError as error:
+        store.cancel(question.question_id)
+        raise ToolError("Telegram could not deliver the question.") from error
+    except (OSError, RuntimeError, sqlite3.Error) as error:
+        store.cancel(question.question_id)
+        LOGGER.exception("Telegram question state failed")
+        raise ToolError("The Telegram question could not be completed.") from error
 
 
 @mcp.tool

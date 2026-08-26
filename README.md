@@ -97,10 +97,15 @@ move, delete, or mark messages read. The default folder is `INBOX`; use
 number of messages per request.
 
 Messages sent while Ariadne is working are not rejected: they steer the Codex
-turn that is already running, so Codex folds them into the work in flight.
+turn that is already running, so Codex folds them into the work in flight. If
+Codex is between turn states, Ariadne retains the messages and drains them in
+arrival order instead of rejecting or silently dropping them.
 Using Telegram's Reply action includes the immediate replied-to message's full
 text or caption and message ID as labelled context. Replies to old media include
 its caption, but do not re-download the old file or image.
+
+The live-chat state diagrams, supported rich content, fallback behavior, and
+manual test cases are in [`docs/telegram-live-chat.md`](docs/telegram-live-chat.md).
 
 At the default INFO log level, stdout shows privacy-safe operational progress:
 Telegram message and turn lifecycle events, plus mail connection, discovery,
@@ -290,19 +295,26 @@ contains, what was kept, and what was dropped.
 
 ## Local capabilities
 
-Ariadne exposes local MCP capabilities to Codex: runtime status, speaking in
-Telegram, and preparing files from the configured user's home directory.
+Ariadne exposes local MCP capabilities to Codex: runtime status, speaking and
+reacting in Telegram, asking one blocking choice question, and preparing files
+from the configured user's home directory.
 Prepared files are not sent immediately: Ariadne sends a short-lived Telegram
 approval card that lists the exact files and has Approve and Reject buttons.
 
 ## Speaking
 
-Two separate things reach the chat. While a turn runs, Ariadne streams Iris's
-developing response into a Telegram draft — ephemeral, animated in place, and
-gone within thirty seconds of the last update, so it leaves no trail of
-intermediate messages. What persists is what Iris chose to send: `send_telegram_message`
-and `react` put a message or an emoji in the chat the moment she calls them, and
-her final response is delivered when the turn ends.
+While a turn runs, Ariadne edits one persistent Rich Message in place. It starts
+as “Thinking…” with a native Stop button, gains fully rendered Markdown as Iris
+writes, and becomes the final answer without replacing the chat composer or
+leaving raw formatting behind. Stopping preserves useful partial output. Rich
+Messages carry up to 32,768 characters; exceptional overflow becomes additional
+rich blocks rather than losing formatting.
+
+`send_telegram_message` and `react` still let Iris speak or react immediately.
+`ask_telegram_question` adds a separate native choice card and waits inside the
+same model turn; a button tap or ordinary typed answer resumes it. Telegram
+Bot API deployments that reject Rich Messages receive classic text and inline
+keyboards; Telegram handles the update prompt for older client applications.
 
 Each incoming message is tagged with its Telegram message id so Iris can reply
 or react to it. If her final response repeats something she already sent

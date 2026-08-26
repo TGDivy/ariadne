@@ -156,6 +156,12 @@ def test_default_mail_state_expands_the_home_directory(
     settings = load_settings(config, environ={})
 
     assert settings.mail.state == fake_home / ".local/state/ariadne/mail.sqlite3"
+    assert (
+        settings.telegram.state == fake_home / ".local/state/ariadne/telegram.sqlite3"
+    )
+    assert settings.mcp_environment["ARIADNE_TELEGRAM_STATE"] == str(
+        settings.telegram.state.resolve()
+    )
 
 
 def test_config_example_is_a_valid_disabled_mail_template(tmp_path: Path) -> None:

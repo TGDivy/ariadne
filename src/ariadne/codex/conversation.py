@@ -47,9 +47,10 @@ SpokenCallback = Callable[[str], None]
 StopRequested = Callable[[], bool]
 
 WEB_SEARCH_CONTEXT_SIZE = "medium"
+MCP_TOOL_TIMEOUT_SECONDS = 16 * 60
 MCP_SERVER_NAME = "ariadne"
 TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
-TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react")
+TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react", "ask_telegram_question")
 MAIL_ACTIVITY = {
     "search_mail": "Searching mail…",
     "read_mail": "Reading mail…",
@@ -210,6 +211,7 @@ def _mcp_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
         f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
         "mcp_servers.ariadne.args=" + json.dumps(["-m", "ariadne.mcp_server"]),
         "mcp_servers.ariadne.enabled=true",
+        f"mcp_servers.ariadne.tool_timeout_sec={MCP_TOOL_TIMEOUT_SECONDS}",
         "mcp_servers.ariadne.enabled_tools=" + json.dumps(profile.enabled_tools),
     ]
     overrides.extend(

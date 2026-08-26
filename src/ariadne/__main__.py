@@ -16,6 +16,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -103,6 +104,7 @@ def main() -> None:
         settings.allowed_user_id,
         conversation,
         bot_token=settings.telegram_bot_token,
+        question_state=settings.telegram.state.resolve(),
     )
     try:
         mail_loop = (
@@ -126,6 +128,8 @@ def main() -> None:
 
     async def start_services(application: AriadneApplication) -> None:
         nonlocal mail_task
+        ariadne.bind_bot(application.bot)
+        await ariadne.recover_questions()
         await publish_commands(application)
         if mail_loop is not None:
             mail_task = asyncio.create_task(mail_loop.run_forever())
@@ -163,6 +167,12 @@ def main() -> None:
         CallbackQueryHandler(ariadne.file_delivery_callback, pattern=r"^file-delivery:")
     )
     application.add_handler(
+        CallbackQueryHandler(ariadne.turn_callback, pattern=r"^turn:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(ariadne.question_callback, pattern=r"^question:")
+    )
+    application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
     )
     application.add_handler(
@@ -171,6 +181,10 @@ def main() -> None:
     application.add_handler(
         MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE, ariadne.document)
     )
+    # PTB 22.8 predates Rich Messages, but retains the raw field in
+    # Message.api_kwargs. A second handler group lets us inspect those updates
+    # without competing with the native text/media handlers above.
+    application.add_handler(TypeHandler(Update, ariadne.rich_message), group=1)
 
     LOGGER.info("Starting Ariadne with The Thread vault %s", settings.vault)
     try:
