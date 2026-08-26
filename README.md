@@ -82,7 +82,7 @@ retries, and UID state remains in each surface's runtime code.
 ### Read-only mail export experiment
 
 The one-off operator script can export recent iCloud Mail messages for local
-analysis. Configure `username` and `app_password` under `[mail]`, then run:
+analysis. Configure `username` and `app_password` under `[icloud]`, then run:
 
 ```bash
 uv run python -m ariadne.scripts.mail_export \
@@ -198,16 +198,22 @@ Re-check and update the dated rate table when OpenAI changes Codex pricing.
 ### iCloud Mail loop
 
 Mail is opt-in. Copy `mail-routes.example.yaml` outside the repository, edit it,
-and enable its TOML section explicitly:
+configure shared iCloud credentials, and enable its TOML section explicitly:
 
 ```toml
+[icloud]
+username = "YOUR_ICLOUD_ADDRESS"
+app_password = "YOUR_APP_SPECIFIC_PASSWORD"
+
 [mail]
 enabled = true
-username = "YOUR_ICLOUD_ADDRESS"
-app_password = ""
 routes = "~/.config/ariadne/mail-routes.yaml"
 state = "~/.local/state/ariadne/mail.sqlite3"
 ```
+
+Existing configurations with credentials directly under `[mail]` remain
+supported. When `[icloud]` is present, its credentials are shared by Mail and
+Calendar and take precedence over those legacy fields.
 
 `state` optionally changes the durable SQLite path. The normal
 `python -m ariadne` command
@@ -267,6 +273,47 @@ uv run python -m ariadne.scripts.mail_backfill --restore-folder Receipts --apply
 Repeat `--restore-folder` to restore multiple folders. This restores every
 message in each named folder because earlier backfill runs did not record which
 messages they moved. Restores also use bounded bulk operations.
+
+### iCloud Calendar
+
+Calendar access is opt-in and uses the same iCloud app-specific password as
+Mail. Enable it independently and set the IANA timezone used for date-only and
+otherwise offset-free values:
+
+```toml
+[icloud]
+username = "YOUR_ICLOUD_ADDRESS"
+app_password = "YOUR_APP_SPECIFIC_PASSWORD"
+
+[calendar]
+enabled = true
+timezone = "Europe/London"
+default_calendar = "Calendar"
+```
+
+`default_calendar` is optional. With one event calendar, Ariadne selects it
+automatically. With several calendars and no configured default, Iris lists
+them and supplies the returned opaque calendar id when creating an event.
+
+Telegram turns can list calendars; search and read a bounded date range; merge
+busy intervals; create, update, and delete events; and respond to invitations.
+Events support all-day or timed intervals, descriptions, locations, attendees,
+relative display alarms, status and free/busy transparency, and RFC 5545
+`RRULE` recurrence. A per-event IANA timezone can override the configured
+default. Search expands recurring events into occurrences. An
+occurrence id updates or deletes only that occurrence by default; pass the
+series scope to affect the complete recurring event. Search and read results
+include an ETag that can be supplied to a mutation to reject a stale decision.
+
+Creating or changing attendees can cause iCloud to send invitations or event
+updates, and invitation responses communicate with the organizer. Calendar
+writes and deletes are immediate. Calendar data is treated as untrusted content
+and cannot itself authorize another action.
+
+This first Calendar integration is deliberately on-demand. It keeps no local
+calendar copy, does not poll for changes, and does not generate reminders or
+background Telegram notifications. iCloud Reminders are also outside its
+scope. Restart Ariadne after changing the Calendar configuration.
 
 ## Instructions
 
