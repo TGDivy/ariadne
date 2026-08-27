@@ -112,7 +112,7 @@ username = "person@example.com"
 """,
     )
 
-    with pytest.raises(ValidationError, match="app_password, routes"):
+    with pytest.raises(ValidationError, match="username and app_password"):
         load_settings(config, environ={})
 
 
@@ -143,6 +143,93 @@ state = "{state}"
     settings = load_settings(config, environ={})
     assert settings.mcp_environment["ARIADNE_MAIL_USERNAME"] == "person@example.com"
     assert settings.mcp_environment["ARIADNE_MAIL_APP_PASSWORD"] == "app-password"
+
+
+def test_shared_icloud_credentials_can_enable_mail_without_legacy_fields(
+    tmp_path: Path,
+) -> None:
+    routes = tmp_path / "routes.yaml"
+    routes.write_text("version: 1\n", encoding="utf-8")
+    config = write_config(
+        tmp_path,
+        extra=f'''\
+
+[icloud]
+username = "person@example.com"
+app_password = "shared-password"
+
+[mail]
+enabled = true
+routes = "{routes}"
+''',
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.mail_settings is not None
+    assert settings.mail_settings.username == "person@example.com"
+    assert settings.mail_settings.app_password.get_secret_value() == "shared-password"
+
+
+def test_enabled_calendar_exports_its_configured_settings(
+    tmp_path: Path,
+) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[icloud]
+username = "person@example.com"
+app_password = "calendar-password"
+
+[calendar]
+enabled = true
+timezone = "Europe/London"
+default_calendar = "Personal"
+""",
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.calendar.enabled is True
+    assert settings.mcp_environment == {
+        "TELEGRAM_BOT_TOKEN": "token",
+        "TELEGRAM_ALLOWED_USER_ID": "12345",
+        "ARIADNE_TELEGRAM_STATE": str(settings.telegram.state.resolve()),
+        "ARIADNE_ICLOUD_USERNAME": "person@example.com",
+        "ARIADNE_ICLOUD_APP_PASSWORD": "calendar-password",
+        "ARIADNE_CALENDAR_TIMEZONE": "Europe/London",
+        "ARIADNE_CALENDAR_DEFAULT": "Personal",
+    }
+
+
+def test_enabled_calendar_requires_icloud_credentials(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[calendar]
+enabled = true
+timezone = "UTC"
+""",
+    )
+
+    with pytest.raises(ValidationError, match="Enabled iCloud services"):
+        load_settings(config, environ={})
+
+
+def test_calendar_timezone_must_be_an_iana_name(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[calendar]
+timezone = "Not/A_Timezone"
+""",
+    )
+
+    with pytest.raises(ValidationError, match="valid IANA timezone"):
+        load_settings(config, environ={})
 
 
 def test_default_mail_state_expands_the_home_directory(
@@ -181,6 +268,7 @@ def test_config_example_is_a_valid_disabled_mail_template(tmp_path: Path) -> Non
 
     assert settings.mail.enabled is False
     assert settings.mail_settings is None
+    assert settings.calendar.enabled is False
     assert settings.telemetry.enabled is False
 
 
@@ -232,6 +320,10 @@ def test_redacted_configuration_never_contains_secrets(tmp_path: Path) -> None:
         telegram='bot_token = "secret"\nallowed_user_id = 7',
         extra="""\
 
+[icloud]
+username = "person@example.com"
+app_password = "icloud-secret"
+
 [telemetry]
 enabled = true
 endpoint = "https://otlp.example.com/otlp"
@@ -242,6 +334,7 @@ authorization = "Basic telemetry-secret"
     serialized = json.dumps(settings_payload(load_settings(config, environ={})))
 
     assert "secret" not in serialized
+    assert "icloud-secret" not in serialized
     assert "telemetry-secret" not in serialized
     assert "<redacted>" in serialized
 

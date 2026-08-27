@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import (
@@ -102,8 +103,36 @@ class TelegramConfig(BaseModel):
         return value.expanduser() if isinstance(value, Path) else value
 
 
+class ICloudConfig(BaseModel):
+    """Shared credentials for opt-in iCloud services."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    username: str | None = None
+    app_password: SecretStr | None = None
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def empty_username_is_absent(cls, value: object) -> object:
+        return value.strip() or None if isinstance(value, str) else value
+
+    @field_validator("app_password", mode="before")
+    @classmethod
+    def empty_password_is_absent(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @model_validator(mode="after")
+    def require_complete_credentials(self) -> ICloudConfig:
+        if (self.username is None) != (self.app_password is None):
+            raise ValueError("iCloud credentials require username and app_password.")
+        return self
+
+
 class MailConfig(BaseModel):
-    """Opt-in iCloud Mail configuration."""
+    """Opt-in iCloud Mail configuration, including legacy credentials."""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -137,24 +166,46 @@ class MailConfig(BaseModel):
 
     @model_validator(mode="after")
     def require_complete_enabled_mail(self) -> MailConfig:
-        if not self.enabled:
-            return self
-        missing = []
-        if self.username is None:
-            missing.append("username")
-        if (
-            self.app_password is None
-            or not self.app_password.get_secret_value().strip()
-        ):
-            missing.append("app_password")
-        if self.routes is None:
-            missing.append("routes")
-        if missing:
-            raise ValueError("Enabled mail requires: " + ", ".join(missing) + ".")
-        assert self.routes is not None
-        if not self.routes.is_file():
+        if (self.username is None) != (self.app_password is None):
+            raise ValueError(
+                "Legacy mail credentials require username and app_password."
+            )
+        if self.enabled and self.routes is None:
+            raise ValueError("Enabled mail requires routes.")
+        if self.enabled and self.routes is not None and not self.routes.is_file():
             raise ValueError("Mail routes must point to a YAML file.")
         return self
+
+
+class CalendarConfig(BaseModel):
+    """Opt-in, on-demand iCloud Calendar configuration."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    timezone: str = "UTC"
+    default_calendar: str | None = None
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def strip_timezone(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("timezone")
+    @classmethod
+    def require_iana_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise ValueError(
+                "Calendar timezone must be a valid IANA timezone."
+            ) from error
+        return value
+
+    @field_validator("default_calendar", mode="before")
+    @classmethod
+    def empty_default_is_absent(cls, value: object) -> object:
+        return value.strip() or None if isinstance(value, str) else value
 
 
 class TelemetryConfig(BaseModel):
@@ -209,7 +260,9 @@ class Settings(BaseModel):
     vault: DirectoryPath
     personality: Path | None = None
     telegram: TelegramConfig
+    icloud: ICloudConfig = Field(default_factory=ICloudConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
+    calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
 
@@ -255,7 +308,21 @@ class Settings(BaseModel):
         unknown = self.profiles.keys() - PROFILES.keys()
         if unknown:
             raise ValueError("Unknown turn profiles: " + ", ".join(sorted(unknown)))
+        if (
+            self.mail.enabled or self.calendar.enabled
+        ) and self.icloud_credentials is None:
+            raise ValueError(
+                "Enabled iCloud services require [icloud] username and app_password."
+            )
         return self
+
+    @property
+    def icloud_credentials(self) -> tuple[str, SecretStr] | None:
+        if self.icloud.username is not None and self.icloud.app_password is not None:
+            return self.icloud.username, self.icloud.app_password
+        if self.mail.username is not None and self.mail.app_password is not None:
+            return self.mail.username, self.mail.app_password
+        return None
 
     @property
     def telegram_bot_token(self) -> str:
@@ -290,24 +357,30 @@ class Settings(BaseModel):
             QUESTION_STATE_ENVIRONMENT: str(self.telegram.state.resolve()),
         }
         if self.mail.enabled:
-            assert self.mail.username is not None
-            assert self.mail.app_password is not None
-            values["ARIADNE_MAIL_USERNAME"] = self.mail.username
-            values["ARIADNE_MAIL_APP_PASSWORD"] = (
-                self.mail.app_password.get_secret_value()
-            )
+            assert self.icloud_credentials is not None
+            username, app_password = self.icloud_credentials
+            values["ARIADNE_MAIL_USERNAME"] = username
+            values["ARIADNE_MAIL_APP_PASSWORD"] = app_password.get_secret_value()
+        if self.calendar.enabled:
+            assert self.icloud_credentials is not None
+            username, app_password = self.icloud_credentials
+            values["ARIADNE_ICLOUD_USERNAME"] = username
+            values["ARIADNE_ICLOUD_APP_PASSWORD"] = app_password.get_secret_value()
+            values["ARIADNE_CALENDAR_TIMEZONE"] = self.calendar.timezone
+            if self.calendar.default_calendar is not None:
+                values["ARIADNE_CALENDAR_DEFAULT"] = self.calendar.default_calendar
         return values
 
     @property
     def mail_settings(self) -> MailSettings | None:
         if not self.mail.enabled:
             return None
-        assert self.mail.username is not None
-        assert self.mail.app_password is not None
+        assert self.icloud_credentials is not None
+        username, app_password = self.icloud_credentials
         assert self.mail.routes is not None
         return MailSettings(
-            username=self.mail.username,
-            app_password=self.mail.app_password,
+            username=username,
+            app_password=app_password,
             routes=self.mail.routes.resolve(),
             state=self.mail.state.resolve(),
         )
@@ -370,6 +443,12 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
                 ),
             },
         },
+        "icloud": {
+            "username": settings.icloud.username,
+            "app_password": (
+                "<redacted>" if settings.icloud.app_password is not None else None
+            ),
+        },
         "mail": {
             "enabled": settings.mail.enabled,
             "username": settings.mail.username,
@@ -378,6 +457,11 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             ),
             "routes": str(settings.mail.routes) if settings.mail.routes else None,
             "state": str(settings.mail.state),
+        },
+        "calendar": {
+            "enabled": settings.calendar.enabled,
+            "timezone": settings.calendar.timezone,
+            "default_calendar": settings.calendar.default_calendar,
         },
         "telemetry": {
             "enabled": settings.telemetry.enabled,

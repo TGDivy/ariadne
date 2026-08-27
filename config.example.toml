@@ -13,12 +13,19 @@ description = "Iris runs on your own machine and follows The Thread wherever it 
 short_description = "Somewhere between a rainbow and a labyrinth."
 # profile_photo = "~/.config/ariadne/iris.jpg"
 
+[icloud]
+# username = "YOUR_ICLOUD_ADDRESS"
+# app_password = ""
+
 [mail]
 enabled = false
 state = "~/.local/state/ariadne/mail.sqlite3"
-# username = "YOUR_ICLOUD_ADDRESS"
-# app_password = ""
 # routes = "~/.config/ariadne/mail-routes.yaml"
+
+[calendar]
+enabled = false
+timezone = "UTC"
+# default_calendar = "Calendar"
 
 [telemetry]
 enabled = false

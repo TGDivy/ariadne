@@ -56,6 +56,16 @@ MAIL_ACTIVITY = {
     "read_mail": "Reading mail…",
     "read_mail_thread": "Reading mail thread…",
 }
+CALENDAR_ACTIVITY = {
+    "list_calendars": "Checking calendars…",
+    "search_calendar": "Searching the calendar…",
+    "read_calendar_event": "Reading a calendar event…",
+    "calendar_free_busy": "Checking availability…",
+    "create_calendar_event": "Creating a calendar event…",
+    "update_calendar_event": "Updating a calendar event…",
+    "delete_calendar_event": "Deleting a calendar event…",
+    "respond_to_calendar_invitation": "Responding to a calendar invitation…",
+}
 
 
 class TurnInterrupted(Exception):
@@ -72,6 +82,8 @@ def _activity_message(item: object) -> str | None:
             return None
         if item.server == MCP_SERVER_NAME and item.tool in MAIL_ACTIVITY:
             return MAIL_ACTIVITY[item.tool]
+        if item.server == MCP_SERVER_NAME and item.tool in CALENDAR_ACTIVITY:
+            return CALENDAR_ACTIVITY[item.tool]
         return "Using Ariadne's local capability…"
     if isinstance(item, CommandExecutionThreadItem):
         return "Running a command…"

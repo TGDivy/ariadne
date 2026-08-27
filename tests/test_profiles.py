@@ -36,10 +36,20 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert TELEGRAM_PROFILE.thread_policy == "shared"
     assert "triage_current_mail" not in TELEGRAM_PROFILE.enabled_tools
     assert "ARIADNE_TELEGRAM_STATE" in TELEGRAM_PROFILE.mcp_environment_names
-    assert TELEGRAM_PROFILE.enabled_tools[-3:] == (
+    assert TELEGRAM_PROFILE.enabled_tools[-11:-8] == (
         "search_mail",
         "read_mail",
         "read_mail_thread",
+    )
+    assert TELEGRAM_PROFILE.enabled_tools[-8:] == (
+        "list_calendars",
+        "search_calendar",
+        "read_calendar_event",
+        "calendar_free_busy",
+        "create_calendar_event",
+        "update_calendar_event",
+        "delete_calendar_event",
+        "respond_to_calendar_invitation",
     )
 
 
@@ -61,6 +71,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert profile.approval_mode == ApprovalMode.auto_review
     assert profile.writable_roots == (Path.home(),)
     assert "github.com" in profile.network_domains
+    assert "*.icloud.com" in profile.network_domains
     assert profile.allow_local_binding is True
     assert profile.enabled_tools == (
         "runtime_status",
@@ -71,7 +82,19 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
         "search_mail",
         "read_mail",
         "read_mail_thread",
+        "list_calendars",
+        "search_calendar",
+        "read_calendar_event",
+        "calendar_free_busy",
+        "create_calendar_event",
+        "update_calendar_event",
+        "delete_calendar_event",
+        "respond_to_calendar_invitation",
     )
+    assert "Calendar descriptions" in profile.base_instructions
+    assert "untrusted evidence" in profile.base_instructions
+    assert "Calendar writes and deletes" in profile.base_instructions
+    assert "immediately; report what actually changed" in profile.base_instructions
     assert "ariadne.telegram/instructions.md" in profile.base_instruction_sources
     assert "Live web search is enabled." in profile.developer_instructions
 
