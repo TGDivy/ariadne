@@ -35,6 +35,7 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert TELEGRAM_PROFILE.developer_documents == ("grounding", "ariadne")
     assert TELEGRAM_PROFILE.thread_policy == "shared"
     assert "triage_current_mail" not in TELEGRAM_PROFILE.enabled_tools
+    assert "ARIADNE_TELEGRAM_STATE" in TELEGRAM_PROFILE.mcp_environment_names
     assert TELEGRAM_PROFILE.enabled_tools[-3:] == (
         "search_mail",
         "read_mail",
@@ -65,6 +66,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
         "runtime_status",
         "send_telegram_message",
         "react",
+        "ask_telegram_question",
         "prepare_files",
         "search_mail",
         "read_mail",

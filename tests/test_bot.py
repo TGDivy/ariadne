@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import date
+from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -8,7 +9,7 @@ import pytest
 from openai_codex.generated.v2_all import ReasoningEffort
 from telegram import Message
 from telegram.constants import ParseMode
-from telegram.error import TimedOut
+from telegram.error import BadRequest, TimedOut
 
 from ariadne.codex import (
     CodexConversation,
@@ -24,15 +25,15 @@ from ariadne.telegram.bot import (
     NEW_CONVERSATION_MESSAGE,
     NOTHING_TO_STOP_MESSAGE,
     SETTINGS_BUSY_MESSAGE,
-    STEERED_MESSAGE,
-    STEERING_FAILED_MESSAGE,
     STOPPED_MESSAGE,
-    STOPPING_MESSAGE,
+    THINKING_MESSAGE,
     document_message,
     turn_text,
 )
 from ariadne.telegram.bot import AriadneBot as TelegramBot
 from ariadne.telegram.format import TELEGRAM_MESSAGE_LIMIT, split_for_telegram
+from ariadne.telegram.questions import TelegramQuestionStore
+from ariadne.telegram.rich import RICH_MESSAGE_LIMIT, RichBotAPI, RichButton
 
 DEFAULT_SETTINGS = CodexTurnSettings(
     model="gpt-5.6-luna",
@@ -49,15 +50,26 @@ DEFAULT_MODELS = (
 )
 
 
-def AriadneBot(allowed_user_id: int, conversation: CodexConversation) -> TelegramBot:
+def AriadneBot(
+    allowed_user_id: int,
+    conversation: CodexConversation,
+    *,
+    question_state: Path | None = None,
+) -> TelegramBot:
     """Build the bot with the required test credential."""
-    return TelegramBot(allowed_user_id, conversation, bot_token="token-for-test")
+    return TelegramBot(
+        allowed_user_id,
+        conversation,
+        bot_token="token-for-test",
+        question_state=question_state,
+    )
 
 
 class FakeMessage:
     def __init__(self, message_id: int = 11) -> None:
         self.chat_id = 7
         self.message_id = message_id
+        self.message_thread_id: int | None = None
         self.media_group_id: str | None = None
         self.text: str | None = None
         self.caption: str | None = None
@@ -70,6 +82,7 @@ class FakeMessage:
         self.edit_markups: list[object | None] = []
         self.drafts: list[str | None] = []
         self.draft_ids: list[int] = []
+        self.deleted = False
 
     async def reply_text(
         self,
@@ -99,6 +112,10 @@ class FakeMessage:
         self.edit_parse_modes.append(parse_mode)
         self.edit_markups.append(reply_markup)
         return self
+
+    async def delete(self) -> bool:
+        self.deleted = True
+        return True
 
 
 class FakeConversation:
@@ -171,6 +188,7 @@ class BlockingConversation:
         self.steered: list[str] = []
         self.steer_error: Exception | None = None
         self.steer_accepted = True
+        self.failure_after_release: Exception | None = None
 
     async def stream_reply(
         self,
@@ -184,6 +202,8 @@ class BlockingConversation:
         self.started.set()
         yield "Working"
         await self.release.wait()
+        if self.failure_after_release is not None:
+            raise self.failure_after_release
         if self.interrupted:
             raise TurnInterrupted()
         yield "Finished"
@@ -230,9 +250,31 @@ class TimedOutTyping(FakeTyping):
         raise TimedOut
 
 
-class TimedOutDraftMessage(FakeMessage):
-    async def reply_text_draft(self, draft_id: int, text: str | None = None) -> bool:
-        raise TimedOut
+class FakeRichAPI:
+    def __init__(self) -> None:
+        self.live_message = FakeMessage(message_id=90)
+        self.sent: list[dict[str, object]] = []
+        self.edits: list[tuple[str, tuple[RichButton, ...]]] = []
+
+    async def send(self, **kwargs: object) -> FakeMessage:
+        self.sent.append(kwargs)
+        return self.live_message
+
+    async def edit(
+        self,
+        message: Message,
+        markdown: str,
+        *,
+        buttons: tuple[RichButton, ...] = (),
+    ) -> FakeMessage:
+        assert message.message_id == 90
+        self.edits.append((markdown, buttons))
+        return self.live_message
+
+
+class RejectingRichAPI:
+    async def send(self, **_: object) -> FakeMessage:
+        raise BadRequest("Rich Messages unavailable")
 
 
 @pytest.fixture
@@ -241,8 +283,17 @@ def message() -> FakeMessage:
 
 
 @pytest.fixture
-def unthrottled_drafts(monkeypatch) -> None:
-    monkeypatch.setattr(telegram_bot, "DRAFT_INTERVAL_SECONDS", 0.0)
+def unthrottled_live_edits(monkeypatch) -> None:
+    monkeypatch.setattr(telegram_bot, "LIVE_EDIT_INTERVAL_SECONDS", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def isolated_question_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        telegram_bot,
+        "default_question_state_path",
+        lambda: tmp_path / "telegram.sqlite3",
+    )
 
 
 async def test_unauthorized_message_is_ignored(message: FakeMessage, caplog) -> None:
@@ -275,7 +326,7 @@ async def test_file_delivery_uses_the_configured_bot_token(
     )
 
 
-async def test_a_streamed_reply_leaves_only_the_final_answer_behind(
+async def test_a_streamed_reply_edits_one_persistent_message(
     message: FakeMessage, caplog
 ) -> None:
     caplog.set_level(logging.INFO)
@@ -285,13 +336,78 @@ async def test_a_streamed_reply_leaves_only_the_final_answer_behind(
     await bot.handle_text(cast(Message, message), 7, "Say hello")
 
     assert conversation.prompts == [turn_text("Say hello", 11)]
-    assert message.replies == ["Hello, Ariadne!"]
-    assert message.edits == []
-    assert message.draft_ids == [11]
+    assert message.replies == [THINKING_MESSAGE]
+    assert message.edits[-1] == "Hello, Ariadne!"
+    assert message.draft_ids == []
     assert "Telegram message received message_id=11" in caplog.text
     assert "Telegram turn started message_id=11" in caplog.text
     assert "Telegram turn finished message_id=11 status=success" in caplog.text
     assert "Say hello" not in caplog.text
+
+
+async def test_bound_bot_streams_and_finalizes_native_rich_messages(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    conversation = FakeConversation(["## Heading", "## Heading\n\n| A | B |"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    rich = FakeRichAPI()
+    bot._rich_api = cast(RichBotAPI, rich)
+
+    await bot.handle_text(cast(Message, message), 7, "Use native formatting")
+
+    assert message.replies == []
+    assert rich.sent[0]["markdown"] == THINKING_MESSAGE
+    assert rich.sent[0]["reply_to_message_id"] == 11
+    assert rich.sent[0]["buttons"]
+    assert [edit[0] for edit in rich.edits] == [
+        "## Heading",
+        "## Heading\n\n| A | B |",
+        "## Heading\n\n| A | B |",
+    ]
+    assert rich.edits[-1][1] == ()
+
+
+async def test_rich_message_rejection_falls_back_to_classic_streaming(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation(["**Still formatted**"])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    bot._rich_api = cast(RichBotAPI, RejectingRichAPI())
+
+    await bot.handle_text(cast(Message, message), 7, "Fallback safely")
+
+    assert message.replies == [THINKING_MESSAGE]
+    assert message.edits[-1] == "<b>Still formatted</b>"
+    assert message.edit_parse_modes[-1] == ParseMode.HTML
+
+
+async def test_stopping_wins_over_a_racing_rich_completion(
+    message: FakeMessage,
+) -> None:
+    rich = FakeRichAPI()
+    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+
+    await live.stopping()
+
+    with pytest.raises(TurnInterrupted):
+        await live.finish("Finished too late")
+    assert rich.edits[-1][1][0].kind == "disabled"
+
+
+async def test_stopping_preserves_rich_partial_output_beyond_one_message(
+    message: FakeMessage,
+) -> None:
+    rich = FakeRichAPI()
+    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+    partial = "A" * RICH_MESSAGE_LIMIT + "\n\n" + "B" * 100
+
+    await live.stopped(partial)
+
+    assert rich.edits[-1][0] == "A" * RICH_MESSAGE_LIMIT
+    assert rich.edits[-1][1][0].kind == "disabled"
+    assert rich.sent[1]["markdown"].endswith(f"_{STOPPED_MESSAGE}_")
 
 
 async def test_telegram_reply_includes_the_replied_message_text() -> None:
@@ -325,17 +441,18 @@ def test_telegram_reply_uses_the_replied_message_caption() -> None:
     assert "Telegram reply context (message id 10)" in prompt
 
 
-async def test_streamed_text_is_shown_as_an_ephemeral_draft(
-    message: FakeMessage, unthrottled_drafts: None
+async def test_streamed_text_is_shown_as_formatted_message_edits(
+    message: FakeMessage, unthrottled_live_edits: None
 ) -> None:
     conversation = FakeConversation(["Hello", "Hello, Ariadne!"])
     bot = AriadneBot(7, cast(CodexConversation, conversation))
 
     await bot.handle_text(cast(Message, message), 7, "Say hello")
 
-    assert message.drafts[0] is None
-    assert "Hello" in message.drafts
-    assert message.replies == ["Hello, Ariadne!"]
+    assert "Hello" in message.edits
+    assert message.edits[-1] == "Hello, Ariadne!"
+    assert message.drafts == []
+    assert message.replies == [THINKING_MESSAGE]
 
 
 async def test_final_response_uses_rich_telegram_formatting(
@@ -346,12 +463,13 @@ async def test_final_response_uses_rich_telegram_formatting(
 
     await bot.handle_text(cast(Message, message), 7, "Format this")
 
-    assert message.replies == ["<b>C++</b> with <code>std::vector</code>"]
-    assert message.reply_parse_modes == [ParseMode.HTML]
+    assert message.replies == [THINKING_MESSAGE]
+    assert message.edits[-1] == "<b>C++</b> with <code>std::vector</code>"
+    assert message.edit_parse_modes[-1] == ParseMode.HTML
 
 
 async def test_safe_activity_status_is_shown_before_the_answer(
-    message: FakeMessage, unthrottled_drafts: None
+    message: FakeMessage, unthrottled_live_edits: None
 ) -> None:
     conversation = FakeConversation(
         ["The answer"],
@@ -361,8 +479,9 @@ async def test_safe_activity_status_is_shown_before_the_answer(
 
     await bot.handle_text(cast(Message, message), 7, "Research this")
 
-    assert "Searching the web…" in message.drafts
-    assert message.replies == ["The answer"]
+    assert "Searching the web…" in message.edits
+    assert message.edits[-1] == "The answer"
+    assert message.replies == [THINKING_MESSAGE]
 
 
 async def test_an_answer_iris_already_sent_herself_is_not_repeated(
@@ -376,7 +495,8 @@ async def test_an_answer_iris_already_sent_herself_is_not_repeated(
 
     await bot.handle_text(cast(Message, message), 7, "Find my CV")
 
-    assert message.replies == []
+    assert message.replies == [THINKING_MESSAGE]
+    assert message.deleted
 
 
 async def test_a_final_answer_beyond_what_iris_sent_is_still_delivered(
@@ -390,7 +510,8 @@ async def test_a_final_answer_beyond_what_iris_sent_is_still_delivered(
 
     await bot.handle_text(cast(Message, message), 7, "Find my CV")
 
-    assert message.replies == ["Found two. The newer one is from June."]
+    assert message.replies == [THINKING_MESSAGE]
+    assert message.edits[-1] == "Found two. The newer one is from June."
 
 
 async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
@@ -423,8 +544,125 @@ async def test_message_during_an_active_turn_steers_it_instead_of_being_rejected
 
     assert conversation.steered == [turn_text("Actually check the other file too", 11)]
     assert conversation.interrupt_calls == 0
-    assert second_message.replies == [STEERED_MESSAGE]
-    assert first_message.replies == ["Finished"]
+    assert second_message.replies == []
+    assert first_message.replies == [THINKING_MESSAGE]
+    assert first_message.edits[-1] == "Finished"
+
+
+async def test_multiple_live_followups_keep_arrival_order_without_ack_messages() -> (
+    None
+):
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    first_message = FakeMessage(message_id=10)
+    second_message = FakeMessage(message_id=11)
+    third_message = FakeMessage(message_id=12)
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, first_message), 7, "Review the vault")
+    )
+    await conversation.started.wait()
+    await bot.handle_text(cast(Message, second_message), 7, "Check tests too")
+    await bot.handle_text(cast(Message, third_message), 7, "Focus on races")
+    conversation.release.set()
+    await turn
+
+    assert conversation.steered == [
+        turn_text("Check tests too", 11),
+        turn_text("Focus on races", 12),
+    ]
+    assert second_message.replies == []
+    assert third_message.replies == []
+
+
+async def test_typed_question_answer_resumes_the_turn_without_steering(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "questions.sqlite3"
+    store = TelegramQuestionStore(state)
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation), question_state=state)
+    first_message = FakeMessage(message_id=10)
+    answer_message = FakeMessage(message_id=11)
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, first_message), 7, "Plan the deployment")
+    )
+    await conversation.started.wait()
+    question = store.create(7, "Which environment?", ["Staging", "Production"])
+    store.attach_message(question.question_id, 90, rich=True)
+
+    await bot.handle_text(cast(Message, answer_message), 7, "Use canary production")
+
+    answered = store.get(question.question_id)
+    assert answered is not None
+    assert answered.status == "answered"
+    assert answered.answer == "Use canary production"
+    assert answered.answer_source == "text"
+    assert conversation.steered == []
+
+    conversation.release.set()
+    await turn
+
+
+async def test_question_button_is_atomic_and_double_taps_are_idempotent(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "questions.sqlite3"
+    store = TelegramQuestionStore(state)
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation), question_state=state)
+    first_message = FakeMessage(message_id=10)
+    question_message = FakeMessage(message_id=90)
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, first_message), 7, "Deploy this")
+    )
+    await conversation.started.wait()
+    question = store.create(7, "Where?", ["Staging", "Production"])
+    store.attach_message(question.question_id, 90, rich=True)
+
+    selected = bot.handle_question_selection(
+        cast(Message, question_message), 7, question.callback_data(1)
+    )
+    duplicate = bot.handle_question_selection(
+        cast(Message, question_message), 7, question.callback_data(1)
+    )
+
+    assert selected.outcome == "accepted"
+    assert selected.question is not None
+    assert selected.question.answer == "Production"
+    assert duplicate.outcome == "already_answered"
+    assert conversation.steered == []
+
+    conversation.release.set()
+    await turn
+
+
+async def test_stop_cancels_a_question_waiting_inside_the_turn(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "questions.sqlite3"
+    store = TelegramQuestionStore(state)
+    conversation = BlockingConversation()
+    bot = AriadneBot(7, cast(CodexConversation, conversation), question_state=state)
+    active_message = FakeMessage(message_id=10)
+    stop_message = FakeMessage(message_id=11)
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, active_message), 7, "Deploy this")
+    )
+    await conversation.started.wait()
+    question = store.create(7, "Where?", ["Staging", "Production"])
+    store.attach_message(question.question_id, 90, rich=True)
+
+    await bot.handle_stop(cast(Message, stop_message), 7)
+    await turn
+
+    cancelled = store.get(question.question_id)
+    assert cancelled is not None
+    assert cancelled.status == "cancelled"
+    assert conversation.interrupt_calls == 1
 
 
 async def test_reply_context_is_preserved_when_steering_an_active_turn() -> None:
@@ -448,7 +686,7 @@ async def test_reply_context_is_preserved_when_steering_an_active_turn() -> None
     assert "Telegram reply context (message id 10)" in conversation.steered[0]
 
 
-async def test_steering_failure_leaves_the_active_turn_running() -> None:
+async def test_steering_failure_preserves_the_message_as_the_next_turn() -> None:
     conversation = BlockingConversation()
     conversation.steer_error = RuntimeError("Codex refused the steering input")
     bot = AriadneBot(7, cast(CodexConversation, conversation))
@@ -462,12 +700,16 @@ async def test_steering_failure_leaves_the_active_turn_running() -> None:
     await bot.handle_text(cast(Message, second_message), 7, "One more thing")
     conversation.release.set()
     await first_turn
+    assert bot._pending_task is not None
+    await asyncio.wait_for(bot._pending_task, timeout=1)
 
-    assert second_message.replies == [STEERING_FAILED_MESSAGE]
-    assert first_message.replies == ["Finished"]
+    assert second_message.replies == [THINKING_MESSAGE]
+    assert second_message.edits[-1] == "Finished"
+    assert first_message.replies == [THINKING_MESSAGE]
+    assert first_message.edits[-1] == "Finished"
 
 
-async def test_message_sent_before_codex_accepts_the_turn_says_it_is_busy() -> None:
+async def test_message_sent_before_codex_accepts_the_turn_is_not_lost() -> None:
     conversation = BlockingConversation()
     conversation.steer_accepted = False
     bot = AriadneBot(7, cast(CodexConversation, conversation))
@@ -481,10 +723,15 @@ async def test_message_sent_before_codex_accepts_the_turn_says_it_is_busy() -> N
     await bot.handle_text(cast(Message, second_message), 7, "One more thing")
     conversation.release.set()
     await first_turn
+    assert bot._pending_task is not None
+    await asyncio.wait_for(bot._pending_task, timeout=1)
 
     assert conversation.steered == []
-    assert second_message.replies == [BUSY_MESSAGE]
-    assert first_message.replies == ["Finished"]
+    assert len(second_message.replies) == 1
+    assert second_message.replies == [THINKING_MESSAGE]
+    assert second_message.edits[-1] == "Finished"
+    assert first_message.replies == [THINKING_MESSAGE]
+    assert first_message.edits[-1] == "Finished"
 
 
 async def test_new_does_not_interrupt_an_active_turn() -> None:
@@ -521,10 +768,29 @@ async def test_stop_interrupts_the_active_turn_and_frees_the_conversation() -> N
     await bot.handle_new(cast(Message, new_message), 7)
 
     assert conversation.interrupt_calls == 1
-    assert stop_message.replies == [STOPPING_MESSAGE]
-    assert stop_message.edits == [STOPPED_MESSAGE]
-    assert active_message.replies == []
+    assert stop_message.replies == []
+    assert active_message.replies == [THINKING_MESSAGE]
+    assert "Working" in active_message.edits[-1]
+    assert STOPPED_MESSAGE in active_message.edits[-1]
     assert new_message.replies == [NEW_CONVERSATION_MESSAGE]
+
+
+async def test_stop_state_wins_when_question_cancellation_races_a_tool_error() -> None:
+    conversation = BlockingConversation()
+    conversation.failure_after_release = RuntimeError("question tool cancelled")
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    active_message = FakeMessage()
+    stop_message = FakeMessage()
+
+    turn = asyncio.create_task(
+        bot.handle_text(cast(Message, active_message), 7, "First")
+    )
+    await conversation.started.wait()
+    await bot.handle_stop(cast(Message, stop_message), 7)
+    await turn
+
+    assert STOPPED_MESSAGE in active_message.edits[-1]
+    assert FAILURE_MESSAGE not in active_message.edits
 
 
 async def test_stop_when_idle_has_a_clear_response(message: FakeMessage) -> None:
@@ -656,22 +922,6 @@ async def test_typing_timeout_is_logged_without_a_traceback(
     assert timeout_log.exc_info is None
 
 
-async def test_draft_timeout_is_logged_without_a_traceback(caplog) -> None:
-    message = TimedOutDraftMessage()
-    draft = telegram_bot._Draft(cast(Message, message))
-
-    await draft.keep_alive()
-    await draft.keep_alive()
-
-    timeout_logs = [
-        record
-        for record in caplog.records
-        if record.getMessage() == "Telegram draft update timed out; will retry."
-    ]
-    assert len(timeout_logs) == 1
-    assert timeout_logs[0].exc_info is None
-
-
 async def test_long_responses_are_split_at_telegrams_limit(
     message: FakeMessage,
 ) -> None:
@@ -681,7 +931,24 @@ async def test_long_responses_are_split_at_telegrams_limit(
 
     await bot.handle_text(cast(Message, message), 7, "Long answer")
 
-    assert message.replies == ["x" * TELEGRAM_MESSAGE_LIMIT, "x"]
+    assert message.replies == [THINKING_MESSAGE, "x"]
+    assert message.edits[-1] == "x" * TELEGRAM_MESSAGE_LIMIT
+
+
+async def test_response_beyond_the_rich_limit_keeps_rich_chunks(
+    message: FakeMessage,
+) -> None:
+    response = "A" * RICH_MESSAGE_LIMIT + "\n\n" + "B" * 100
+    conversation = FakeConversation([response])
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+    rich = FakeRichAPI()
+    bot._rich_api = cast(RichBotAPI, rich)
+
+    await bot.handle_text(cast(Message, message), 7, "Long rich answer")
+
+    assert len(rich.sent) == 2
+    assert rich.edits[-1][0] == "A" * RICH_MESSAGE_LIMIT
+    assert rich.sent[1]["markdown"] == "B" * 100
 
 
 @pytest.mark.parametrize("separator", ["\n\n", "\n", " "])
@@ -716,8 +983,10 @@ async def test_failed_turn_replies_and_allows_the_next_turn(
     next_message = FakeMessage()
     await bot.handle_text(cast(Message, next_message), 7, "Second")
 
-    assert message.replies == [FAILURE_MESSAGE]
-    assert next_message.replies == ["Recovered"]
+    assert message.replies == [THINKING_MESSAGE]
+    assert message.edits[-1] == FAILURE_MESSAGE
+    assert next_message.replies == [THINKING_MESSAGE]
+    assert next_message.edits[-1] == "Recovered"
     assert conversation.prompts == [turn_text("First", 11), turn_text("Second", 11)]
 
 
