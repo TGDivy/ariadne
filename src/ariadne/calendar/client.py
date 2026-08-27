@@ -389,7 +389,10 @@ class ICloudCalendar:
         if normalized_attendees:
             resource = handle.calendar.save_with_invites(ical, normalized_attendees)
         else:
-            resource = handle.calendar.add_event(ical=ical, no_overwrite=True)
+            # python-caldav implements no_overwrite with a UID lookup that
+            # iCloud rejects with HTTP 412. Each create has a fresh UUID UID,
+            # so bypass that incompatible preflight and perform the PUT.
+            resource = handle.calendar.add_event(ical=ical)
         return event_payload(
             calendar_url=handle.url,
             calendar_name=handle.name,

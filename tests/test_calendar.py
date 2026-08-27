@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time
 
 import pytest
 from caldav import Event as DAVEvent
-from caldav.lib.error import ConsistencyError, NotFoundError
+from caldav.lib.error import ConsistencyError, NotFoundError, PutError
 from icalendar import Calendar, Event, vCalAddress
 
 from ariadne.calendar import CalendarConflict, CalendarError, ICloudCalendar
@@ -276,6 +276,24 @@ def test_create_search_read_update_and_delete_an_event() -> None:
     assert updated["alarms"] == []
     assert deleted["scope"] == "series"
     assert calendar.events_by_uid == {}
+
+
+def test_create_bypasses_icloud_incompatible_no_overwrite_preflight() -> None:
+    class ICloudCalendar(FakeCalendar):
+        def add_event(self, *, ical: str, no_overwrite: bool = False) -> FakeEvent:
+            if no_overwrite:
+                raise PutError("412 Precondition Failed\n\n")
+            return super().add_event(ical=ical)
+
+    client = service(ICloudCalendar("Personal", "personal"))
+
+    created = client.create_event(
+        title="Project review",
+        start="2026-09-02T09:00:00",
+        end="2026-09-02T10:00:00",
+    )
+
+    assert created["title"] == "Project review"
 
 
 def test_all_day_events_keep_exclusive_date_boundaries() -> None:
