@@ -44,6 +44,7 @@ from .rich import (
     close_unterminated_fence,
     incoming_rich_markdown,
     split_rich_markdown,
+    streaming_rich_preview,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -71,6 +72,7 @@ STOPPING_MESSAGE = "Stopping…"
 STOPPED_MESSAGE = "Stopped."
 NOTHING_TO_STOP_MESSAGE = "There isn't an active turn to stop."
 THINKING_MESSAGE = "Thinking…"
+LIVE_ACTIVITY_MARKER = "✦"
 SETTINGS_UNAVAILABLE_MESSAGE = (
     "I couldn't load the available Codex settings. Please try again."
 )
@@ -184,10 +186,14 @@ class _LiveResponse:
         self._rich_api = rich_api
         self._message: Message | None = None
         self._markdown = ""
+        self._body = ""
+        self._activity = THINKING_MESSAGE
+        self._activity_before_stopping = THINKING_MESSAGE
         self._sent_at = 0.0
         self._rich = rich_api is not None
         self._phase = "running"
         self._edit_lock = asyncio.Lock()
+        self._scheduled_edit: asyncio.Task[None] | None = None
 
     @property
     def message_id(self) -> int | None:
@@ -197,7 +203,8 @@ class _LiveResponse:
     async def start(self) -> None:
         """Create an ordinary persistent message with an embedded Stop control."""
         stopping = self._phase == "stopping"
-        markdown = STOPPING_MESSAGE if stopping else THINKING_MESSAGE
+        self._activity = STOPPING_MESSAGE if stopping else THINKING_MESSAGE
+        markdown = self._live_markdown()
         buttons = (self._stopping_button,) if stopping else (self._stop_button,)
         if self._rich_api is not None:
             try:
@@ -207,6 +214,7 @@ class _LiveResponse:
                     reply_to_message_id=self._source.message_id,
                     message_thread_id=getattr(self._source, "message_thread_id", None),
                     buttons=buttons,
+                    disable_interactions=True,
                 )
                 self._markdown = markdown
                 self._sent_at = time.monotonic()
@@ -217,35 +225,89 @@ class _LiveResponse:
                 )
         self._rich = False
         self._message = await self._source.reply_text(
-            markdown,
+            STOPPING_MESSAGE if stopping else THINKING_MESSAGE,
             reply_markup=None if stopping else self._classic_stop_keyboard(),
         )
-        self._markdown = markdown
+        self._markdown = STOPPING_MESSAGE if stopping else THINKING_MESSAGE
         self._sent_at = time.monotonic()
 
     async def show(self, markdown: str, *, force: bool = False) -> None:
         """Edit the live bubble with newly accumulated, natively formatted text."""
         if self._phase != "running":
             return
-        preview = split_rich_markdown(markdown, RICH_MESSAGE_LIMIT - 1_024)[0]
-        if preview == self._markdown:
-            return
-        if not force and time.monotonic() - self._sent_at < LIVE_EDIT_INTERVAL_SECONDS:
-            return
-        await self._edit(preview, buttons=(self._stop_button,), only_while_running=True)
+        preview = streaming_rich_preview(markdown)
+        self._body = preview.markdown
+        self._activity = preview.activity
+        await self._request_live_edit(force=force)
 
     async def show_activity(self, activity: str) -> None:
-        """Show a concise activity until answer text becomes available."""
-        await self.show(activity)
+        """Keep a real activity visible alongside any answer already composed."""
+        if self._phase != "running" or activity == self._activity:
+            return
+        self._activity = activity
+        await self._request_live_edit()
+
+    async def _request_live_edit(self, *, force: bool = False) -> None:
+        """Apply now or coalesce into one trailing edit at Telegram's safe rate."""
+        markdown = self._live_markdown()
+        if markdown == self._markdown:
+            return
+        remaining = LIVE_EDIT_INTERVAL_SECONDS - (time.monotonic() - self._sent_at)
+        if force or remaining <= 0:
+            self._cancel_scheduled_edit()
+            await self._edit(
+                markdown,
+                buttons=(self._stop_button,),
+                disable_interactions=True,
+                only_while_running=True,
+            )
+            return
+        if self._scheduled_edit is None or self._scheduled_edit.done():
+            self._scheduled_edit = asyncio.create_task(self._edit_live_after(remaining))
+
+    async def _edit_live_after(self, delay: float) -> None:
+        """Publish the latest coalesced body and activity after the throttle."""
+        task = asyncio.current_task()
+        try:
+            await asyncio.sleep(delay)
+            await self._edit(
+                self._live_markdown(),
+                buttons=(self._stop_button,),
+                disable_interactions=True,
+                only_while_running=True,
+            )
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._scheduled_edit is task:
+                self._scheduled_edit = None
+
+    def _live_markdown(self) -> str:
+        """Compose the stable rich body with one quiet transient footer."""
+        status = f"> {LIVE_ACTIVITY_MARKER} _{self._activity}_"
+        if not self._body:
+            return status
+        preview = split_rich_markdown(self._body, RICH_MESSAGE_LIMIT - 1_024)[0]
+        return f"{preview}\n\n{status}"
+
+    def _cancel_scheduled_edit(self) -> None:
+        task = self._scheduled_edit
+        self._scheduled_edit = None
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
 
     async def stopping(self) -> None:
         """Disable the control immediately after interruption is requested."""
         if self._phase != "running":
             return
+        self._activity_before_stopping = self._activity
         self._phase = "stopping"
+        self._cancel_scheduled_edit()
+        self._activity = STOPPING_MESSAGE
         await self._edit(
-            self._markdown or STOPPING_MESSAGE,
+            self._live_markdown(),
             buttons=(self._stopping_button,),
+            disable_interactions=True,
         )
 
     async def resume(self) -> None:
@@ -253,20 +315,20 @@ class _LiveResponse:
         if self._phase != "stopping":
             return
         self._phase = "running"
-        await self._edit(
-            self._markdown or THINKING_MESSAGE,
-            buttons=(self._stop_button,),
-            only_while_running=True,
-        )
+        self._activity = self._activity_before_stopping
+        await self._request_live_edit(force=True)
 
     async def stopped(self, partial_response: str) -> None:
         """Preserve useful partial output and mark the message as stopped."""
         self._phase = "terminal"
+        self._cancel_scheduled_edit()
         content = partial_response.strip()
         if content:
             content = close_unterminated_fence(content)
-            content += f"\n\n_{STOPPED_MESSAGE}_"
-        else:
+            content = streaming_rich_preview(content).markdown
+            if content:
+                content += f"\n\n_{STOPPED_MESSAGE}_"
+        if not content:
             content = STOPPED_MESSAGE
         await self._finalize(content, buttons=(self._stopped_button,))
 
@@ -277,6 +339,7 @@ class _LiveResponse:
         if self._phase == "terminal":
             return
         self._phase = "terminal"
+        self._cancel_scheduled_edit()
         await self._finalize(markdown, buttons=())
 
     async def _finalize(self, markdown: str, *, buttons: Sequence[RichButton]) -> None:
@@ -304,11 +367,13 @@ class _LiveResponse:
     async def fail(self) -> None:
         """Turn the existing live bubble into a durable failure notice."""
         self._phase = "terminal"
+        self._cancel_scheduled_edit()
         await self._durable_edit(FAILURE_MESSAGE, buttons=())
 
     async def discard(self) -> None:
         """Remove a placeholder when the agent already sent the same answer."""
         self._phase = "terminal"
+        self._cancel_scheduled_edit()
         if self._message is None:
             return
         async with self._edit_lock:
@@ -323,12 +388,18 @@ class _LiveResponse:
         *,
         buttons: Sequence[RichButton],
         force_rich: bool = False,
+        disable_interactions: bool = False,
         only_while_running: bool = False,
     ) -> None:
         async with self._edit_lock:
             if only_while_running and self._phase != "running":
                 return
-            await self._edit_now(markdown, buttons=buttons, force_rich=force_rich)
+            await self._edit_now(
+                markdown,
+                buttons=buttons,
+                force_rich=force_rich,
+                disable_interactions=disable_interactions,
+            )
 
     async def _edit_now(
         self,
@@ -336,13 +407,17 @@ class _LiveResponse:
         *,
         buttons: Sequence[RichButton],
         force_rich: bool,
+        disable_interactions: bool,
     ) -> None:
         if self._message is None:
             return
         if self._rich and self._rich_api is not None:
             try:
                 self._message = await self._rich_api.edit(
-                    self._message, markdown, buttons=buttons
+                    self._message,
+                    markdown,
+                    buttons=buttons,
+                    disable_interactions=disable_interactions,
                 )
                 self._markdown = markdown
                 self._sent_at = time.monotonic()
@@ -1380,7 +1455,7 @@ class AriadneBot:
         spoken: list[str] = []
 
         async def show_activity(activity: str) -> None:
-            if final_response or self._stopping:
+            if self._stopping:
                 return
             await live.show_activity(activity)
 

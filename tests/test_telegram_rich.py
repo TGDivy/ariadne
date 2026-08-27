@@ -9,6 +9,7 @@ from ariadne.telegram.rich import (
     incoming_rich_markdown,
     rich_markdown,
     split_rich_markdown,
+    streaming_rich_preview,
 )
 
 
@@ -133,6 +134,103 @@ def test_partial_code_fence_is_closed_before_a_button_row() -> None:
     assert payload["markdown"].startswith(
         "```python\nprint('still streaming')\n```\n\n<tg-button-row"
     )
+
+
+def test_streaming_preview_holds_only_structurally_incomplete_tails() -> None:
+    cases = [
+        ("Intro\n\n```python\nprint(1)", "Intro", "code"),
+        ("A **formatted", "A", "formatting"),
+        ("See [the docs](https://exam", "See", "formatting"),
+        ("Value: $x + y", "Value:", "math"),
+        (
+            "Before\n\n<details><summary>Logs</summary>Still loading",
+            "Before",
+            "details",
+        ),
+        (
+            'Before\n\n<tg-map latitude="1" longitude="2">Somewhere',
+            "Before",
+            "map",
+        ),
+    ]
+
+    for source, expected, pending in cases:
+        preview = streaming_rich_preview(source)
+        assert preview.markdown == expected
+        assert preview.pending == pending
+
+
+def test_streaming_table_commits_complete_rows_without_exposing_partial_ones() -> None:
+    header = "| Option | Tradeoff |\n|---|---|\n"
+
+    assert streaming_rich_preview("| Option |").markdown == ""
+    assert streaming_rich_preview(header).markdown == header.rstrip()
+    preview = streaming_rich_preview(header + "| Fast | Less thor")
+    assert preview.markdown == header.rstrip()
+    assert preview.activity == "Building a table…"
+    assert streaming_rich_preview(header + "| Fast | Less thorough |\n").markdown == (
+        header + "| Fast | Less thorough |"
+    )
+
+
+def test_streaming_interactions_are_inert_but_trusted_stop_stays_live() -> None:
+    source = (
+        "See [docs](https://example.com), @iris.\n\n"
+        "![Chart](https://example.com/chart.png)\n\n"
+        '<tg-map latitude="1" longitude="2">Here</tg-map>\n\n'
+        '<tg-button type="callback_data" data="settings:models">'
+        "Change</tg-button>"
+    )
+
+    preview = streaming_rich_preview(source)
+    payload = rich_markdown(
+        preview.markdown,
+        buttons=(RichButton("Stop", "callback_data", "turn:stop"),),
+        disable_interactions=True,
+    )
+
+    assert payload["skip_entity_detection"] is True
+    assert "https://example.com" not in payload["markdown"]
+    assert "Chart available when complete" in payload["markdown"]
+    assert "Map available when complete" in payload["markdown"]
+    assert 'data="settings:models"' not in payload["markdown"]
+    assert '<tg-button type="disabled">Change</tg-button>' in payload["markdown"]
+    assert 'data="turn:stop"' in payload["markdown"]
+
+
+def test_streaming_keeps_code_literal_and_flattens_other_reveal_controls() -> None:
+    source = (
+        "```python\n"
+        'example = "[docs](https://example.com) || unchanged ||"\n'
+        "```\n\n"
+        "A ||spoiler|| and "
+        "<details><summary>More</summary>Hidden text</details>"
+    )
+
+    preview = streaming_rich_preview(source)
+
+    assert "[docs](https://example.com) || unchanged ||" in preview.markdown
+    assert "A spoiler and **More**\n\nHidden text" in preview.markdown
+    assert "<details>" not in preview.markdown
+
+
+def test_terminal_links_and_media_activate_without_trusting_callbacks() -> None:
+    source = (
+        "[docs](https://example.com)\n\n"
+        "![Chart](https://example.com/chart.png)\n\n"
+        '<tg-map latitude="1" longitude="2">Here</tg-map>\n\n'
+        '<tg-button type="callback_data" data="settings:models">'
+        "Change</tg-button>"
+    )
+
+    payload = rich_markdown(source)
+
+    assert "skip_entity_detection" not in payload
+    assert "[docs](https://example.com)" in payload["markdown"]
+    assert "![Chart](https://example.com/chart.png)" in payload["markdown"]
+    assert "<tg-map" in payload["markdown"]
+    assert 'data="settings:models"' not in payload["markdown"]
+    assert '<tg-button type="disabled">Change</tg-button>' in payload["markdown"]
 
 
 def test_classic_limit_no_longer_discards_formatting() -> None:

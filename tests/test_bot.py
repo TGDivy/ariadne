@@ -256,6 +256,7 @@ class FakeRichAPI:
         self.live_message = FakeMessage(message_id=90)
         self.sent: list[dict[str, object]] = []
         self.edits: list[tuple[str, tuple[RichButton, ...]]] = []
+        self.edit_interactions_disabled: list[bool] = []
 
     async def send(self, **kwargs: object) -> FakeMessage:
         self.sent.append(kwargs)
@@ -267,9 +268,11 @@ class FakeRichAPI:
         markdown: str,
         *,
         buttons: tuple[RichButton, ...] = (),
+        disable_interactions: bool = False,
     ) -> FakeMessage:
         assert message.message_id == 90
         self.edits.append((markdown, buttons))
+        self.edit_interactions_disabled.append(disable_interactions)
         return self.live_message
 
 
@@ -357,15 +360,103 @@ async def test_bound_bot_streams_and_finalizes_native_rich_messages(
     await bot.handle_text(cast(Message, message), 7, "Use native formatting")
 
     assert message.replies == []
-    assert rich.sent[0]["markdown"] == THINKING_MESSAGE
+    assert rich.sent[0]["markdown"] == "> ✦ _Thinking…_"
     assert rich.sent[0]["reply_to_message_id"] == 11
     assert rich.sent[0]["buttons"]
+    assert rich.sent[0]["disable_interactions"] is True
     assert [edit[0] for edit in rich.edits] == [
-        "## Heading",
-        "## Heading\n\n| A | B |",
+        "## Heading\n\n> ✦ _Writing…_",
+        "## Heading\n\n> ✦ _Building a table…_",
         "## Heading\n\n| A | B |",
     ]
+    assert rich.edit_interactions_disabled == [True, True, False]
     assert rich.edits[-1][1] == ()
+
+
+async def test_live_activity_coexists_with_body_and_resolves_in_the_same_message(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    rich = FakeRichAPI()
+    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+
+    await live.show("## Finding\n\nThe first result is useful.")
+    await live.show_activity("Reading mail…")
+    await live.show("## Finding\n\nThe first result is useful. The second confirms it.")
+    await live.finish(
+        "## Finding\n\nThe first result is useful. The second confirms it."
+    )
+
+    assert len(rich.sent) == 1
+    assert rich.edits == [
+        (
+            "## Finding\n\nThe first result is useful.\n\n> ✦ _Writing…_",
+            (telegram_bot._LiveResponse._stop_button,),
+        ),
+        (
+            "## Finding\n\nThe first result is useful.\n\n> ✦ _Reading mail…_",
+            (telegram_bot._LiveResponse._stop_button,),
+        ),
+        (
+            "## Finding\n\nThe first result is useful. The second confirms it."
+            "\n\n> ✦ _Writing…_",
+            (telegram_bot._LiveResponse._stop_button,),
+        ),
+        (
+            "## Finding\n\nThe first result is useful. The second confirms it.",
+            (),
+        ),
+    ]
+    assert rich.edit_interactions_disabled == [True, True, True, False]
+
+
+async def test_live_preview_keeps_partial_advanced_block_behind_status(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    rich = FakeRichAPI()
+    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+
+    await live.show(
+        "## Options\n\n| Choice | Cost |\n|---|---|\n| Local | Low |\n| Cloud"
+    )
+
+    assert rich.edits[-1][0] == (
+        "## Options\n\n| Choice | Cost |\n|---|---|\n| Local | Low |"
+        "\n\n> ✦ _Building a table…_"
+    )
+
+
+async def test_live_edit_throttle_publishes_the_latest_real_state(
+    message: FakeMessage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(telegram_bot, "LIVE_EDIT_INTERVAL_SECONDS", 0.01)
+    rich = FakeRichAPI()
+    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+
+    await live.show("A useful partial answer.")
+    await live.show_activity("Searching the web…")
+    await asyncio.sleep(0.03)
+
+    assert [edit[0] for edit in rich.edits] == [
+        "A useful partial answer.\n\n> ✦ _Searching the web…_"
+    ]
+    await live.finish("A useful partial answer.")
+
+
+async def test_stopping_drops_an_unsafe_tail_without_raw_markup(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    rich = FakeRichAPI()
+    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+    partial = "Useful result.\n\n<details><summary>Logs</summary>unfinished"
+
+    await live.stopped(partial)
+
+    assert rich.edits[-1][0] == f"Useful result.\n\n_{STOPPED_MESSAGE}_"
+    assert "<details>" not in rich.edits[-1][0]
 
 
 async def test_rich_message_rejection_falls_back_to_classic_streaming(
@@ -450,7 +541,8 @@ async def test_streamed_text_is_shown_as_formatted_message_edits(
 
     await bot.handle_text(cast(Message, message), 7, "Say hello")
 
-    assert "Hello" in message.edits
+    assert message.edits[0].startswith("Hello\n\n")
+    assert "Writing…" in message.edits[0]
     assert message.edits[-1] == "Hello, Ariadne!"
     assert message.drafts == []
     assert message.replies == [THINKING_MESSAGE]
@@ -480,7 +572,7 @@ async def test_safe_activity_status_is_shown_before_the_answer(
 
     await bot.handle_text(cast(Message, message), 7, "Research this")
 
-    assert "Searching the web…" in message.edits
+    assert any("Searching the web…" in edit for edit in message.edits)
     assert message.edits[-1] == "The answer"
     assert message.replies == [THINKING_MESSAGE]
 

@@ -72,33 +72,80 @@ bubbles, and it does not discard input on a steering exception.
 ## Rich response lifecycle
 
 ```text
-STARTING                     STREAMING                    COMPLETE
-┌──────────────────┐         ┌──────────────────┐         ┌──────────────────┐
-│ Thinking…        │  edit   │ ## Recommendation│  edit   │ ## Recommendation│
-│          [Stop]  │ ──────▶ │                  │ ──────▶ │                  │
-└──────────────────┘         │ | A | B |        │         │ | A | B |        │
-                             │          [Stop]  │         │ final text       │
-                             └──────────────────┘         └──────────────────┘
+STARTING                 TEXT ARRIVES              TOOL AFTER TEXT
+┌────────────────────┐   ┌────────────────────┐   ┌────────────────────┐
+│ ✦ Thinking…       │   │ ## Recommendation  │   │ ## Recommendation  │
+│             [Stop] │ ─▶│ First safe paragraph│ ─▶│ First safe paragraph│
+└────────────────────┘   │                    │   │                    │
+                       │ ✦ Writing…        │   │ ✦ Searching…      │
+                       │             [Stop] │   │             [Stop] │
+                       └────────────────────┘   └────────────────────┘
 
-                                   Stop
-                                     │
-                                     ▼
-                             ┌──────────────────┐
-                             │ useful partial…  │
-                             │ _Stopped._       │
-                             │       [Stopped]  │
-                             └──────────────────┘
+INCOMPLETE TABLE         COMPLETE
+┌────────────────────┐   ┌────────────────────┐
+│ ## Recommendation  │   │ ## Recommendation  │
+│ | A | B |          │   │ | A | B |          │
+│ | 1 | 2 |          │ ─▶│ | 1 | 2 |          │
+│                    │   │ | 3 | 4 |          │
+│ ✦ Building a table…│   │ final text         │
+│             [Stop] │   └────────────────────┘
+└────────────────────┘
+
+Stop at any live state ─▶ useful stable body + _Stopped._ + [Stopped]
 ```
 
-Edits are rate-limited to one per second. Telegram parses every update as Rich
-Markdown, so the user sees rendered structure rather than a stream of literal
-tags. A transiently incomplete Markdown construct leaves the preceding valid
-edit visible until a later update parses.
+The activity footer is independent from the body. A tool event can therefore
+change `Writing…` to `Searching…`, `Reading mail…`, `Running a command…`, or another
+real state after prose has already appeared, without replacing that prose.
+`Analysing…` and `Planning…` come from corresponding Codex events. The stable `✦`
+is intentionally a quiet sparkle rather than a timer-driven animation: labels
+change only when something actually changes.
+
+Telegram's native shimmering `<tg-thinking>` block is restricted to
+`sendRichMessageDraft`. Because that draft transport can make the composer's
+send action unavailable, the persistent path does not use it.
+
+```text
+cumulative model delta ──▶ structural stabilizer ─┬─▶ committed rich body ─┐
+                                                └─▶ pending tail kind    │
+real Codex/tool event ───────────────────────────▶ activity footer     ├─▶ same message ID
+latest state within 1 second ──────────────────────────▶ coalesced edit      ┘
+turn completes ──▶ exact final rich source + active safe interactions; no footer
+```
+
+The stabilizer commits complete paragraphs and table rows, but holds an
+unfinished fence, inline format, link, table row, formula, details block, map,
+or media block. Its footer names an incomplete advanced block (`Writing code…`,
+`Building a table…`, and so on) instead of exposing source tags. Edits are
+rate-limited to one per second with a trailing edit, so the newest real state is
+not lost merely because it arrived inside the throttle window.
+
+Automatic entity detection, links, mentions, dates, spoilers, expandable
+details, media, maps, and model-authored buttons are inert while streaming.
+Media and maps use labelled placeholders. The Stop control is the deliberate
+live exception. On the terminal edit, the exact complete rich source restores
+safe links and structured blocks atomically. Callback data is never trusted
+from model text; Ariadne constructs its own active controls.
 
 One Rich Message accepts 32,768 characters. The live preview uses the first
 safe rich chunk; final answers over the limit are split on block boundaries and
 sent as multiple Rich Messages. The 4,096-character classic limit applies only
 to classic fallback paths.
+
+## Conversation rhythm
+
+The transport can display a report, but the conversation does not default to
+one. Telegram-specific instructions treat the private chat as an ongoing
+relationship and scale the response to the moment:
+
+```text
+“That was a weird day”          ─▶ one natural conversational response
+“When was that meeting again?” ─▶ direct answer, usually no heading
+“Audit the migration options”   ─▶ structured analysis when structure helps
+```
+
+Iris does not routinely restate or formally close the latest message, add a
+heading to casual back-and-forth, or inflate an acknowledgement into a report.
 
 ## Supported presentation
 
@@ -167,7 +214,9 @@ Run these cases in order:
    and affect the active answer without acknowledgement clutter.
 2. Request a response containing a heading, emphasis, a task list, a table,
    fenced code, inline and block math, a footnote, and expandable details.
-   Structure must remain rendered during edits and after completion.
+   Complete structure must remain rendered during edits. Incomplete table rows,
+   code, maths, and details must show a calm labelled state instead of raw tags.
+   Links, details, media, and maps must become active only on completion.
 3. Start a long answer and press the red Stop button. It must immediately become
    disabled, Codex must interrupt, and partial useful text must remain with a
    terminal “Stopped” state.
@@ -185,6 +234,9 @@ Run these cases in order:
 8. To exercise fallback in a test environment, make `sendRichMessage` return a
    Bot API `BadRequest`. The response must continue through classic text with a
    classic Stop keyboard, and question choices must use an inline keyboard.
+9. Send three casual messages such as “ugh, long day”, “that was funny”, and
+   “what do you think?” They should feel like continuing one chat, not three
+   miniature reports with restatements and headings.
 
 Automated coverage for these state transitions lives in `tests/test_bot.py`,
 `tests/test_telegram_rich.py`, `tests/test_telegram_questions.py`, and

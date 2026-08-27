@@ -22,7 +22,9 @@ from openai_codex.generated.v2_all import (
     McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
+    PlanThreadItem,
     ReasoningEffort,
+    ReasoningThreadItem,
     ThreadItem,
     ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification,
@@ -429,6 +431,25 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
     assert "private" not in activities[0]
 
 
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        (
+            ReasoningThreadItem(
+                id="reasoning", content=[], summary=[], type="reasoning"
+            ),
+            "Analysing…",
+        ),
+        (PlanThreadItem(id="plan", text="private plan", type="plan"), "Planning…"),
+    ],
+)
+def test_codex_reasoning_states_have_concise_private_activity_labels(
+    item: object, expected: str
+) -> None:
+    assert conversation_module._activity_message(item) == expected
+    assert "private" not in expected
+
+
 async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     tmp_path: Path, caplog
 ) -> None:
@@ -469,7 +490,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
         )
     ]
 
-    assert activities == ["Using Ariadne's local capability…"]
+    assert activities == ["Preparing files…"]
     assert "private" not in activities[0]
     assert (
         "Codex MCP call started source=telegram server=ariadne "

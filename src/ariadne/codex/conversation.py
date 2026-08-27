@@ -21,14 +21,20 @@ from openai_codex import (
 from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
+    CollabAgentToolCallThreadItem,
     CommandExecutionThreadItem,
     ContextCompactedNotification,
+    DynamicToolCallThreadItem,
     FileChangeThreadItem,
+    ImageGenerationThreadItem,
+    ImageViewThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
     McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
+    PlanThreadItem,
+    ReasoningThreadItem,
     ThreadTokenUsageUpdatedNotification,
     TokenUsageBreakdown,
     TurnCompletedNotification,
@@ -66,6 +72,11 @@ CALENDAR_ACTIVITY = {
     "delete_calendar_event": "Deleting a calendar event…",
     "respond_to_calendar_invitation": "Responding to a calendar invitation…",
 }
+LOCAL_ACTIVITY = {
+    "prepare_files": "Preparing files…",
+    "runtime_status": "Checking Ariadne…",
+    "triage_current_mail": "Triaging mail…",
+}
 
 
 class TurnInterrupted(Exception):
@@ -74,6 +85,10 @@ class TurnInterrupted(Exception):
 
 def _activity_message(item: object) -> str | None:
     """Return a safe, user-facing activity label for a Codex thread item."""
+    if isinstance(item, ReasoningThreadItem):
+        return "Analysing…"
+    if isinstance(item, PlanThreadItem):
+        return "Planning…"
     if isinstance(item, WebSearchThreadItem):
         return "Searching the web…"
     if isinstance(item, McpToolCallThreadItem):
@@ -84,11 +99,21 @@ def _activity_message(item: object) -> str | None:
             return MAIL_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in CALENDAR_ACTIVITY:
             return CALENDAR_ACTIVITY[item.tool]
+        if item.server == MCP_SERVER_NAME and item.tool in LOCAL_ACTIVITY:
+            return LOCAL_ACTIVITY[item.tool]
         return "Using Ariadne's local capability…"
     if isinstance(item, CommandExecutionThreadItem):
         return "Running a command…"
     if isinstance(item, FileChangeThreadItem):
         return "Editing files…"
+    if isinstance(item, ImageViewThreadItem):
+        return "Inspecting an image…"
+    if isinstance(item, ImageGenerationThreadItem):
+        return "Creating an image…"
+    if isinstance(item, DynamicToolCallThreadItem):
+        return "Using a capability…"
+    if isinstance(item, CollabAgentToolCallThreadItem):
+        return "Coordinating work…"
     return None
 
 
