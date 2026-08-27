@@ -33,6 +33,7 @@ from .mail import (
     SuggestedAction,
     record_current_mail_decision,
 )
+from .mcp_errors import install_safe_tool_error_handling
 from .profile import PROFILES
 from .telegram.file_delivery import FileDelivery, FileDeliveryError
 from .telegram.format import split_for_telegram, telegram_messages
@@ -57,6 +58,7 @@ mcp = FastMCP(
     version="0.1.0",
     strict_input_validation=True,
 )
+install_safe_tool_error_handling(mcp)
 
 VARIATION_SELECTOR = "\ufe0f"
 REACTIONS = {
@@ -443,7 +445,11 @@ def _calendar(operation: str, *args: object, **kwargs: object) -> dict[str, Any]
     except RateLimitError as error:
         raise ToolError("iCloud Calendar is temporarily rate limited.") from error
     except Exception as error:
-        LOGGER.exception("iCloud Calendar operation failed: %s", operation)
+        LOGGER.error(
+            "iCloud Calendar operation failed: %s (%s)",
+            operation,
+            type(error).__name__,
+        )
         raise ToolError("iCloud Calendar could not complete that operation.") from error
 
 

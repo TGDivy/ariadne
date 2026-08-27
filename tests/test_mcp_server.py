@@ -5,12 +5,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from caldav.lib.error import PutError
+from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from telegram.constants import ParseMode
 from telegram.error import BadRequest, EndPointNotFound
 
 from ariadne import mcp_server
 from ariadne.mail import MailState
+from ariadne.mcp_errors import DIAGNOSTIC_PREFIX
 from ariadne.mcp_server import (
     ask_telegram_question,
     create_calendar_event,
@@ -187,6 +190,93 @@ def test_calendar_mutations_use_only_configured_account_and_calendar(
         "delete",
         {"id": "calendar-event:new", "scope": "series", "expected_etag": None},
     )
+
+
+async def test_calendar_write_failure_exposes_redacted_provider_diagnostic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FailingCalendar:
+        def __init__(self, username: str, password: str, **_: object) -> None:
+            assert username == "person@example.com"
+            assert password == "calendar-password"
+
+        def __enter__(self) -> "FailingCalendar":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def create_event(self, **_: object) -> dict[str, Any]:
+            raise PutError(
+                "400 Bad Request\n\n"
+                "<error><message>Invalid iCalendar data</message>"
+                "<password>calendar-password</password>"
+                "<username>person@example.com</username>"
+                "<authorization>Basic dGVzdDpzZWNyZXQ=</authorization></error>"
+            )
+
+    monkeypatch.setenv("ARIADNE_ICLOUD_USERNAME", "person@example.com")
+    monkeypatch.setenv("ARIADNE_ICLOUD_APP_PASSWORD", "calendar-password")
+    monkeypatch.setenv("ARIADNE_CALENDAR_TIMEZONE", "Europe/London")
+    monkeypatch.setattr(mcp_server, "ICloudCalendar", FailingCalendar)
+
+    async with Client(mcp) as client:
+        result = await client.call_tool_mcp(
+            "create_calendar_event",
+            {
+                "title": "Review",
+                "start": "2026-09-01T09:00:00",
+                "end": "2026-09-01T10:00:00",
+            },
+        )
+
+    assert result.isError is True
+    text = result.content[0].text
+    diagnostic = json.loads(text.split(DIAGNOSTIC_PREFIX, 1)[1])
+    assert "iCloud Calendar could not complete that operation." in text
+    assert diagnostic == {
+        "exception_type": "PutError",
+        "operation": "create_calendar_event",
+        "http_status": 400,
+        "provider_response_body": (
+            "<error><message>Invalid iCalendar data</message>"
+            "<password>[REDACTED]</password>"
+            "<username>[REDACTED]</username>"
+            "<authorization>[REDACTED]</authorization></error>"
+        ),
+    }
+    assert "calendar-password" not in text
+    assert "person@example.com" not in text
+    assert "dGVzdDpzZWNyZXQ=" not in text
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    [
+        ("send_telegram_message", {"text": " "}),
+        ("create_calendar_event", {"title": "Missing dates"}),
+        ("tool_that_does_not_exist", {}),
+    ],
+)
+async def test_every_raised_mcp_tool_failure_has_a_complete_diagnostic(
+    operation: str, arguments: dict[str, Any]
+) -> None:
+    async with Client(mcp) as client:
+        result = await client.call_tool_mcp(operation, arguments)
+
+    assert result.isError is True
+    text = result.content[0].text
+    diagnostic = json.loads(text.split(DIAGNOSTIC_PREFIX, 1)[1])
+    assert diagnostic.keys() == {
+        "exception_type",
+        "operation",
+        "http_status",
+        "provider_response_body",
+    }
+    assert diagnostic["exception_type"]
+    assert diagnostic["operation"] == operation
+    assert diagnostic["http_status"] is None
+    assert diagnostic["provider_response_body"] is None
 
 
 def test_a_mail_turn_can_record_but_not_execute_its_decision(

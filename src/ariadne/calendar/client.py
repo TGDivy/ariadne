@@ -217,6 +217,7 @@ class ICloudCalendar:
     ) -> tuple[list[dict[str, Any]], list[str]]:
         results: list[dict[str, Any]] = []
         failed = []
+        last_error: Exception | None = None
         for handle in handles:
             try:
                 calendar_results = []
@@ -237,13 +238,19 @@ class ICloudCalendar:
                         )
                     )
                 results.extend(calendar_results)
-            except Exception:
+            except Exception as error:
                 failed.append(handle.name)
+                last_error = error
                 LOGGER.warning(
-                    "Could not search iCloud calendar %s", handle.name, exc_info=True
+                    "Could not search iCloud calendar %s (%s)",
+                    handle.name,
+                    type(error).__name__,
                 )
         if len(failed) == len(handles):
-            raise CalendarError("iCloud could not search any selected calendar.")
+            failure = CalendarError("iCloud could not search any selected calendar.")
+            if last_error is not None:
+                raise failure from last_error
+            raise failure
         return results, failed
 
     def search_events(
