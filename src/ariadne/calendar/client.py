@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from typing import Any, cast
+from urllib.parse import quote, unquote, urljoin, urlsplit
 
 from caldav import DAVClient
 from caldav.lib.error import AuthorizationError, NotFoundError, RateLimitError
@@ -34,6 +35,7 @@ from .models import (
     replace_alarms,
     replace_attendees,
     replace_busy,
+    replace_occurrence,
     replace_recurrence,
     replace_status,
     replace_text,
@@ -286,39 +288,71 @@ class ICloudCalendar:
             "failed_calendars": failed,
         }
 
-    def _series(self, handle: _CalendarHandle, uid: str) -> Any:
+    def _resource_url(self, handle: _CalendarHandle, reference: EventReference) -> str:
+        resource_url = reference.resource_url or urljoin(
+            handle.url,
+            quote(reference.uid.replace("/", "%2F"), safe="") + ".ics",
+        )
+        calendar_parts = urlsplit(handle.url)
+        resource_parts = urlsplit(resource_url)
+        calendar_path = calendar_parts.path.rstrip("/") + "/"
+        resource_name = resource_parts.path.removeprefix(calendar_path)
+        decoded_resource_name = unquote(resource_name)
+        if (
+            resource_parts.scheme.casefold() != calendar_parts.scheme.casefold()
+            or resource_parts.netloc.casefold() != calendar_parts.netloc.casefold()
+            or not resource_parts.path.startswith(calendar_path)
+            or not resource_name
+            or "/" in resource_name
+            or "/" in decoded_resource_name
+            or "\\" in decoded_resource_name
+            or decoded_resource_name in {".", ".."}
+            or resource_parts.query
+            or resource_parts.fragment
+        ):
+            raise CalendarError(
+                "That calendar event id is not valid. Search the calendar again."
+            )
+        return resource_url
+
+    def _series(self, handle: _CalendarHandle, reference: EventReference) -> Any:
         try:
-            resource = handle.calendar.get_event_by_uid(uid)
-            resource.load()
-            return resource
+            resource = handle.calendar.event_by_url(
+                self._resource_url(handle, reference)
+            )
         except NotFoundError as error:
             raise CalendarError(
                 "That calendar event is no longer available. Search again."
             ) from error
+        if str(_component(resource).get("UID", "")).strip() != reference.uid:
+            raise CalendarError(
+                "That calendar event id is not valid. Search the calendar again."
+            )
+        return resource
 
     def _resolve(
         self, reference: EventReference, *, scope: UpdateScope = "occurrence"
     ) -> tuple[_CalendarHandle, Any]:
         handle = self._handle_by_url(reference.calendar_url)
         if scope == "series" or reference.recurrence_id is None:
-            return handle, self._series(handle, reference.uid)
+            return handle, self._series(handle, reference)
         start, end = occurrence_window(reference.recurrence_id, self.timezone)
         resources = handle.calendar.search(
             event=True,
-            uid=reference.uid,
             start=start,
             end=end,
             expand=True,
             split_expanded=True,
         )
-        resource = next(
-            (
-                item
-                for item in resources
-                if recurrence_id(_component(item)) == reference.recurrence_id
-            ),
-            None,
-        )
+        resource = None
+        for item in resources:
+            component = _component(item)
+            if (
+                str(component.get("UID", "")).strip() == reference.uid
+                and recurrence_id(component) == reference.recurrence_id
+            ):
+                resource = item
+                break
         if resource is None:
             raise CalendarError(
                 "That recurrence occurrence is no longer available. Search again."
@@ -336,7 +370,7 @@ class ICloudCalendar:
             return
         actual = getattr(resource, "etag", None)
         if actual is None and reference.recurrence_id is not None:
-            actual = getattr(self._series(handle, reference.uid), "etag", None)
+            actual = getattr(self._series(handle, reference), "etag", None)
         if actual != expected_etag:
             raise CalendarConflict(
                 "The calendar event changed since it was read. "
@@ -439,7 +473,14 @@ class ICloudCalendar:
         if recurrence is not None and scope != "series":
             raise CalendarError("Recurrence rules can only be changed for a series.")
         handle, resource = self._resolve(reference, scope=scope)
-        self._check_etag(handle, resource, reference, expected_etag)
+        master = (
+            self._series(handle, reference)
+            if scope == "occurrence" and reference.recurrence_id is not None
+            else None
+        )
+        self._check_etag(
+            handle, master if master is not None else resource, reference, expected_etag
+        )
         selected_timezone = (
             configured_timezone(timezone)
             if timezone is not None
@@ -471,11 +512,21 @@ class ICloudCalendar:
                 replace_busy(component, busy)
         if attendees and _component(resource).get("ORGANIZER") is None:
             resource.add_organizer()
+        if master is not None:
+            result_component = replace_occurrence(master, _component(resource))
+            master.save()
+            return event_payload(
+                calendar_url=handle.url,
+                calendar_name=handle.name,
+                resource=master,
+                component=result_component,
+            )
         resource.save()
         result_reference = EventReference(
             reference.calendar_url,
             reference.uid,
             reference.recurrence_id if scope == "occurrence" else None,
+            str(resource.url) if getattr(resource, "url", None) is not None else None,
         )
         result_handle, result = self._resolve(result_reference, scope=scope)
         return event_payload(
@@ -494,13 +545,13 @@ class ICloudCalendar:
     ) -> dict[str, str]:
         reference = decode_event_id(value)
         handle, resource = self._resolve(reference, scope=scope)
-        self._check_etag(handle, resource, reference, expected_etag)
         if scope == "occurrence" and reference.recurrence_id is not None:
-            master = self._series(handle, reference.uid)
+            master = self._series(handle, reference)
             self._check_etag(handle, master, reference, expected_etag)
             exclude_occurrence(master, _component(resource))
             master.save()
         else:
+            self._check_etag(handle, resource, reference, expected_etag)
             resource.delete()
         return {
             "status": "deleted",

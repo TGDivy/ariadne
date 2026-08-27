@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import json
 import re
 import uuid
@@ -36,6 +37,7 @@ class EventReference:
     calendar_url: str
     uid: str
     recurrence_id: str | None = None
+    resource_url: str | None = None
 
 
 def _token(prefix: str, payload: object) -> str:
@@ -73,28 +75,54 @@ def decode_calendar_id(value: str) -> str:
 
 
 def encode_event_id(reference: EventReference) -> str:
+    if reference.resource_url is None:
+        # Version 1 ids remain useful for events created before Ariadne began
+        # retaining the CalDAV resource href. Their href can usually be
+        # reconstructed from the UID.
+        return _token(
+            "calendar-event:",
+            [1, reference.calendar_url, reference.uid, reference.recurrence_id],
+        )
     return _token(
         "calendar-event:",
-        [1, reference.calendar_url, reference.uid, reference.recurrence_id],
+        [
+            2,
+            reference.calendar_url,
+            reference.uid,
+            reference.recurrence_id,
+            reference.resource_url,
+        ],
     )
 
 
 def decode_event_id(value: str) -> EventReference:
     payload = _payload(value, "calendar-event:")
-    if (
-        not isinstance(payload, list)
-        or len(payload) != 4
-        or payload[0] != 1
-        or not isinstance(payload[1], str)
-        or not payload[1]
-        or not isinstance(payload[2], str)
-        or not payload[2]
-        or (payload[3] is not None and not isinstance(payload[3], str))
-    ):
-        raise CalendarError(
-            "That calendar event id is not valid. Search the calendar again."
-        )
-    return EventReference(payload[1], payload[2], payload[3])
+    if isinstance(payload, list):
+        if (
+            len(payload) == 4
+            and payload[0] == 1
+            and isinstance(payload[1], str)
+            and payload[1]
+            and isinstance(payload[2], str)
+            and payload[2]
+            and (payload[3] is None or isinstance(payload[3], str))
+        ):
+            return EventReference(payload[1], payload[2], payload[3])
+        if (
+            len(payload) == 5
+            and payload[0] == 2
+            and isinstance(payload[1], str)
+            and payload[1]
+            and isinstance(payload[2], str)
+            and payload[2]
+            and (payload[3] is None or isinstance(payload[3], str))
+            and isinstance(payload[4], str)
+            and payload[4]
+        ):
+            return EventReference(payload[1], payload[2], payload[3], payload[4])
+    raise CalendarError(
+        "That calendar event id is not valid. Search the calendar again."
+    )
 
 
 def configured_timezone(value: str) -> ZoneInfo:
@@ -383,14 +411,18 @@ def event_payload(
     if not uid:
         raise CalendarError("The calendar server returned an event without a UID.")
     occurrence = recurrence_id(component)
-    reference = EventReference(calendar_url, uid, occurrence)
+    raw_resource_url = getattr(resource, "url", None)
+    resource_url = str(raw_resource_url) if raw_resource_url is not None else None
+    reference = EventReference(calendar_url, uid, occurrence, resource_url)
     start, end = event_interval(component)
     all_day = not isinstance(start, datetime)
     status = (_property_text(component, "STATUS") or "CONFIRMED").casefold()
     transparency = (_property_text(component, "TRANSP") or "OPAQUE").upper()
     return {
         "id": encode_event_id(reference),
-        "series_id": encode_event_id(EventReference(calendar_url, uid)),
+        "series_id": encode_event_id(
+            EventReference(calendar_url, uid, resource_url=resource_url)
+        ),
         "calendar_id": encode_calendar_id(calendar_url),
         "calendar": calendar_name,
         "uid": uid,
@@ -577,3 +609,19 @@ def exclude_occurrence(master: Any, occurrence: Event) -> None:
             root.add("EXDATE", recurrence_value, parameters=parameters)
         else:
             root.add("EXDATE", recurrence_value)
+
+
+def replace_occurrence(master: Any, occurrence: Event) -> Event:
+    """Store one recurrence override in an already-loaded series resource."""
+    target = recurrence_id(occurrence)
+    if target is None:
+        raise CalendarError("That event is not a recurrence occurrence.")
+    replacement = copy.deepcopy(occurrence)
+    with master.edit_icalendar_instance() as calendar:
+        calendar.subcomponents = [
+            item
+            for item in calendar.subcomponents
+            if not (isinstance(item, Event) and recurrence_id(item) == target)
+        ]
+        calendar.add_component(replacement)
+    return replacement

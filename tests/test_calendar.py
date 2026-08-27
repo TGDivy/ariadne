@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time
 
 import pytest
 from caldav import Event as DAVEvent
-from caldav.lib.error import ConsistencyError, NotFoundError, PutError
+from caldav.lib.error import ConsistencyError, NotFoundError, PutError, ReportError
 from icalendar import Calendar, Event, vCalAddress
 
 from ariadne.calendar import CalendarConflict, CalendarError, ICloudCalendar
@@ -40,11 +40,13 @@ class FakeEvent:
         *,
         etag: str = '"1"',
         fragment: bool = False,
+        url: str | None = None,
     ) -> None:
         self.calendar = calendar
         self.inner = DAVEvent(data=data)
         self.etag = etag
         self.fragment = fragment
+        self.url = url
 
     @property
     def id(self) -> str | None:
@@ -118,6 +120,7 @@ class FakeCalendar:
         self.url = f"https://caldav.icloud.test/calendars/{suffix}/"
         self.supports_events = supports_events
         self.events_by_uid: dict[str, FakeEvent] = {}
+        self.uid_queries = 0
 
     def get_display_name(self) -> str:
         return self.name
@@ -130,6 +133,7 @@ class FakeCalendar:
         assert resource.id is not None
         if no_overwrite and resource.id in self.events_by_uid:
             raise ConsistencyError("duplicate")
+        resource.url = f"{self.url}{resource.id.replace('@', '%40')}.ics"
         self.events_by_uid[resource.id] = resource
         return resource
 
@@ -144,10 +148,21 @@ class FakeCalendar:
         return self.add_event(ical=parsed.to_ical().decode(), no_overwrite=True)
 
     def get_event_by_uid(self, uid: str) -> FakeEvent:
+        self.uid_queries += 1
         try:
             return self.events_by_uid[uid]
         except KeyError as error:
             raise NotFoundError(uid) from error
+
+    def event_by_url(self, href: str, data: str | None = None) -> FakeEvent:
+        del data
+        resource = next(
+            (item for item in self.events_by_uid.values() if item.url == str(href)),
+            None,
+        )
+        if resource is None:
+            raise NotFoundError(str(href))
+        return resource.load()
 
     def search(
         self,
@@ -160,6 +175,8 @@ class FakeCalendar:
         uid: str | None = None,
     ) -> list[FakeEvent]:
         assert event and expand and split_expanded
+        if uid is not None:
+            self.uid_queries += 1
         resources = []
         for resource in self.events_by_uid.values():
             if uid is not None and resource.id != uid:
@@ -175,6 +192,7 @@ class FakeCalendar:
                             _calendar_with(occurrence),
                             etag=resource.etag,
                             fragment=True,
+                            url=resource.url,
                         )
                     )
                 continue
@@ -219,8 +237,14 @@ def service(*calendars: FakeCalendar, default: str | None = None) -> ICloudCalen
 
 def test_calendar_ids_are_opaque_and_reject_malformed_values() -> None:
     reference = EventReference("https://caldav.icloud.test/personal/", "uid-1")
+    href_reference = EventReference(
+        "https://caldav.icloud.test/personal/",
+        "uid-1",
+        resource_url="https://caldav.icloud.test/personal/server-name.ics",
+    )
 
     assert decode_event_id(encode_event_id(reference)) == reference
+    assert decode_event_id(encode_event_id(href_reference)) == href_reference
     with pytest.raises(CalendarError, match="not valid"):
         decode_event_id("calendar-event:not-base64")
 
@@ -294,6 +318,93 @@ def test_create_bypasses_icloud_incompatible_no_overwrite_preflight() -> None:
     )
 
     assert created["title"] == "Project review"
+
+
+def test_event_operations_bypass_icloud_incompatible_uid_reports() -> None:
+    class ICloudCalendar(FakeCalendar):
+        def get_event_by_uid(self, uid: str) -> FakeEvent:
+            self.uid_queries += 1
+            raise ReportError(f"412 Precondition Failed while finding {uid}")
+
+    calendar = ICloudCalendar("Personal", "personal")
+    client = service(calendar)
+    created = client.create_event(
+        title="Temporary probe",
+        start="2026-09-02T09:00:00",
+        end="2026-09-02T10:00:00",
+    )
+    legacy_id = encode_event_id(EventReference(calendar.url, created["uid"]))
+
+    read = client.read_event(legacy_id)
+    updated = client.update_event(
+        legacy_id, expected_etag=read["etag"], title="Updated probe"
+    )
+    deleted = client.delete_event(legacy_id, expected_etag=updated["etag"])
+
+    assert read["title"] == "Temporary probe"
+    assert updated["title"] == "Updated probe"
+    assert deleted["status"] == "deleted"
+    assert calendar.uid_queries == 0
+    assert calendar.events_by_uid == {}
+
+
+def test_event_ids_retain_an_opaque_server_resource_href() -> None:
+    calendar = FakeCalendar("Personal", "personal")
+    client = service(calendar)
+    created = client.create_event(
+        title="Server-named resource",
+        start="2026-09-02T09:00:00",
+        end="2026-09-02T10:00:00",
+    )
+    resource = calendar.events_by_uid[created["uid"]]
+    resource.url = f"{calendar.url}opaque-server-name.ics"
+
+    found = client.search_events("2026-09-01", "2026-09-03")["events"][0]
+    reference = decode_event_id(found["id"])
+
+    assert reference.resource_url == resource.url
+    assert client.read_event(found["id"])["title"] == "Server-named resource"
+
+
+def test_event_ids_cannot_address_resources_outside_the_calendar() -> None:
+    calendar = FakeCalendar("Personal", "personal")
+    client = service(calendar)
+    forged = encode_event_id(
+        EventReference(
+            calendar.url,
+            "uid-1",
+            resource_url="https://caldav.icloud.test/calendars/other/event.ics",
+        )
+    )
+
+    with pytest.raises(CalendarError, match="event id is not valid"):
+        client.read_event(forged)
+
+
+def test_event_ids_cannot_substitute_another_events_resource_href() -> None:
+    calendar = FakeCalendar("Personal", "personal")
+    client = service(calendar)
+    first = client.create_event(
+        title="First",
+        start="2026-09-02T09:00:00",
+        end="2026-09-02T10:00:00",
+    )
+    second = client.create_event(
+        title="Second",
+        start="2026-09-02T11:00:00",
+        end="2026-09-02T12:00:00",
+    )
+    second_resource = calendar.events_by_uid[second["uid"]]
+    forged = encode_event_id(
+        EventReference(
+            calendar.url,
+            first["uid"],
+            resource_url=second_resource.url,
+        )
+    )
+
+    with pytest.raises(CalendarError, match="event id is not valid"):
+        client.read_event(forged)
 
 
 def test_all_day_events_keep_exclusive_date_boundaries() -> None:
@@ -392,6 +503,7 @@ def test_recurring_search_returns_occurrences_and_can_delete_only_one() -> None:
         "Weekly planning",
     ]
     assert deleted["scope"] == "occurrence"
+    assert calendar.uid_queries == 0
     assert [event["recurrence_id"] for event in after["events"]] == [
         "2026-09-01T09:00:00+01:00",
         "2026-09-15T09:00:00+01:00",
