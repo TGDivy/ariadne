@@ -17,6 +17,7 @@ from ariadne.codex import (
     CodexTurnSettings,
     TurnInterrupted,
 )
+from ariadne.prompt import THREAD_PUSH_PERMISSION
 from ariadne.telegram import bot as telegram_bot
 from ariadne.telegram.bot import (
     BUSY_MESSAGE,
@@ -427,7 +428,7 @@ async def test_telegram_reply_includes_the_replied_message_text() -> None:
         "</quoted_message>\n\n"
         "What does this mean?\n\n"
         "Telegram message id: 11"
-        "\n\nI give you permission to push to Threads."
+        f"\n\n{THREAD_PUSH_PERMISSION}"
     ]
 
 
