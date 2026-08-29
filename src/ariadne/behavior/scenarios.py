@@ -6,7 +6,7 @@ from email.message import EmailMessage
 
 from ariadne.mail import MailRoute
 
-from .models import BehaviorScenario, ScenarioFile
+from .models import BehaviorScenario, ScenarioFile, ScenarioKnowledge
 
 ROUTES = """\
 version: 1
@@ -102,6 +102,27 @@ marathon comfortably. No race is currently recorded.
 """,
         ),
     ),
+    knowledge=(
+        ScenarioKnowledge(
+            id="person:divy",
+            title="Divy",
+            kind="person",
+            body=(
+                "Lives near Southwark in London. Likes M&S for practical "
+                "breakfast food."
+            ),
+        ),
+        ScenarioKnowledge(
+            id="goal:running",
+            title="Running",
+            kind="goal",
+            body=(
+                "Divy is building consistency and wants to complete a half marathon "
+                "comfortably. No race is currently recorded."
+            ),
+            aliases=("half marathon goal",),
+        ),
+    ),
     review_questions=(
         "Did Iris treat the booking as a commitment rather than merely summarise it?",
         "Did she inspect the relevant existing context and preserve useful new "
@@ -162,6 +183,28 @@ selected itinerary, not a booked-train restriction.
         ScenarioFile(
             "Goals/Running.md",
             "# Running\n\nComplete the Windsor half marathon comfortably.\n",
+        ),
+    ),
+    knowledge=(
+        ScenarioKnowledge(
+            id="plan:windsor-trail-run-2026-08",
+            title="Windsor Trail Run — 30 August 2026",
+            kind="plan",
+            state="confirmed",
+            starts_at="2026-08-30T09:20:00+01:00",
+            body=(
+                "The half marathon starts at 09:20 at Alexandra Gardens, Windsor. "
+                "Collect the bib before the race. Transport is not arranged yet. "
+                "Breakfast, fuel, packing, and recovery remain open."
+            ),
+            aliases=("Windsor half marathon",),
+            related=(("goal:running", "supports"),),
+        ),
+        ScenarioKnowledge(
+            id="goal:running",
+            title="Running",
+            kind="goal",
+            body="Complete the Windsor half marathon comfortably.",
         ),
     ),
     review_questions=(

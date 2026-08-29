@@ -37,11 +37,13 @@ name, personality, model, reasoning effort, and web-search setting are used, but
 its service credentials still are not forwarded to the run.
 
 Each run creates a disposable Git-backed Thread containing only synthetic
-fixtures. Telegram delivery, file delivery, and mail triage are replaced with
-harmless capabilities that preserve the production tool contracts and record
-their calls. Real Telegram, mail, calendar, and Thread credentials are not
-passed to the scenario MCP process. The Codex workspace is writable only inside
-the disposable scenario directory and shell network domains are empty.
+fixtures. Telegram delivery, file delivery, mail triage, and semantic knowledge
+are replaced with harmless capabilities that preserve the production tool
+contracts and record their calls. The knowledge substitute starts with the
+scenario's synthetic records and writes only its temporary state. Real
+Telegram, mail, calendar, and Thread credentials are not passed to the scenario
+MCP process. The Codex workspace is writable only inside the disposable
+scenario directory and shell network domains are empty.
 
 The fake capabilities are explicitly annotated as closed-world and harmless.
 Their only effect is appending to the temporary call record, so they do not need
@@ -68,6 +70,7 @@ The initial stories are the two halves of the Windsor example:
 - `train-confirmation`: connect transport to the existing race, preserve the
   flexible return, and notice the tight arrival window.
 
-These first runs should make current capability gaps visible. In particular,
-the production mail profile still lacks calendar and knowledge capabilities;
-the lab does not pretend otherwise.
+These first runs should make current capability gaps visible. The scenario
+profile now exposes the five semantic knowledge operations so prompt work can
+be exercised against their exact contracts. The production mail profile still
+does not enable them, and neither profile is cut over from the Thread yet.

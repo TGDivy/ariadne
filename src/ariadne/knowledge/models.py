@@ -1,0 +1,189 @@
+"""Semantic models for Ariadne's private knowledge records."""
+
+from __future__ import annotations
+
+import re
+from datetime import date, datetime
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+Identifier = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=3,
+        max_length=160,
+        pattern=r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)+$",
+    ),
+]
+Kind = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=48,
+        pattern=r"^[a-z][a-z0-9_-]*$",
+    ),
+]
+Label = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z][a-z0-9_-]*$",
+    ),
+]
+
+_DATE_OR_DATETIME = re.compile(
+    r"^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?)?$"
+)
+
+
+class KnowledgeRelation(BaseModel):
+    """One directed, labelled connection to another record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    record: Identifier
+    relation: Label
+
+
+class KnowledgeSource(BaseModel):
+    """Opaque provenance for a fact or change."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    observed_at: datetime | None = None
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_aware_observed_at(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("observed_at must include a timezone.")
+        return value
+
+
+class KnowledgeMetadata(BaseModel):
+    """The common front matter shared by every managed Markdown record."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: Literal[1] = Field(default=1, alias="schema")
+    id: Identifier
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    kind: Kind
+    state: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] | None
+    ) = None
+    aliases: tuple[
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)], ...
+    ] = ()
+    starts_at: str | None = None
+    ends_at: str | None = None
+    related: tuple[KnowledgeRelation, ...] = ()
+    created_at: datetime
+    updated_at: datetime
+    sources: tuple[KnowledgeSource, ...] = ()
+
+    @field_validator("aliases")
+    @classmethod
+    def unique_aliases(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        folded = [value.casefold() for value in values]
+        if len(folded) != len(set(folded)):
+            raise ValueError("Aliases must be unique within a record.")
+        return values
+
+    @field_validator("starts_at", "ends_at")
+    @classmethod
+    def validate_date_or_datetime(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not _DATE_OR_DATETIME.fullmatch(value):
+            raise ValueError("Use an ISO 8601 date or timezone-aware date-time.")
+        try:
+            if "T" in value:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    raise ValueError
+            else:
+                date.fromisoformat(value)
+        except ValueError as error:
+            raise ValueError(
+                "Use a valid ISO 8601 date or timezone-aware date-time."
+            ) from error
+        return value
+
+    @field_validator("updated_at")
+    @classmethod
+    def require_aware_updated_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("updated_at must include a timezone.")
+        return value
+
+    @field_validator("created_at")
+    @classmethod
+    def require_aware_created_at(cls, value: datetime) -> datetime:
+        if value.tzinfo is None:
+            raise ValueError("created_at must include a timezone.")
+        return value
+
+
+class KnowledgeRecord(BaseModel):
+    """A complete semantic record returned to Iris."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metadata: KnowledgeMetadata
+    body: str
+    revision: str
+    incoming: tuple[KnowledgeRelation, ...] = ()
+
+    def public_payload(self) -> dict[str, object]:
+        payload = self.metadata.model_dump(mode="json", by_alias=True)
+        payload.update(
+            {
+                "body": self.body,
+                "revision": self.revision,
+                "incoming": [
+                    relation.model_dump(mode="json") for relation in self.incoming
+                ],
+            }
+        )
+        return payload
+
+
+class KnowledgeSearchResult(BaseModel):
+    """A compact search candidate with enough context to choose a read."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: Identifier
+    title: str
+    kind: Kind
+    state: str | None
+    starts_at: str | None
+    ends_at: str | None
+    related: tuple[Identifier, ...]
+    revision: str
+    excerpt: str
+    matched_by: tuple[str, ...]
+
+
+class KnowledgeError(RuntimeError):
+    """Base class for stable knowledge capability failures."""
+
+
+class KnowledgeConflict(KnowledgeError):
+    """A requested write conflicts with newer knowledge."""
+
+
+class KnowledgeValidationError(KnowledgeError):
+    """Stored or proposed knowledge does not satisfy the record contract."""
+
+
+class KnowledgeSyncError(KnowledgeError):
+    """The private knowledge repository cannot be synchronized safely."""

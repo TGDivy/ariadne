@@ -1,0 +1,342 @@
+# A first-class knowledge capability
+
+Status: accepted direction and contract for implementation slice 2
+
+## The change we want
+
+The Thread should remain private Markdown with Git history, but Iris should no
+longer experience remembering as editing and publishing a repository.
+
+Today a meaningful turn asks Iris to discover filenames, infer folder rules,
+edit Markdown directly, stage a Git index, commit, push, and report that work.
+This leaks storage machinery into her reasoning and speech. It also makes an
+ordinary act such as remembering Divy's address look to Codex like a sensitive
+source-code publication.
+
+The new boundary is:
+
+```text
+Iris                              Ariadne
+
+search / read / create      ->    resolve stable records and relationships
+update / archive            ->    validate and write Markdown atomically
+semantic result             <-    commit and synchronise the private Git store
+```
+
+Iris thinks in people, plans, goals, work, preferences, dated events, and
+scratch material. Ariadne owns paths, front matter, locking, validation, Git,
+and recovery from operational failures. Routine knowledge maintenance should
+not appear in Telegram messages.
+
+This is not a general document platform, graph database, personal CRM, or
+workflow engine. It is the smallest strong personal-memory interface that
+makes the current Thread easier for Iris to use correctly.
+
+## What the current Thread tells us
+
+The current vault has roughly forty Markdown records. It already contains:
+
+- a root routing document;
+- Divy's profile and one canonical record per known person;
+- groups, plans, projects, tasks, journals, experiments, and archive material;
+- folder guides alongside ordinary records;
+- sparse front matter on newer documents and no stable identity on many older
+  ones;
+- useful Markdown links, but relationships also expressed only in prose;
+- date, state, source, and next-action information in several different shapes.
+
+This is enough diversity to design against reality, but far below a scale that
+needs distributed search, embeddings, a graph database, or a second durable
+store. Hundreds of files—and likely fewer than one thousand for some time—fit
+comfortably in one local scan and an in-memory full-text index.
+
+The existing folders are useful evidence, not the public API and not a taxonomy
+we must preserve forever.
+
+## Representative stories
+
+### A person is mentioned
+
+Divy mentions Lily. Iris searches by name or alias, reads the canonical person
+record and its most relevant relationships, and answers with the existing
+context in mind. If the conversation adds a durable fact or changes an open
+loop, Iris updates that same stable record. She does not need to know whether
+it currently lives under friends, colleagues, or somewhere else.
+
+### A race confirmation arrives
+
+Iris searches for Windsor, the organiser, and the event date. If no record
+exists, she creates a confirmed plan related to the running goal. Ariadne
+automatically preserves the triggering mail as provenance. Iris can record the
+commitment and unresolved preparation without finding a folder or publishing a
+Git commit herself.
+
+### Train tickets arrive later
+
+The search returns the Windsor plan. Iris reads its current revision, updates
+transport on that record, preserves the flexible return, and relates any new
+travel detail rather than creating an unrelated duplicate. A stale revision is
+rejected instead of silently overwriting a concurrent update.
+
+### A thought is not ready
+
+Iris creates a `scratch` record for incomplete research or a tentative idea. It
+survives restarts and is searchable, but is clearly not settled knowledge. If
+it becomes useful, Iris updates its kind, state, and relationships; Ariadne
+moves it if storage layout warrants that. If it becomes noise, Iris archives
+it. Scratch is a record state with an honest meaning, not a second storage
+system.
+
+### Quiet maintenance
+
+A later background turn can search for scratch material, stale states, missing
+relationships, or likely duplicates; read the small candidate set; and use the
+same update/archive operations. We do not need a special knowledge-cleaning
+engine.
+
+## A small record envelope
+
+Every managed Markdown record has a compact front matter envelope and a normal
+Markdown body. The common fields should be useful across record kinds:
+
+```yaml
+---
+schema: 1
+id: plan:windsor-trail-run-2026-08
+title: Windsor Trail Run — August 2026
+kind: plan
+state: confirmed
+aliases:
+  - Windsor half marathon
+starts_at: 2026-08-30
+ends_at: 2026-08-30
+related:
+  - record: goal:running
+    relation: supports
+created_at: 2026-08-29T10:04:00Z
+updated_at: 2026-08-29T14:31:00Z
+sources:
+  - source: mail:opaque-event-id
+    observed_at: 2026-08-29T10:04:00Z
+---
+```
+
+- `id` is stable when a title, kind, or file path changes. New IDs can be
+  readable slugs with a collision suffix generated by Ariadne.
+- `kind` is a normalized, extensible name rather than an enum containing every
+  life concept we can imagine now.
+- `state`, `starts_at`, and `ends_at` are optional but standardized when they
+  apply. Kind-specific detail remains in good Markdown until repeated retrieval
+  failures justify more structure.
+- `aliases` make names, nicknames, old project names, and common references
+  directly retrievable.
+- `related` creates directed labelled relationships. Retrieval can traverse
+  both incoming and outgoing edges without storing a mirrored copy in both
+  records.
+- timestamps and trigger provenance are maintained by Ariadne. Iris may add a
+  verified web URL or another semantic source, but does not invent internal
+  message IDs or edit history fields.
+
+Folder guides and core orientation documents can be managed records too. A
+record's body remains pleasant to read on GitHub and useful without Ariadne.
+
+This envelope deliberately does not define separate schemas for person, plan,
+commitment, goal, project, preference, or event yet. Those concepts can become
+more strongly typed when a real operation needs validation or querying that the
+common envelope and Markdown cannot provide.
+
+## The model-facing operations
+
+The first interface needs five operations.
+
+### `search_knowledge`
+
+Accepts ordinary query text plus optional `kinds`, `states`, date bounds,
+`related_to`, and a small result limit. It returns compact candidates containing
+stable ID, title, kind, state, relevant dates, relationship IDs, revision, and a
+short matched excerpt. Each result explains whether it matched an ID, title,
+alias, metadata field, or body text.
+
+An empty text query is allowed only with a filter, for example current scratch
+records or confirmed plans this week. This supports inspection without making
+"list every piece of knowledge" the normal retrieval path.
+
+### `read_knowledge`
+
+Reads a bounded list of stable IDs and returns their complete metadata, body,
+and opaque revision. Paths and Git details are not returned. Incoming and
+outgoing relationship summaries are included so Iris can choose which nearby
+records deserve a second read.
+
+### `create_knowledge`
+
+Creates one record with title, kind, body, and optional state, aliases, dates,
+relationships, and explicit external sources. Ariadne assigns the stable ID,
+timestamps, storage location, active-trigger provenance, and initial revision.
+
+Before creating a durable record, Iris should search for an existing canonical
+one. The service rejects an exact ID/alias collision but does not attempt to
+decide whether two vaguely similar life events are secretly the same.
+
+### `update_knowledge`
+
+Updates one record by stable ID and expected revision. Fields not supplied stay
+unchanged; an explicit empty value clears an optional field. The operation may
+change title, kind, state, aliases, dates, relationships, and body. Ariadne
+updates timestamps and provenance and chooses whether a kind change warrants a
+file move.
+
+The opaque revision is a concurrency boundary, not a Git hash. Iris receives it
+from search/read and passes it back. If another turn changed the record first,
+the tool asks Iris to read the new version and reconsider rather than merging
+two narratives mechanically.
+
+### `archive_knowledge`
+
+Archives a record by ID and expected revision, with a short semantic reason.
+Archived material remains searchable when explicitly requested and retains its
+history. Hard deletion is not needed for the first useful slice; incorrect
+facts can be corrected, and stale records can be archived.
+
+`scratch` uses these same operations. Promotion is an update from `scratch` to
+the appropriate durable kind, not a separate tool family.
+
+## Retrieval without a second source of truth
+
+On first use, the knowledge service scans managed Markdown and builds an
+in-memory SQLite FTS5 index. It invalidates and rebuilds after a write. At the
+expected scale, rebuilding from canonical files is cheap and removes an entire
+class of cache synchronization problems. We should benchmark this assumption
+against a generated one-thousand-record fixture.
+
+Telegram and background turns can have separate long-lived MCP processes. Each
+search/read therefore compares the indexed Git HEAD with the current knowledge
+HEAD and rebuilds when another process has committed a change. The index never
+assumes that its own process is the only writer.
+
+Ranking should remain understandable:
+
+1. exact stable ID;
+2. exact title or alias;
+3. weighted full-text relevance across title, aliases, metadata, and body;
+4. explicit filters and relationship traversal.
+
+There is no hidden recency boost, inferred importance score, or embedding
+reranker in the first version. Dates and state affect results only when the
+caller asks. Search results say why they matched, which gives us useful evidence
+when retrieval fails.
+
+Relationships are navigation, not a graph product. `related_to` finds records
+with a direct incoming or outgoing edge. Iris can follow another hop with a new
+read or search when it genuinely matters; the service does not dump an entire
+connected component into context.
+
+## Hidden Markdown and Git work
+
+All mutations use one local lock shared by Telegram, mail, and future trigger
+processes. Inside it, Ariadne:
+
+1. checks that the knowledge worktree has no unmanaged changes;
+2. synchronises by fast-forward only;
+3. validates the requested record and every referenced ID;
+4. writes through a temporary file and atomic rename;
+5. stages only the files owned by the operation;
+6. creates a concise internal commit and pushes it;
+7. returns the semantic record and new revision.
+
+It never auto-merges diverged narratives, stages unrelated files, force-pushes,
+or silently changes to a different store. A synchronization or validation
+failure is one failed knowledge operation with a stable public error; exact Git
+diagnostics belong in private operational logs. Iris should not turn those
+details into a Telegram status report.
+
+A push can fail after a local commit exists. The commit itself is the durable
+retry state: the next operation first attempts to push an existing local-ahead
+commit. We do not need an additional queue or transaction ledger. A
+non-fast-forward remote remains an explicit operator conflict rather than an
+automatic merge.
+
+## Prompt and runtime changes
+
+Once the existing Thread has been migrated and validated:
+
+- remove the Thread-push suffix from Telegram and mail user messages;
+- replace Git/folder instructions in the personality, grounding, and mail
+  documents with a short description of semantic knowledge behaviour;
+- tell Iris to search when a named person, plan, project, goal, preference, or
+  prior decision may materially affect the turn;
+- tell Iris to maintain durable context without narrating routine knowledge
+  operations;
+- expose the five operations to both Telegram and background profiles;
+- stop making the Thread repository the Codex working directory;
+- stop exposing vault paths and Git state through `runtime_status`.
+
+Ariadne still needs a normal working directory for shell, file, code, and
+artifact tasks. That directory is separate from knowledge storage.
+
+The non-knowledge workspace choice belongs to the later runtime cutover. It is
+intentionally not settled by the storage capability because neither choice
+changes its contract.
+
+The knowledge root remains in private Ariadne configuration and is passed only
+to the knowledge server. It is not placed in model instructions, tool results,
+or event messages.
+
+Trigger provenance also comes from Ariadne rather than a model argument. A mail
+process already has a stable job identity. Telegram can expose the current
+turn's message identities through a small runtime-owned context file updated
+before the turn; the knowledge process reads that context while holding the
+same turn boundary. Steering may add another source message, but cannot make
+email content or another external document into authority.
+
+## Migrating the current Thread
+
+We should not carry a permanent "legacy Markdown" branch through every read and
+write. The current size makes a one-time migration practical.
+
+A migration command can:
+
+1. inventory every Markdown file and validate existing front matter;
+2. propose stable IDs, kinds, titles, aliases, and current paths without
+   modifying anything;
+3. report duplicate IDs/aliases, broken Markdown links, and ambiguous files;
+4. write an inspectable migration patch when explicitly applied;
+5. validate that every managed Markdown record can be loaded and searched;
+6. commit and push that one migration through the same store boundary.
+
+Existing paths do not need a mass reorganization. Stable IDs remove path names
+from the model contract, so Ariadne can preserve the current human-readable
+layout and choose sensible locations for new records. Later moves become cheap
+and do not break relationships.
+
+Migration treats every Markdown file as a managed record, including guides,
+proposals, and experiment READMEs. Non-Markdown artifacts may remain attached
+to or referenced by a record. This keeps the rule visible and avoids a hidden
+class of documents Iris can only reach through filesystem knowledge.
+
+## Current implementation boundary
+
+The first focused implementation PR proves the storage and retrieval boundary,
+not companion judgement at the same time:
+
+- record parsing, validation, stable revisions, and atomic writes;
+- ranked/filterable search over a generated thousand-record fixture;
+- relationship-aware reads;
+- create, update, and archive with an isolated local Git remote in tests;
+- the five MCP operations with semantic descriptions and safe private-action
+  annotations;
+- an inspect-only migration report against a representative copy of the current
+  Thread structure;
+- fake knowledge operations in the race and train behaviour scenarios;
+- no production prompt/cwd cutover until migration output has been reviewed.
+
+That gives us an observable proof: the train scenario should find and update the
+existing race by stable ID, while its report contains no shell file edits, Git
+attempts, or storage-failure Telegram message. It does not yet need calendar or
+web research to pass this slice.
+
+These are boundaries for the current slice, not permanent policy: the live
+Thread migration and prompt/runtime cutover get their own reviewed PR;
+`scratch` is an ordinary private, Git-backed record kind; and every Markdown
+document enters the migration inventory. The workspace location is deferred
+until cutover, when we can judge it in its actual runtime context.

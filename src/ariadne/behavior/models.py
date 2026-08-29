@@ -18,6 +18,43 @@ class ScenarioFile:
 
 
 @dataclass(frozen=True, slots=True)
+class ScenarioKnowledge:
+    """One semantic record exposed by the disposable knowledge capability."""
+
+    id: str
+    title: str
+    kind: str
+    body: str
+    state: str | None = None
+    aliases: tuple[str, ...] = ()
+    starts_at: str | None = None
+    ends_at: str | None = None
+    related: tuple[tuple[str, str], ...] = ()
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "schema": 1,
+            "id": self.id,
+            "title": self.title,
+            "kind": self.kind,
+            "state": self.state,
+            "aliases": list(self.aliases),
+            "starts_at": self.starts_at,
+            "ends_at": self.ends_at,
+            "related": [
+                {"record": record, "relation": relation}
+                for record, relation in self.related
+            ],
+            "created_at": "2026-08-29T09:00:00Z",
+            "updated_at": "2026-08-29T09:00:00Z",
+            "sources": [],
+            "body": self.body,
+            "revision": "scenario:1",
+            "incoming": [],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BehaviorScenario:
     """A production-shaped event with explicit points for human review."""
 
@@ -27,6 +64,7 @@ class BehaviorScenario:
     email: bytes
     route: MailRoute
     files: tuple[ScenarioFile, ...]
+    knowledge: tuple[ScenarioKnowledge, ...]
     review_questions: tuple[str, ...]
 
     def turn_input(self, workspace: Path) -> str:
