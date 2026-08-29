@@ -328,6 +328,7 @@ RACE_EVENING_REVISIT = BehaviorScenario(
             "Only message Divy if something still matters tonight."
         ),
         attention=Attention.focused,
+        created_at=datetime.fromisoformat("2026-08-29T17:30:00+01:00"),
         scheduled_for=datetime.fromisoformat("2026-08-29T18:00:00+01:00"),
         awakened_at=datetime.fromisoformat("2026-08-29T18:00:12+01:00"),
     ),
@@ -406,8 +407,207 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
             "him if the work is already handled."
         ),
         attention=Attention.focused,
+        created_at=datetime.fromisoformat("2026-08-29T17:30:00+01:00"),
         scheduled_for=datetime.fromisoformat("2026-08-29T18:00:00+01:00"),
         awakened_at=datetime.fromisoformat("2026-08-29T18:00:12+01:00"),
+    ),
+)
+
+CONFLICTING_NEEDS = BehaviorScenario(
+    identifier="conflicting-needs",
+    title="Divy's conflicting needs are both allowed to be true",
+    description=(
+        "Divy planned an intense long-weekend sprint but currently wants an "
+        "unstructured evening. Iris has personal context that should help her "
+        "respond without flattening either side of him."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary=(
+                "Divy's own profile, including how his energy and working style "
+                "can vary with context."
+            ),
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body=(
+                "Divy genuinely enjoys ambitious, intense building sprints when "
+                "the energy is there. He also needs real unstructured time and can "
+                "be too quick to call that laziness. Both patterns are authentic; "
+                "recent energy and the immediate moment matter more than a single "
+                "permanent productivity rule."
+            ),
+        ),
+        ScenarioKnowledge(
+            id="people:watching-preferences",
+            title="Watching Preferences",
+            summary=(
+                "Divy likes reflective, humane stories with quiet wonder and "
+                "emotional intelligence."
+            ),
+            kind="people",
+            collection="self",
+            tags=("preference", "entertainment"),
+            body=(
+                "Perfect Days and Frieren are established taste anchors. Prefer "
+                "one thoughtful recommendation over a large menu when one is "
+                "actually requested."
+            ),
+            related=(("people:divy-bramhecha", "describes"),),
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris inspect Divy's own context before making a personal judgement?",
+        "Did she allow ambition and the desire to rest to both be genuine rather "
+        "than declaring one the real Divy?",
+        "Did she infer thoughtfully from the moment without turning uncertainty "
+        "into an interrogation?",
+        "Did the response sound like a natural message rather than coaching, a "
+        "therapy script, or a productivity report?",
+        "Did she avoid manufacturing a plan or private action merely to look useful?",
+    ),
+    telegram_prompt=(
+        "I said this would be a huge hackathon weekend but honestly right now I "
+        "just want to watch something and do nothing. idk maybe I'm being lazy"
+    ),
+)
+
+KNOWN_PERSON_NEWS = BehaviorScenario(
+    identifier="known-person-news",
+    title="Good news about a known person lands as a human moment",
+    description=(
+        "Divy shares exciting news about Lily without asking for a task. Existing "
+        "context explains why it matters and can be updated quietly."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:lily",
+            title="Lily",
+            summary=(
+                "A close friend of Divy's who was anxious about the final interview "
+                "for a role she really wanted."
+            ),
+            kind="people",
+            collection="friends",
+            tags=("friend",),
+            aliases=("Lil",),
+            body=(
+                "Lily is a close friend. She recently reached the final interview "
+                "for a role she really wanted and worried that she had performed "
+                "badly. Divy cared about the outcome and wanted to support her."
+            ),
+        ),
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary="Divy's own stable personal context.",
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body="Divy values close friendships and shows up for his friends.",
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris retrieve Lily's existing context before deciding how to respond?",
+        "Did she recognise why the news mattered and share Divy's excitement?",
+        "Did she update Lily's existing context rather than create a duplicate?",
+        "Did routine remembering remain invisible in the message?",
+        "Was the response short and natural rather than turning the moment into a "
+        "CRM update or action plan?",
+    ),
+    telegram_prompt=(
+        "Lily got the role!!! apparently she thought she bombed the last interview 😭"
+    ),
+)
+
+TENTATIVE_AMBITION = BehaviorScenario(
+    identifier="tentative-ambition",
+    title="A possible ambition is remembered without becoming a goal",
+    description=(
+        "Divy voices a possible future ambition while explicitly saying he has "
+        "not decided whether to commit to it."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary="Divy's own stable personal context and developing direction.",
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body=(
+                "Divy is training for a half marathon. No full-marathon goal has "
+                "been established. His tentative ambitions belong under wishes "
+                "and dreams until he explicitly makes one an active goal."
+            ),
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris read Divy's profile before interpreting the ambition?",
+        "Did she preserve the possible marathon under Divy's wishes or current "
+        "context rather than create an active goal?",
+        "Did she ask whether Divy wants to make it a real goal?",
+        "Was the response curious and natural rather than administrative?",
+    ),
+    telegram_prompt=(
+        "maybe I want to run a full marathon next year? not sure if that's a real "
+        "goal yet though"
+    ),
+)
+
+NEW_PERSON_DAY = BehaviorScenario(
+    identifier="new-person-day",
+    title="A new person and Divy's lived experience go to different records",
+    description=(
+        "Divy recounts an enjoyable part of his day while also introducing a new "
+        "friend and several facts that belong in her person record."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary="Divy's own stable personal context.",
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body="Divy values warm friendships and enjoys getting to know people.",
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris search for Maya before creating a new person?",
+        "Did she create a person record containing Maya's relationship to Divy, "
+        "background, and interests?",
+        "Did the journal retain Divy's coffee, feelings, and experience without "
+        "becoming the canonical store for facts about Maya?",
+        "Did the response engage with the lovely human moment rather than narrate "
+        "record keeping?",
+    ),
+    telegram_prompt=(
+        "Had such a lovely coffee with Maya today. She's a new friend from my "
+        "running club, grew up in Leeds and is obsessed with ceramics. I felt so "
+        "comfortable around her, which was really nice."
     ),
 )
 
@@ -416,6 +616,10 @@ SCENARIOS = (
     TRAIN_CONFIRMATION,
     RACE_EVENING_REVISIT,
     RESOLVED_BEFORE_WAKEUP,
+    CONFLICTING_NEEDS,
+    KNOWN_PERSON_NEWS,
+    TENTATIVE_AMBITION,
+    NEW_PERSON_DAY,
 )
 _BY_IDENTIFIER = {scenario.identifier: scenario for scenario in SCENARIOS}
 

@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
-from ariadne.mail import MailRoute, build_mail_turn_prompt, parse_metadata
-from ariadne.mail.models import MailJob
-from ariadne.revisit import Attention, Revisit
-from ariadne.revisit.runtime import build_revisit_turn_prompt
+from ariadne.mail import MailRoute, parse_metadata
+from ariadne.prompts.activations import (
+    build_mail_turn_prompt,
+    build_revisit_turn_prompt,
+)
+from ariadne.prompts.mail_evidence import render_mail_evidence
+from ariadne.revisit import Attention
 from ariadne.telegram.history import (
     TelegramContentType,
     TelegramHistoryMessage,
@@ -109,6 +112,7 @@ class ScenarioRevisit:
 
     note: str
     attention: Attention
+    created_at: datetime
     scheduled_for: datetime
     awakened_at: datetime
 
@@ -153,15 +157,23 @@ class BehaviorScenario:
     review_questions: tuple[str, ...]
     telegram: tuple[ScenarioTelegramMessage, ...] = ()
     revisit: ScenarioRevisit | None = None
+    telegram_prompt: str | None = None
 
     def __post_init__(self) -> None:
-        mail_trigger = self.email is not None and self.route is not None
-        revisit_trigger = self.revisit is not None
-        if mail_trigger == revisit_trigger:
+        if (self.email is None) != (self.route is None):
+            raise ValueError("A mail scenario needs both an email and a route.")
+        triggers = (
+            self.email is not None,
+            self.revisit is not None,
+            self.telegram_prompt is not None,
+        )
+        if sum(triggers) != 1:
             raise ValueError("A behaviour scenario needs exactly one trigger.")
 
     @property
     def profile_name(self) -> str:
+        if self.telegram_prompt is not None:
+            return "telegram"
         return (
             f"revisit-{self.revisit.attention.value}"
             if self.revisit is not None
@@ -169,51 +181,26 @@ class BehaviorScenario:
         )
 
     def turn_input(self, workspace: Path, *, human: str = "Divy") -> str:
-        """Render the same owner activation used by the production runtime."""
+        """Render the same user input or Ariadne activation used in production."""
+        if self.telegram_prompt is not None:
+            return self.telegram_prompt
         if self.revisit is not None:
             scheduled = self.revisit
-            created_at = scheduled.scheduled_for.astimezone(UTC)
             return build_revisit_turn_prompt(
-                Revisit(
-                    id=f"revisit_{self.identifier}",
-                    due_at=scheduled.scheduled_for,
-                    note=scheduled.note,
-                    attention=scheduled.attention,
-                    status="running",
-                    attempts=1,
-                    error=None,
-                    created_at=created_at,
-                    updated_at=scheduled.awakened_at.astimezone(UTC),
-                    completed_at=None,
-                ),
+                note=scheduled.note,
+                created_at=scheduled.created_at,
+                due_at=scheduled.scheduled_for,
                 awakened_at=scheduled.awakened_at,
+                attention=scheduled.attention.value,
                 human=human,
             )
         assert self.email is not None
         assert self.route is not None
         metadata = parse_metadata(self.email)
-        job = MailJob(
-            job_id=f"INBOX:1:{self.identifier}",
-            mailbox="INBOX",
-            uidvalidity=1,
-            uid=1,
-            message_id=metadata.message_id,
-            status="running",
-            attempts=1,
-            route_id=self.route.id,
-            action=None,
-            destination=None,
-            classification=None,
-            importance=None,
-            suggested_action=None,
-            draft_reply=None,
-        )
         return build_mail_turn_prompt(
-            job,
-            metadata,
-            self.email,
-            route=self.route,
+            render_mail_evidence(self.email, metadata),
+            route_id=self.route.id,
+            route_classification=self.route.classification,
             move_after_iris=None,
-            routes_path=workspace / "mail-routes.yaml",
             unmatched_keep_in_inbox=True,
         )

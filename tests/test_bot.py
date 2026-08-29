@@ -23,16 +23,18 @@ from ariadne.codex import (
     WorkStarted,
     WorkSummaryUpdated,
 )
+from ariadne.prompts.activations import (
+    DOCUMENT_WITHOUT_CAPTION,
+    build_document_turn_prompt,
+)
 from ariadne.telegram import bot as telegram_bot
 from ariadne.telegram import live as telegram_live
 from ariadne.telegram.bot import (
     BUSY_MESSAGE,
-    DOCUMENT_WITHOUT_CAPTION,
     NEW_CONVERSATION_MESSAGE,
     NOTHING_TO_STOP_MESSAGE,
     SETTINGS_BUSY_MESSAGE,
     STOPPED_MESSAGE,
-    document_message,
     turn_text,
 )
 from ariadne.telegram.bot import AriadneBot as TelegramBot
@@ -1059,7 +1061,7 @@ async def test_failed_turn_replies_and_allows_the_next_turn(
 def test_document_message_uses_the_caption_as_the_request(tmp_path) -> None:
     path = tmp_path / "cv.pdf"
 
-    text = document_message(
+    text = build_document_turn_prompt(
         "compare this with the one in my repo", [(path, "application/pdf")]
     )
 
@@ -1070,7 +1072,7 @@ def test_document_message_uses_the_caption_as_the_request(tmp_path) -> None:
 def test_document_message_without_a_caption_invents_no_task(tmp_path) -> None:
     path = tmp_path / "rows.csv"
 
-    text = document_message(None, [(path, None)])
+    text = build_document_turn_prompt(None, [(path, None)])
 
     assert text == f"{DOCUMENT_WITHOUT_CAPTION}\n\nAttached file: {path}"
 
@@ -1093,7 +1095,9 @@ async def test_document_sent_during_a_turn_steers_it_and_is_kept(
     )
 
     assert conversation.steered == [
-        turn_text(document_message("what looks odd here?", [(attachment, None)]))
+        turn_text(
+            build_document_turn_prompt("what looks odd here?", [(attachment, None)])
+        )
     ]
 
     conversation.release.set()
@@ -1112,7 +1116,7 @@ async def test_document_is_kept_after_the_turn_it_started(tmp_path) -> None:
     await bot.handle_document(cast(Message, FakeMessage()), 7, attachment)
 
     assert conversation.prompts == [
-        turn_text(document_message(None, [(attachment, None)]))
+        turn_text(build_document_turn_prompt(None, [(attachment, None)]))
     ]
     assert attachment.exists()
     history = bot._history.read(7, since=datetime.min.replace(tzinfo=UTC))
@@ -1145,7 +1149,7 @@ async def test_a_media_group_becomes_one_turn(tmp_path, monkeypatch) -> None:
 
     assert conversation.prompts == [
         turn_text(
-            document_message(
+            build_document_turn_prompt(
                 "what looks odd here?", [(paths[0], None), (paths[1], None)]
             )
         )

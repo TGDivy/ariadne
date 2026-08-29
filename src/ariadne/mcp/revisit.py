@@ -41,8 +41,8 @@ def _state() -> RevisitState:
 def schedule_wakeup(at: str, note: str, attention: Attention) -> dict[str, object]:
     """Schedule Ariadne to wake you, Iris, once at a future time.
 
-    Write a self-contained `note` saying what to reconsider and why; the future
-    conversation is fresh and will inspect then-current context before acting.
+    Write a self-contained `note` saying what to reconsider and why; when the
+    time comes you will inspect then-current context before acting.
     Choose the least expensive attention that can reliably do the future work:
     `light` for a predetermined reminder or nudge, `focused` for a bounded review
     using current mail, Calendar, or knowledge, and `deep` for cross-source

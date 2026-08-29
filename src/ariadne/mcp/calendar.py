@@ -64,7 +64,7 @@ def _calendar(operation: str, *args: object, **kwargs: object) -> dict[str, Any]
 
 
 def list_calendars() -> dict[str, Any]:
-    """List the iCloud calendars available to the configured account.
+    """List the human's available calendars.
 
     Returns opaque calendar ids accepted by the other calendar tools, along
     with the configured default and local timezone.
@@ -79,7 +79,7 @@ def search_calendar_events(
     calendar_ids: list[str] | None = None,
     limit: int = 50,
 ) -> dict[str, Any]:
-    """Search iCloud events in a closed ISO date or date-time interval.
+    """Search calendar events in a closed ISO date or date-time interval.
 
     Recurring events are expanded into occurrences. `query` matches event
     titles, descriptions, locations, and attendees. Date-only boundaries use
@@ -96,14 +96,14 @@ def search_calendar_events(
 
 
 def read_calendar_event(id: str) -> dict[str, Any]:
-    """Read one iCloud event or recurrence occurrence returned by search."""
+    """Read one calendar event or recurrence occurrence returned by search."""
     return _calendar("read_event", id)
 
 
 def check_calendar_availability(
     start: str, end: str, calendar_ids: list[str] | None = None
 ) -> dict[str, Any]:
-    """Return merged busy intervals across selected iCloud calendars."""
+    """Return merged busy intervals across selected calendars."""
     return _calendar("free_busy", start, end, calendar_ids=calendar_ids)
 
 
@@ -121,7 +121,7 @@ def create_calendar_event(
     status: CalendarStatus = "confirmed",
     busy: bool = True,
 ) -> dict[str, Any]:
-    """Create an iCloud event, optionally sending invitations to attendees.
+    """Create a calendar event, optionally sending invitations to attendees.
 
     Use date-only `start` and `end` for all-day events; their end is exclusive.
     Timed values are ISO date-times. `timezone` may name their IANA timezone;

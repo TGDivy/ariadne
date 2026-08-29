@@ -373,18 +373,24 @@ calendar copy, does not poll for changes, and does not generate reminders or
 background Telegram notifications. iCloud Reminders are also outside its
 scope. Restart Ariadne after changing the Calendar configuration.
 
-## Instructions
+## Prompts
 
-Iris's prompt is assembled from Markdown documents owned by the shared Codex
-runtime and each conversation surface:
+Every model-facing prompt source is collected under `src/ariadne/prompts`:
 
-- `src/ariadne/instructions/base.md` replaces Codex's built-in coding-agent base
-  instructions.
-- `src/ariadne/telegram/instructions.md` and
-  `src/ariadne/mail/instructions.md` hold rules specific to those surfaces and
-  are appended to the shared base.
-- `src/ariadne/instructions/grounding.md` is the developer message: where Iris is
-  running and what she can reach.
+- `base.md` replaces Codex's built-in coding-agent base instructions.
+- `telegram.md`, `mail.md`, and `revisit.md` add only surface-specific delivery
+  and trigger behavior; `knowledge.md` defines mandatory retrieval and durable
+  update situations shared by every surface.
+- `grounding.md` distinguishes direct messages, Ariadne activations, and
+  external evidence.
+- `companion.md` is the shared developer layer for initiative, follow-through,
+  background interruption, communication, and future wake-ups.
+- `activations.py` builds typed user-level inputs for Telegram replies, mail,
+  and scheduled wake-ups. `assembly.py` composes instruction layers and
+  generated knowledge orientation. `inspection.py` renders the exact result.
+- The configured `personality.md` adds the actual Iris/Divy-specific voice,
+  relationship, and standing preferences. Current knowledge vocabulary is
+  generated from the private repository and appended separately.
 
 Documents may use `{{ placeholder }}` fields, filled by `render()`. Only
 `{{ human }}` exists today, from `human_name`. Keep the set small: these
@@ -401,7 +407,7 @@ contains, what was kept, and what was dropped.
 ## Local capabilities
 
 Ariadne exposes clearly named local MCP capabilities to Codex: semantic private
-knowledge, `inspect_ariadne_runtime`, `read_recent_telegram_messages`,
+knowledge, `read_recent_telegram_messages`,
 `ask_telegram_question`, and `request_telegram_file_delivery`, plus mail,
 Calendar, and future wake-up operations. Background profiles such as mail can
 also send proactive Telegram notifications; ordinary Telegram turns speak

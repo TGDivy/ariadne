@@ -70,11 +70,11 @@ def _message_source() -> TelegramMessageSource:
 
 
 async def send_telegram_message(text: str) -> list[int]:
-    """Send a persistent message to the human's configured private Telegram.
+    """Send a persistent message to the human in your private Telegram chat.
 
-    The only destination belongs to the same human and cannot be supplied or
-    changed by the caller. This capability exists only in proactive background
-    turns; Telegram-triggered turns speak through native Codex response phases.
+    The destination is fixed and cannot be changed. Use this when Ariadne's
+    activation says your native response will not reach the human. In an
+    ordinary Telegram conversation, speak through commentary and final instead.
     """
     if not text.strip():
         raise ToolError("A message needs something to say.")
@@ -106,7 +106,7 @@ def read_recent_telegram_messages(
     query: str | None = None,
     limit: int = 50,
 ) -> dict[str, object]:
-    """Read permanent messages observed in the private Telegram conversation.
+    """Read recent messages from your private Telegram conversation.
 
     `since` and `before` are ISO 8601 timestamps with timezone offsets. Optional
     `query` is a literal case-insensitive substring match, not fuzzy or semantic
@@ -114,11 +114,12 @@ def read_recent_telegram_messages(
     chronological order. Sources say what woke Iris before she sent a message:
     `telegram`, `mail`, or `wakeup`.
 
-    Use this when recent conversation could change a fresh or proactive turn.
-    Missing human messages mean only that no reply was observed here; they do
-    not establish whether a message was read, ignored, or understood. History
-    begins when this Ariadne capability was deployed and is not a Telegram
-    archive backfill.
+    A scheduled wake-up activation supplies exact `since` and `before` values
+    for its reconciliation window. Use those values unchanged before deciding
+    or acting; do not derive a narrower window from the due time. Missing human
+    messages mean only that no reply was observed here; they do not establish
+    whether a message was read, ignored, or understood. Older conversation may
+    predate the available history.
     """
     try:
         chat_id = int(os.environ["TELEGRAM_ALLOWED_USER_ID"])
@@ -154,10 +155,10 @@ async def ask_telegram_question(
 ) -> dict[str, str]:
     """Ask the human one choice question and wait for their answer.
 
-    Telegram renders 2-6 trusted native buttons, while an ordinary typed reply
-    remains valid. The tool returns only after the human answers, resuming this
-    same model turn. Use it for a decision that genuinely blocks the work, not
-    for rhetorical questions or information that can be inferred safely.
+    Telegram renders 2-6 native buttons, while an ordinary typed reply remains
+    valid. Once the human answers, you continue with their answer. Use this for
+    a decision that genuinely blocks the work, not for rhetorical questions or
+    information that can be inferred safely.
     """
     try:
         prompt, normalized_choices = validate_question(prompt, choices)

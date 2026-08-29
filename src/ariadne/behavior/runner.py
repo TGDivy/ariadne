@@ -34,7 +34,7 @@ from ariadne.codex.resolver import resolve_profile
 from ariadne.knowledge import KnowledgeMetadata, KnowledgeRelation
 from ariadne.knowledge.documents import render_document
 from ariadne.knowledge.paths import slug
-from ariadne.profile import MAIL_PROFILE, profile_for_attention
+from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE, profile_for_attention
 from ariadne.telegram.history import TelegramMessageStore
 
 from .fake_calendar import CALENDAR_ENVIRONMENT
@@ -314,11 +314,12 @@ async def run_scenario(
         _run_git("push", "-u", "origin", "main", cwd=workspace)
         before = _snapshot(workspace)
 
-        surface = (
-            profile_for_attention(scenario.revisit.attention)
-            if scenario.revisit is not None
-            else MAIL_PROFILE
-        )
+        if scenario.telegram_prompt is not None:
+            surface = TELEGRAM_PROFILE
+        elif scenario.revisit is not None:
+            surface = profile_for_attention(scenario.revisit.attention)
+        else:
+            surface = MAIL_PROFILE
         declaration = replace(
             surface,
             writable_roots=(root,),

@@ -21,7 +21,6 @@ from .runtime import (
     MailProcessor,
     MailState,
     backfill_inbox,
-    build_mail_turn_prompt,
     cheap_triage,
     ensure_folders,
     lint_mail_routes,
@@ -29,7 +28,6 @@ from .runtime import (
     move_messages,
     parse_metadata,
     record_current_mail_decision,
-    render_message,
     restore_folder_to_inbox,
 )
 
@@ -52,7 +50,6 @@ __all__ = [
     "RuleLint",
     "SuggestedAction",
     "backfill_inbox",
-    "build_mail_turn_prompt",
     "cheap_triage",
     "ensure_folders",
     "load_routes",
@@ -60,6 +57,5 @@ __all__ = [
     "move_messages",
     "parse_metadata",
     "record_current_mail_decision",
-    "render_message",
     "restore_folder_to_inbox",
 ]

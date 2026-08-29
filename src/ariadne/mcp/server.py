@@ -16,8 +16,8 @@ def create_server() -> FastMCP:
     server = FastMCP(
         "Ariadne",
         instructions=(
-            "Private knowledge, local runtime inspection, mail, calendar, and "
-            "explicitly authorized Telegram capabilities."
+            "Private memory, mail, calendar, Telegram, and future wake-up "
+            "capabilities for Iris."
         ),
         version="0.1.0",
         strict_input_validation=True,

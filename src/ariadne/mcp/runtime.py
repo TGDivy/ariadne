@@ -29,10 +29,10 @@ def _process(pid: int) -> dict[str, Any]:
 
 
 def inspect_ariadne_runtime() -> dict[str, Any]:
-    """Inspect Ariadne's current local runtime.
+    """Inspect which Ariadne capabilities are available right now.
 
-    Secrets, paths, environment values, and knowledge storage details are never
-    returned.
+    Use this only when a capability appears missing or behaves unexpectedly.
+    Private configuration and credentials are never returned.
     """
     profile_name = _required_environment("ARIADNE_PROFILE")
     try:

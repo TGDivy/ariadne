@@ -11,8 +11,9 @@ uv run python -m ariadne.scripts.behavior list
 uv run python -m ariadne.scripts.behavior show race-confirmation
 ```
 
-They list or render checked-in synthetic inputs. `show` uses the production mail
-or revisit activation builder, so it also makes prompt drift inspectable. Ordinary tests verify
+They list or render checked-in synthetic inputs. `show` uses an unchanged direct
+Telegram message or the production mail/revisit activation builder, so it also
+makes prompt drift inspectable. Ordinary tests verify
 that every scenario remains valid and that the recorded fake capabilities keep
 the same names, descriptions, and schemas as their production counterparts.
 These checks do not initialize Codex, need credentials or network access, or
@@ -29,7 +30,7 @@ Add `--effort low`, `--effort medium`, or `--effort high` to compare reasoning
 levels for a manual run without changing production configuration. Use
 `--model` when deliberately comparing another locally available model.
 
-It uses the scenario's mail or attention-selected revisit profile, web-search
+It uses the scenario's Telegram, mail, or attention-selected revisit profile, web-search
 setting, and instruction layers from the repository defaults. It needs local Codex authentication and
 may incur usage, but it does not need an Ariadne config or service credentials.
 It is not called by the test suite or CI.
@@ -69,7 +70,8 @@ calls, commits, a full text patch of workspace changes, and a short set of
 questions for manual review. It deliberately does not expose hidden reasoning
 or declare a scenario passed because a sentence happened to match.
 
-The initial stories cover the Windsor event from arrival to a later revisit:
+The initial stories cover the Windsor event from arrival to a later revisit and
+two ordinary conversational moments:
 
 - `race-confirmation`: recognise that a booking is a commitment with open
   preparation loops;
@@ -79,6 +81,14 @@ The initial stories cover the Windsor event from arrival to a later revisit:
   preparation, and message only if something still matters.
 - `resolved-before-wakeup`: reconcile an older wake-up note with Divy's newer
   Telegram message and avoid a reminder for work he already completed.
+- `conflicting-needs`: use Divy's own context without flattening ambition and
+  the need for rest into one permanent rule;
+- `known-person-news`: retrieve Lily's context, share the human moment, and
+  update durable knowledge without narrating it.
+- `tentative-ambition`: retain a possible ambition under Divy's wishes without
+  silently promoting it into an active goal;
+- `new-person-day`: create a useful new person while keeping facts about her in
+  the person record and Divy's lived experience in the journal.
 
 These first runs should make current capability gaps visible. The scenario uses
 the same six semantic knowledge operations and generated orientation as the

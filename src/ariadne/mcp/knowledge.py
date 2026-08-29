@@ -51,9 +51,9 @@ def search_knowledge(
     semantic fields. This is not embedding search and does not infer arbitrary
     synonyms. Filters are exact; every requested tag must be present.
 
-    Search before creating knowledge and whenever prior context may materially
-    affect the turn. Results include summaries, matching evidence, and compact
-    direct relationships. Read useful candidates before relying on them.
+    Results include summaries, matching evidence, and compact direct
+    relationships. They are candidates rather than complete records; pass every
+    plausible result id to `read_knowledge` before relying on its contents.
     """
     try:
         results = _store().search(
@@ -124,13 +124,13 @@ def create_knowledge(
     ends_at: str | None = None,
     related: list[KnowledgeRelation] | None = None,
 ) -> dict[str, object]:
-    """Remember one new canonical private record.
+    """Remember one new durable subject in private knowledge.
 
     Search first to avoid duplicates. Choose one primary lowercase `kind`, an
     existing lowercase collection when it fits, and cross-cutting `tags`.
-    Ariadne generates the stable id, lowercase kebab-case filename, timestamps,
-    Git commit, and synchronization. Routine remembering is already authorized
-    and should not be narrated as an operational update.
+    Stable identity and storage details are handled automatically. Routine
+    remembering is already authorized and should not be narrated as an
+    operational update.
     """
     try:
         record = _store().create(
@@ -165,12 +165,11 @@ def update_knowledge(
     clear: list[Literal["tags", "aliases", "starts_at", "ends_at", "related"]]
     | None = None,
 ) -> dict[str, object]:
-    """Update supplied semantic fields on the latest canonical record.
+    """Update supplied semantic fields on one canonical private record.
 
     Omitted fields remain unchanged. Name optional fields in `clear` to remove
-    them. Ariadne reads the latest version under a lock, updates its timestamp,
-    moves it when its generated location changes, then commits and synchronizes
-    everything automatically.
+    them. Identity, timestamps, location, and durable storage are handled
+    automatically.
     """
     try:
         record = _store().update(

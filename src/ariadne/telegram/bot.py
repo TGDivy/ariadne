@@ -5,7 +5,6 @@ import logging
 import sqlite3
 import time
 from collections import deque
-from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -26,6 +25,12 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
+from ..prompts.activations import (
+    EMPTY_TELEGRAM_REPLY,
+    build_document_turn_prompt,
+    build_image_turn_prompt,
+    build_telegram_turn_prompt,
+)
 from .file_delivery import FileDelivery, FileDeliveryError
 from .history import (
     TelegramContentType,
@@ -61,10 +66,6 @@ NEW_CONVERSATION_MESSAGE = (
     "Started a new conversation. Your shared memory is still available."
 )
 BUSY_MESSAGE = "I'm still working on your previous message."
-IMAGE_WITHOUT_CAPTION = "Please inspect the attached image."
-IMAGES_WITHOUT_CAPTION = "Please inspect the attached images."
-DOCUMENT_WITHOUT_CAPTION = "I've sent you a file."
-DOCUMENTS_WITHOUT_CAPTION = "I've sent you some files."
 DOCUMENT_TOO_LARGE_MESSAGE = (
     "That file is too large; Telegram only lets me download files up to 20 MB."
 )
@@ -86,23 +87,19 @@ def turn_text(
     text: str,
     replied_message: Message | None = None,
 ) -> str:
-    """Add immediate Telegram reply context to one turn."""
-    parts: list[str] = []
+    """Extract Telegram reply content for the shared activation builder."""
+    quoted_message: str | None = None
     if replied_message is not None:
-        content = (
+        quoted_message = (
             replied_message.text
             if replied_message.text is not None
             else replied_message.caption
         )
-        if content is None:
-            content = incoming_rich_markdown(replied_message)
-        if content is None:
-            content = "[The replied-to message has no text or caption.]"
-        parts.append(
-            f"Telegram reply context:\n<quoted_message>\n{content}\n</quoted_message>"
-        )
-    parts.append(text)
-    return "\n\n".join(parts)
+        if quoted_message is None:
+            quoted_message = incoming_rich_markdown(replied_message)
+        if quoted_message is None:
+            quoted_message = EMPTY_TELEGRAM_REPLY
+    return build_telegram_turn_prompt(text, quoted_message=quoted_message)
 
 
 def _document_filename(document: Document) -> str:
@@ -140,22 +137,6 @@ def attachment_path(name: str) -> Path:
             attempt += 1
         else:
             return candidate
-
-
-def document_message(
-    caption: str | None, documents: Sequence[tuple[Path, str | None]]
-) -> str:
-    """Compose the turn text for the files the user sent."""
-    default = (
-        DOCUMENT_WITHOUT_CAPTION if len(documents) == 1 else DOCUMENTS_WITHOUT_CAPTION
-    )
-    lines = [
-        f"Attached file: {path}"
-        if mime_type is None
-        else f"Attached file: {path} ({mime_type})"
-        for path, mime_type in documents
-    ]
-    return "\n\n".join([caption or default, *lines])
 
 
 @dataclass(frozen=True, slots=True)
@@ -969,11 +950,9 @@ class AriadneBot:
         caption = next((item.caption for item in album.items if item.caption), None)
 
         if documents:
-            text = document_message(caption, documents)
-        elif caption:
-            text = caption
+            text = build_document_turn_prompt(caption, documents)
         else:
-            text = IMAGE_WITHOUT_CAPTION if len(images) == 1 else IMAGES_WITHOUT_CAPTION
+            text = build_image_turn_prompt(caption, image_count=len(images))
 
         await self.handle_text(
             album.message,

@@ -13,6 +13,7 @@ from openai_codex.generated.v2_all import ReasoningEffort
 from ariadne.config import RevisitSettings
 from ariadne.mcp import revisit as revisit_tools
 from ariadne.profile import REVISIT_PROFILES
+from ariadne.prompts.activations import build_revisit_turn_prompt
 from ariadne.revisit import (
     ATTENTION_SETTINGS,
     STATE_ENVIRONMENT,
@@ -21,7 +22,7 @@ from ariadne.revisit import (
     RevisitState,
     parse_due_at,
 )
-from ariadne.revisit.runtime import RevisitLoop, build_revisit_turn_prompt
+from ariadne.revisit.runtime import RevisitLoop
 
 
 def instant(value: float) -> datetime:
@@ -279,12 +280,14 @@ async def test_runtime_wakes_once_and_discards_native_output(tmp_path: Path) -> 
     assert conversation.closed is True
     assert len(conversation.prompts) == 1
     prompt = conversation.prompts[0]
-    assert "Ariadne has awakened you" in prompt
-    assert "fresh conversation" in prompt
-    assert "Attention selected by your earlier self: focused" in prompt
+    assert "Ariadne speaking" in prompt
+    assert "you asked me to schedule" in prompt
+    assert "Attention you selected: focused" in prompt
     assert scheduled.note in prompt
-    assert "Only `send_telegram_message` reaches Divy" in prompt
-    assert "finish silently" in prompt
+    assert "background-interruption conditions for Divy" in prompt
+    assert f"since: {scheduled.created_at.astimezone(UTC).isoformat()}" in prompt
+    assert "before: 1970-01-01T00:50:00+00:00" in prompt
+    assert "<earlier_iris_note>" in prompt
 
 
 async def test_runtime_retains_a_failed_execution_without_rerouting(
@@ -338,9 +341,15 @@ def test_activation_prompt_uses_the_configured_human_name(tmp_path: Path) -> Non
     )
 
     prompt = build_revisit_turn_prompt(
-        revisit, awakened_at=instant(3_000), human="Example User"
+        note=revisit.note,
+        created_at=revisit.created_at,
+        due_at=revisit.due_at,
+        awakened_at=instant(3_000),
+        attention=revisit.attention.value,
+        human="Example User",
     )
 
-    assert "reaches Example User" in prompt
-    assert "interrupting Example User" in prompt
+    assert "background-interruption conditions for Example User" in prompt
     assert "Divy" not in prompt
+    assert f"since: {revisit.created_at.astimezone(UTC).isoformat()}" in prompt
+    assert "before: 1970-01-01T00:50:00+00:00" in prompt
