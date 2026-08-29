@@ -31,22 +31,28 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         "train-confirmation",
         "race-evening-revisit",
         "resolved-before-wakeup",
+        "conflicting-needs",
+        "known-person-news",
     ]
     assert len({scenario.identifier for scenario in SCENARIOS}) == len(SCENARIOS)
 
     for scenario in SCENARIOS:
         prompt = scenario.turn_input(tmp_path)
-        if scenario.revisit is None:
+        if scenario.telegram_prompt is not None:
+            assert prompt == scenario.telegram_prompt
+            assert scenario.profile_name == "telegram"
+        elif scenario.revisit is None:
             assert scenario.route is not None
-            assert "Owner-authorized mail task" in prompt
+            assert "Ariadne speaking" in prompt
             assert f"ordered route {scenario.route.id!r}" in prompt
-            assert str(tmp_path / "mail-routes.yaml") in prompt
+            assert str(tmp_path / "mail-routes.yaml") not in prompt
             assert "I give you permission to push" not in prompt
-            assert "do not edit the routing configuration" in prompt
+            assert "Use the message and your wider context" in prompt
+            assert "<external_mail_evidence>" in prompt
         else:
-            assert "Ariadne has awakened you" in prompt
-            assert "Attention selected by your earlier self: focused" in prompt
-            assert "finish silently" in prompt
+            assert "Ariadne speaking" in prompt
+            assert "Attention you selected: focused" in prompt
+            assert "<earlier_iris_note>" in prompt
         assert scenario.review_questions
         assert scenario.knowledge
     assert SCENARIOS[0].calendar == ()
@@ -54,6 +60,8 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert len(SCENARIOS[2].calendar) == 3
     assert len(SCENARIOS[3].calendar) == 1
     assert len(SCENARIOS[3].telegram) == 1
+    assert SCENARIOS[4].telegram_prompt is not None
+    assert SCENARIOS[5].telegram_prompt is not None
 
 
 def test_scenario_knowledge_is_also_valid_generated_orientation(

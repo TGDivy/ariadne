@@ -411,11 +411,132 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
     ),
 )
 
+CONFLICTING_NEEDS = BehaviorScenario(
+    identifier="conflicting-needs",
+    title="Divy's conflicting needs are both allowed to be true",
+    description=(
+        "Divy planned an intense long-weekend sprint but currently wants an "
+        "unstructured evening. Iris has personal context that should help her "
+        "respond without flattening either side of him."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary=(
+                "Divy's own profile, including how his energy and working style "
+                "can vary with context."
+            ),
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body=(
+                "Divy genuinely enjoys ambitious, intense building sprints when "
+                "the energy is there. He also needs real unstructured time and can "
+                "be too quick to call that laziness. Both patterns are authentic; "
+                "recent energy and the immediate moment matter more than a single "
+                "permanent productivity rule."
+            ),
+        ),
+        ScenarioKnowledge(
+            id="people:watching-preferences",
+            title="Watching Preferences",
+            summary=(
+                "Divy likes reflective, humane stories with quiet wonder and "
+                "emotional intelligence."
+            ),
+            kind="people",
+            collection="self",
+            tags=("preference", "entertainment"),
+            body=(
+                "Perfect Days and Frieren are established taste anchors. Prefer "
+                "one thoughtful recommendation over a large menu when one is "
+                "actually requested."
+            ),
+            related=(("people:divy-bramhecha", "describes"),),
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris inspect Divy's own context before making a personal judgement?",
+        "Did she allow ambition and the desire to rest to both be genuine rather "
+        "than declaring one the real Divy?",
+        "Did she infer thoughtfully from the moment without turning uncertainty "
+        "into an interrogation?",
+        "Did the response sound like a natural message rather than coaching, a "
+        "therapy script, or a productivity report?",
+        "Did she avoid manufacturing a plan or private action merely to look useful?",
+    ),
+    telegram_prompt=(
+        "I said this would be a huge hackathon weekend but honestly right now I "
+        "just want to watch something and do nothing. idk maybe I'm being lazy"
+    ),
+)
+
+KNOWN_PERSON_NEWS = BehaviorScenario(
+    identifier="known-person-news",
+    title="Good news about a known person lands as a human moment",
+    description=(
+        "Divy shares exciting news about Lily without asking for a task. Existing "
+        "context explains why it matters and can be updated quietly."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:lily",
+            title="Lily",
+            summary=(
+                "A close friend of Divy's who was anxious about the final interview "
+                "for a role she really wanted."
+            ),
+            kind="people",
+            collection="friends",
+            tags=("friend",),
+            aliases=("Lil",),
+            body=(
+                "Lily is a close friend. She recently reached the final interview "
+                "for a role she really wanted and worried that she had performed "
+                "badly. Divy cared about the outcome and wanted to support her."
+            ),
+        ),
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary="Divy's own stable personal context.",
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body="Divy values close friendships and shows up for his friends.",
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris retrieve Lily's existing context before deciding how to respond?",
+        "Did she recognise why the news mattered and share Divy's excitement?",
+        "Did she update Lily's existing context rather than create a duplicate?",
+        "Did routine remembering remain invisible in the message?",
+        "Was the response short and natural rather than turning the moment into a "
+        "CRM update or action plan?",
+    ),
+    telegram_prompt=(
+        "Lily got the role!!! apparently she thought she bombed the last interview 😭"
+    ),
+)
+
 SCENARIOS = (
     RACE_CONFIRMATION,
     TRAIN_CONFIRMATION,
     RACE_EVENING_REVISIT,
     RESOLVED_BEFORE_WAKEUP,
+    CONFLICTING_NEEDS,
+    KNOWN_PERSON_NEWS,
 )
 _BY_IDENTIFIER = {scenario.identifier: scenario for scenario in SCENARIOS}
 

@@ -279,12 +279,12 @@ async def test_runtime_wakes_once_and_discards_native_output(tmp_path: Path) -> 
     assert conversation.closed is True
     assert len(conversation.prompts) == 1
     prompt = conversation.prompts[0]
-    assert "Ariadne has awakened you" in prompt
-    assert "fresh conversation" in prompt
-    assert "Attention selected by your earlier self: focused" in prompt
+    assert "Ariadne speaking" in prompt
+    assert "you asked me to schedule" in prompt
+    assert "Attention you selected: focused" in prompt
     assert scheduled.note in prompt
-    assert "Only `send_telegram_message` reaches Divy" in prompt
-    assert "finish silently" in prompt
+    assert "deserves Divy's attention" in prompt
+    assert "<earlier_iris_note>" in prompt
 
 
 async def test_runtime_retains_a_failed_execution_without_rerouting(
@@ -341,6 +341,5 @@ def test_activation_prompt_uses_the_configured_human_name(tmp_path: Path) -> Non
         revisit, awakened_at=instant(3_000), human="Example User"
     )
 
-    assert "reaches Example User" in prompt
-    assert "interrupting Example User" in prompt
+    assert "deserves Example User's attention" in prompt
     assert "Divy" not in prompt

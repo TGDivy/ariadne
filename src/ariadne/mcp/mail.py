@@ -47,11 +47,11 @@ def search_mail(
     before: str | None = None,
     limit: int = 20,
 ) -> dict[str, Any]:
-    """Search iCloud Mail using ordinary words, names, companies, or topics.
+    """Search the human's mail using ordinary words, names, companies, or topics.
 
     `since` and `before`, when useful, are ISO dates (YYYY-MM-DD). Results are
-    ranked locally from read-only IMAP metadata and body previews. Use a result
-    id with `read_mail` or `read_mail_thread`; no local mailbox copy is kept.
+    ranked from message metadata and body previews. Use a result id with
+    `read_mail` or `read_mail_thread`. Search and reading do not change mail.
     """
     return _with_reader(
         lambda reader: reader.search(query, since=since, before=before, limit=limit)
@@ -59,7 +59,7 @@ def search_mail(
 
 
 def read_mail(id: str) -> dict[str, Any]:
-    """Read one message returned by `search_mail`, without marking it read."""
+    """Read one mail returned by `search_mail`, without marking it read."""
     return _with_reader(lambda reader: reader.read(id))
 
 

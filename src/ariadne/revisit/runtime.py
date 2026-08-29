@@ -28,20 +28,16 @@ def build_revisit_turn_prompt(
 ) -> str:
     """Build Ariadne's user-level activation for a due future revisit."""
     return (
-        "Ariadne has awakened you because a one-off revisit you scheduled is "
-        "now due. This is a fresh conversation: inspect current context before "
-        "deciding whether the earlier open loop still matters. Complete useful "
-        "reversible private work directly. Only `send_telegram_message` reaches "
-        f"{human}; native commentary and the final response are discarded. If "
-        f"nothing warrants interrupting {human}, finish silently. You may schedule "
-        "another revisit only if a real future open loop remains.\n\n"
+        "Ariadne speaking. I woke you because a one-off wake-up you asked me to "
+        "schedule is now due. Your earlier note follows separately; reassess it "
+        "against current context rather than assuming it is still correct. Decide "
+        f"whether anything now deserves {human}'s attention.\n\n"
         f"Scheduled for: {revisit.due_at.isoformat()}\n"
         f"Awakened at: {awakened_at.astimezone(UTC).isoformat()}\n"
-        f"Attention selected by your earlier self: {revisit.attention.value}\n\n"
-        "Your earlier note to yourself:\n"
-        "<future_self_note>\n"
+        f"Attention you selected: {revisit.attention.value}\n\n"
+        "<earlier_iris_note>\n"
         f"{revisit.note}\n"
-        "</future_self_note>"
+        "</earlier_iris_note>"
     )
 
 

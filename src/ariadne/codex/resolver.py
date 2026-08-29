@@ -16,13 +16,6 @@ from .models import CodexTurnSettings, ResolvedTurnProfile, TurnProfile
 _SURFACE_DOCUMENTS = frozenset({"telegram", "mail", "revisit"})
 
 
-def _repository_root() -> Path | None:
-    for directory in Path(__file__).resolve().parents:
-        if (directory / ".git").exists():
-            return directory
-    return None
-
-
 def _source(profile: TurnProfile, document: str) -> str:
     if document in _SURFACE_DOCUMENTS:
         return f"ariadne.{document}/instructions.md"
@@ -34,10 +27,7 @@ def _render_document(
     document: str,
     *,
     human: str,
-    repository: Path | None,
-) -> str | None:
-    if document == "ariadne" and repository is None:
-        return None
+) -> str:
     if document in _SURFACE_DOCUMENTS:
         text = (
             files(f"ariadne.{document}")
@@ -46,10 +36,7 @@ def _render_document(
             .strip()
         )
         return fill(text, {"human": human})
-    values = {"human": human}
-    if repository is not None:
-        values["repo"] = str(repository)
-    return render(document, **values)
+    return render(document, human=human)
 
 
 def _render_documents(
@@ -57,15 +44,13 @@ def _render_documents(
     documents: tuple[str, ...],
     *,
     human: str,
-    repository: Path | None,
 ) -> tuple[tuple[str, ...], str]:
     sources: list[str] = []
     rendered: list[str] = []
     for document in documents:
-        text = _render_document(profile, document, human=human, repository=repository)
-        if text is not None:
-            sources.append(_source(profile, document))
-            rendered.append(text)
+        text = _render_document(profile, document, human=human)
+        sources.append(_source(profile, document))
+        rendered.append(text)
     return tuple(sources), "\n\n".join(rendered)
 
 
@@ -80,18 +65,15 @@ def resolve_profile(
     knowledge_root: Path | None = None,
 ) -> ResolvedTurnProfile:
     """Render one exported declaration into the exact turn configuration."""
-    repository = _repository_root()
     base_sources, base_instructions = _render_documents(
         profile,
         profile.instruction_documents,
         human=human,
-        repository=repository,
     )
     developer_sources, developer_instructions = _render_documents(
         profile,
         profile.developer_documents,
         human=human,
-        repository=repository,
     )
     if personality is not None:
         personality_text = personality.read_text(encoding="utf-8").strip()

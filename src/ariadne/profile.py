@@ -56,9 +56,8 @@ TELEGRAM_PROFILE = TurnProfile(
     effort=ReasoningEffort.high,
     web_search="disabled",
     instruction_documents=("base", "telegram"),
-    developer_documents=("grounding", "ariadne"),
+    developer_documents=("grounding", "companion"),
     enabled_tools=(
-        "inspect_ariadne_runtime",
         "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
@@ -95,9 +94,8 @@ MAIL_PROFILE = TurnProfile(
     effort=ReasoningEffort.medium,
     web_search="live",
     instruction_documents=("base", "mail"),
-    developer_documents=("grounding", "ariadne"),
+    developer_documents=("grounding", "companion"),
     enabled_tools=(
-        "inspect_ariadne_runtime",
         "send_telegram_message",
         "read_recent_telegram_messages",
         "request_telegram_file_delivery",
@@ -135,9 +133,8 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
         effort=settings.effort,
         web_search=settings.web_search,
         instruction_documents=("base", "revisit"),
-        developer_documents=("grounding", "ariadne"),
+        developer_documents=("grounding", "companion"),
         enabled_tools=(
-            "inspect_ariadne_runtime",
             "send_telegram_message",
             "read_recent_telegram_messages",
             "search_mail",

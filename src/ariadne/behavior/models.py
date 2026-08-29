@@ -153,15 +153,23 @@ class BehaviorScenario:
     review_questions: tuple[str, ...]
     telegram: tuple[ScenarioTelegramMessage, ...] = ()
     revisit: ScenarioRevisit | None = None
+    telegram_prompt: str | None = None
 
     def __post_init__(self) -> None:
-        mail_trigger = self.email is not None and self.route is not None
-        revisit_trigger = self.revisit is not None
-        if mail_trigger == revisit_trigger:
+        if (self.email is None) != (self.route is None):
+            raise ValueError("A mail scenario needs both an email and a route.")
+        triggers = (
+            self.email is not None,
+            self.revisit is not None,
+            self.telegram_prompt is not None,
+        )
+        if sum(triggers) != 1:
             raise ValueError("A behaviour scenario needs exactly one trigger.")
 
     @property
     def profile_name(self) -> str:
+        if self.telegram_prompt is not None:
+            return "telegram"
         return (
             f"revisit-{self.revisit.attention.value}"
             if self.revisit is not None
@@ -169,7 +177,9 @@ class BehaviorScenario:
         )
 
     def turn_input(self, workspace: Path, *, human: str = "Divy") -> str:
-        """Render the same owner activation used by the production runtime."""
+        """Render the same user input or Ariadne activation used in production."""
+        if self.telegram_prompt is not None:
+            return self.telegram_prompt
         if self.revisit is not None:
             scheduled = self.revisit
             created_at = scheduled.scheduled_for.astimezone(UTC)
@@ -214,6 +224,5 @@ class BehaviorScenario:
             self.email,
             route=self.route,
             move_after_iris=None,
-            routes_path=workspace / "mail-routes.yaml",
             unmatched_keep_in_inbox=True,
         )
