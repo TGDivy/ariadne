@@ -23,16 +23,26 @@ Kind = Annotated[
         strip_whitespace=True,
         min_length=1,
         max_length=48,
-        pattern=r"^[a-z][a-z0-9_-]*$",
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
     ),
 ]
-Label = Annotated[
+Tag = Annotated[
     str,
     StringConstraints(
         strip_whitespace=True,
         min_length=1,
         max_length=64,
-        pattern=r"^[a-z][a-z0-9_-]*$",
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    ),
+]
+Label = Tag
+Collection = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=240,
+        pattern=(r"^[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*$"),
     ),
 ]
 
@@ -50,34 +60,21 @@ class KnowledgeRelation(BaseModel):
     relation: Label
 
 
-class KnowledgeSource(BaseModel):
-    """Opaque provenance for a fact or change."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    source: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-    observed_at: datetime | None = None
-
-    @field_validator("observed_at")
-    @classmethod
-    def require_aware_observed_at(cls, value: datetime | None) -> datetime | None:
-        if value is not None and value.tzinfo is None:
-            raise ValueError("observed_at must include a timezone.")
-        return value
-
-
 class KnowledgeMetadata(BaseModel):
-    """The common front matter shared by every managed Markdown record."""
+    """Canonical front matter with semantic and Ariadne-owned fields."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     schema_version: Literal[1] = Field(default=1, alias="schema")
     id: Identifier
     title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    summary: Annotated[
+        str,
+        StringConstraints(strip_whitespace=True, min_length=1, max_length=600),
+    ]
     kind: Kind
-    state: (
-        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] | None
-    ) = None
+    collection: Collection
+    tags: tuple[Tag, ...] = ()
     aliases: tuple[
         Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)], ...
     ] = ()
@@ -86,14 +83,14 @@ class KnowledgeMetadata(BaseModel):
     related: tuple[KnowledgeRelation, ...] = ()
     created_at: datetime
     updated_at: datetime
-    sources: tuple[KnowledgeSource, ...] = ()
+    archived_at: datetime | None = None
 
-    @field_validator("aliases")
+    @field_validator("tags", "aliases")
     @classmethod
-    def unique_aliases(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+    def unique_values(cls, values: tuple[str, ...]) -> tuple[str, ...]:
         folded = [value.casefold() for value in values]
         if len(folded) != len(set(folded)):
-            raise ValueError("Aliases must be unique within a record.")
+            raise ValueError("Values must be unique within a record.")
         return values
 
     @field_validator("starts_at", "ends_at")
@@ -117,19 +114,25 @@ class KnowledgeMetadata(BaseModel):
             ) from error
         return value
 
-    @field_validator("updated_at")
+    @field_validator("created_at", "updated_at", "archived_at")
     @classmethod
-    def require_aware_updated_at(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            raise ValueError("updated_at must include a timezone.")
+    def require_aware_timestamp(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("Internal timestamps must include a timezone.")
         return value
 
-    @field_validator("created_at")
-    @classmethod
-    def require_aware_created_at(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            raise ValueError("created_at must include a timezone.")
-        return value
+
+class KnowledgeRelationshipSummary(BaseModel):
+    """Compact context about a directly related record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: Identifier
+    title: str
+    summary: str
+    kind: Kind
+    relation: Label
+    direction: Literal["incoming", "outgoing"]
 
 
 class KnowledgeRecord(BaseModel):
@@ -139,37 +142,48 @@ class KnowledgeRecord(BaseModel):
 
     metadata: KnowledgeMetadata
     body: str
-    revision: str
-    incoming: tuple[KnowledgeRelation, ...] = ()
+    relationships: tuple[KnowledgeRelationshipSummary, ...] = ()
 
     def public_payload(self) -> dict[str, object]:
-        payload = self.metadata.model_dump(mode="json", by_alias=True)
-        payload.update(
-            {
-                "body": self.body,
-                "revision": self.revision,
-                "incoming": [
-                    relation.model_dump(mode="json") for relation in self.incoming
-                ],
-            }
-        )
-        return payload
+        """Hide Ariadne-owned storage metadata from the model-facing result."""
+        metadata = self.metadata
+        return {
+            "id": metadata.id,
+            "title": metadata.title,
+            "summary": metadata.summary,
+            "kind": metadata.kind,
+            "collection": metadata.collection,
+            "tags": list(metadata.tags),
+            "aliases": list(metadata.aliases),
+            "starts_at": metadata.starts_at,
+            "ends_at": metadata.ends_at,
+            "archived": metadata.archived_at is not None,
+            "relationships": [
+                relationship.model_dump(mode="json")
+                for relationship in self.relationships
+            ],
+            "body": self.body,
+        }
 
 
 class KnowledgeSearchResult(BaseModel):
-    """A compact search candidate with enough context to choose a read."""
+    """A compact ranked search candidate."""
 
     model_config = ConfigDict(extra="forbid")
 
     id: Identifier
     title: str
+    summary: str
     kind: Kind
-    state: str | None
+    collection: Collection
+    tags: tuple[Tag, ...]
     starts_at: str | None
     ends_at: str | None
-    related: tuple[Identifier, ...]
-    revision: str
+    archived: bool
+    relationships: tuple[KnowledgeRelationshipSummary, ...]
     excerpt: str
+    matched_terms: tuple[str, ...]
+    unmatched_terms: tuple[str, ...]
     matched_by: tuple[str, ...]
 
 
@@ -178,7 +192,7 @@ class KnowledgeError(RuntimeError):
 
 
 class KnowledgeConflict(KnowledgeError):
-    """A requested write conflicts with newer knowledge."""
+    """A requested operation conflicts with existing knowledge."""
 
 
 class KnowledgeValidationError(KnowledgeError):

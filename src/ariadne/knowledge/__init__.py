@@ -6,8 +6,8 @@ from .models import (
     KnowledgeMetadata,
     KnowledgeRecord,
     KnowledgeRelation,
+    KnowledgeRelationshipSummary,
     KnowledgeSearchResult,
-    KnowledgeSource,
     KnowledgeSyncError,
     KnowledgeValidationError,
 )
@@ -18,8 +18,8 @@ __all__ = [
     "KnowledgeMetadata",
     "KnowledgeRecord",
     "KnowledgeRelation",
+    "KnowledgeRelationshipSummary",
     "KnowledgeSearchResult",
-    "KnowledgeSource",
     "KnowledgeSyncError",
     "KnowledgeValidationError",
 ]

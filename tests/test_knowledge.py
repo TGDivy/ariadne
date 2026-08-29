@@ -11,17 +11,11 @@ from ariadne.knowledge import (
     KnowledgeConflict,
     KnowledgeMetadata,
     KnowledgeRelation,
-    KnowledgeSource,
     KnowledgeSyncError,
     KnowledgeValidationError,
 )
-from ariadne.knowledge.documents import (
-    StoredKnowledge,
-    parse_document,
-    render_document,
-    revision_for,
-)
-from ariadne.knowledge.migration import inspect_migration
+from ariadne.knowledge.documents import StoredKnowledge, parse_document, render_document
+from ariadne.knowledge.orientation import render_orientation
 from ariadne.knowledge.search import KnowledgeIndex
 from ariadne.knowledge.store import KnowledgeStore
 from ariadne.mcp import knowledge as knowledge_tools
@@ -44,18 +38,22 @@ def metadata(
     identifier: str,
     title: str,
     kind: str,
+    collection: str,
     *,
+    summary: str | None = None,
+    tags: tuple[str, ...] = (),
     aliases: tuple[str, ...] = (),
-    state: str | None = None,
     starts_at: str | None = None,
     related: tuple[KnowledgeRelation, ...] = (),
 ) -> KnowledgeMetadata:
     return KnowledgeMetadata(
         id=identifier,
         title=title,
+        summary=summary or f"Useful context about {title}.",
         kind=kind,
+        collection=collection,
+        tags=tags,
         aliases=aliases,
-        state=state,
         starts_at=starts_at,
         related=related,
         created_at=NOW,
@@ -83,22 +81,48 @@ def knowledge_repository(tmp_path: Path) -> Path:
     git(root, "remote", "add", "origin", str(origin))
     write_record(
         root,
-        "Goals/Running.md",
-        metadata("goal:running", "Running", "goal", aliases=("half marathon",)),
+        "goal/health/running.md",
+        metadata(
+            "goal:running",
+            "Running",
+            "goal",
+            "health",
+            summary="Build consistency and complete a half marathon comfortably.",
+            tags=("health", "running"),
+            aliases=("half marathon",),
+        ),
         "Build consistency and complete a half marathon comfortably.",
     )
     write_record(
         root,
-        "Plans/Windsor.md",
+        "plan/running/windsor-trail-run.md",
         metadata(
             "plan:windsor-2026",
             "Windsor Trail Run",
             "plan",
-            state="confirmed",
+            "running",
+            summary="Confirmed Windsor half marathon; transport is not arranged.",
+            tags=("running", "travel"),
             starts_at="2026-08-30T09:20:00+01:00",
             related=(KnowledgeRelation(record="goal:running", relation="supports"),),
         ),
         "Collect the bib before the race. Transport is not arranged yet.",
+    )
+    write_record(
+        root,
+        "booking/travel/trainline-booking.md",
+        metadata(
+            "booking:trainline-windsor",
+            "Trainline booking",
+            "booking",
+            "travel",
+            summary="Train tickets from Waterloo to Windsor for race day.",
+            tags=("travel",),
+            related=(
+                KnowledgeRelation(record="plan:windsor-2026", relation="supports"),
+            ),
+        ),
+        "Outbound train reaches Windsor at 08:44. The return is flexible.",
     )
     git(root, "add", ".")
     git(root, "commit", "-m", "Initial knowledge")
@@ -106,114 +130,208 @@ def knowledge_repository(tmp_path: Path) -> Path:
     return root
 
 
-def test_markdown_round_trip_has_stable_semantic_metadata(tmp_path: Path) -> None:
-    path = tmp_path / "record.md"
+def test_markdown_round_trip_keeps_internal_metadata_out_of_public_result(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "lily.md"
     expected = metadata(
         "person:lily",
         "Lily Example",
         "person",
+        "friends",
+        summary="A friend from university.",
+        tags=("friend",),
         aliases=("Lil",),
-        related=(KnowledgeRelation(record="person:divy", relation="friend_of"),),
     )
+    path.write_bytes(render_document(expected, "Met at university."))
 
-    content = render_document(expected, "# Lily\n\nMet at university.")
-    path.write_bytes(content)
     loaded = parse_document(path)
+    public = json.dumps(
+        {
+            "id": loaded.metadata.id,
+            "title": loaded.metadata.title,
+            "summary": loaded.metadata.summary,
+        }
+    )
 
     assert loaded.metadata == expected
-    assert loaded.body == "# Lily\n\nMet at university."
-    assert loaded.revision == revision_for(content)
-    assert str(tmp_path) not in loaded.revision
+    assert loaded.body == "Met at university."
+    assert "created_at" not in public
+    assert "revision" not in public
+    assert "sources" not in public
 
 
-def test_search_ranks_names_and_supports_filters_and_relationships(
+def test_search_is_or_ranked_prefix_stemmed_and_typo_tolerant(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
 
-    by_title = store.search("Windsor Trail Run")
-    by_alias = store.search("half marathon")
-    related = store.search(kinds=("plan",), related_to="goal:running")
+    broad = store.search("Windsor train")
+    typo = store.search("Windosr")
+    prefix = store.search("train")
+    plural = store.search("trains")
+
+    assert {result.id for result in broad[:2]} == {
+        "plan:windsor-2026",
+        "booking:trainline-windsor",
+    }
+    windsor = next(result for result in broad if result.id == "plan:windsor-2026")
+    assert windsor.matched_terms == ("windsor",)
+    assert windsor.unmatched_terms == ("train",)
+    assert typo[0].id == "plan:windsor-2026"
+    assert prefix[0].id == "booking:trainline-windsor"
+    assert plural[0].id == "booking:trainline-windsor"
+
+
+def test_search_filters_dates_tags_collections_and_relationships(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+
+    tagged = store.search(tags=("running", "travel"))
+    collected = store.search(collections=("running",))
     dated = store.search(date_from="2026-08-30", date_through="2026-08-30")
+    related = store.search(kinds=("plan",), related_to="goal:running")
 
-    assert by_title[0].id == "plan:windsor-2026"
-    assert "exact_title" in by_title[0].matched_by
-    assert by_alias[0].id == "goal:running"
-    assert "exact_alias" in by_alias[0].matched_by
-    assert [result.id for result in related] == ["plan:windsor-2026"]
+    assert [result.id for result in tagged] == ["plan:windsor-2026"]
+    assert [result.id for result in collected] == ["plan:windsor-2026"]
     assert [result.id for result in dated] == ["plan:windsor-2026"]
+    assert [result.id for result in related] == ["plan:windsor-2026"]
 
 
-def test_reads_summarize_incoming_and_outgoing_relationships(
+def test_search_and_read_return_compact_relationship_context(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
 
+    result = store.search("Windsor")[0]
     goal, plan = store.read(("goal:running", "plan:windsor-2026"))
 
-    assert goal.incoming == (
-        KnowledgeRelation(record="plan:windsor-2026", relation="supports"),
-    )
-    assert plan.metadata.related == (
-        KnowledgeRelation(record="goal:running", relation="supports"),
-    )
-    assert "path" not in json.dumps(goal.public_payload())
+    assert result.relationships[0].id == "booking:trainline-windsor"
+    assert result.relationships[0].summary.startswith("Train tickets")
+    assert {relationship.direction for relationship in result.relationships} == {
+        "incoming",
+        "outgoing",
+    }
+    assert goal.relationships[0].id == "plan:windsor-2026"
+    assert goal.relationships[0].direction == "incoming"
+    assert plan.relationships[0].summary
+    assert "body" not in result.relationships[0].model_dump()
 
 
-def test_create_update_and_archive_are_synchronized_and_revision_checked(
+def test_browse_and_orientation_expose_a_two_level_human_map(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
+
+    tree = store.browse(depth=2, include_summaries=False)
+    running = store.browse("plan/running", depth=1)
+    orientation = store.orientation()
+
+    top_level = {child["name"] for child in tree["collections"]}
+    assert top_level == {"booking", "goal", "plan"}
+    assert running["records"][0]["id"] == "plan:windsor-2026"
+    assert running["records"][0]["summary"].startswith("Confirmed Windsor")
+    assert orientation["kinds"] == {"booking": 1, "goal": 1, "plan": 1}
+    assert orientation["tags"] == {"health": 1, "running": 2, "travel": 2}
+    assert orientation["relationships"] == {"supports": 2}
+    assert orientation["collections"] == [
+        "booking/travel",
+        "goal/health",
+        "plan/running",
+    ]
+
+    rendered = render_orientation(**orientation)
+    assert "booking/\n  travel/" in rendered
+    assert "Kinds: booking (1), goal (1), plan (1)" in rendered
+    assert "Relationships: supports (2)" in rendered
+
+
+def test_create_generates_id_path_and_timestamps_then_pushes(
+    knowledge_repository: Path,
+) -> None:
+    before = datetime.now(UTC)
+    store = KnowledgeStore(knowledge_repository)
+
     created = store.create(
-        title="Race breakfast",
+        title="Race Breakfast & Snacks",
+        summary="Possible food for race morning and recovery.",
         kind="scratch",
+        collection="race-preparation/food",
+        tags=("food", "running"),
         body="Try oats, banana, and a bagel.",
         related=(KnowledgeRelation(record="plan:windsor-2026", relation="supports"),),
     )
 
-    updated = store.update(
-        created.metadata.id,
-        created.revision,
-        kind="preference",
-        body="M&S is the practical choice for race breakfast.",
-        aliases=("race food",),
+    path = (
+        knowledge_repository / "scratch/race-preparation/food/race-breakfast-snacks.md"
     )
-
-    with pytest.raises(KnowledgeConflict, match="changed since it was read"):
-        store.update(created.metadata.id, created.revision, state="settled")
-
-    archived = store.archive(
-        updated.metadata.id, updated.revision, "The race is complete."
-    )
-
-    assert archived.metadata.state == "archived"
-    assert "The race is complete." in archived.body
-    assert store.search("race food") == ()
-    assert store.search("race food", include_archived=True)[0].id == created.metadata.id
+    stored = parse_document(path)
+    assert created.metadata.id == "scratch:race-breakfast-snacks"
+    assert path.is_file()
+    assert stored.metadata.created_at >= before
+    assert stored.metadata.updated_at == stored.metadata.created_at
+    assert "created_at" not in created.public_payload()
     assert git(knowledge_repository, "status", "--porcelain") == ""
-    assert len(git(knowledge_repository, "log", "--format=%s").splitlines()) == 4
     assert git(knowledge_repository, "rev-list", "@{upstream}..HEAD") == ""
 
+
+def test_update_uses_latest_record_updates_time_and_moves_generated_path(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+    original = store.read(("plan:windsor-2026",))[0]
+
+    updated = store.update(
+        "plan:windsor-2026",
+        title="Windsor Race Day",
+        summary="Race and train arrangements are confirmed.",
+        kind="event",
+        collection="2026/running",
+        tags=("running", "travel", "confirmed"),
+        body="Arrive at 08:44 and go directly to bib collection.",
+    )
+
+    destination = knowledge_repository / "event/2026/running/windsor-race-day.md"
+    assert not (knowledge_repository / "plan/running/windsor-trail-run.md").exists()
+    assert destination.is_file()
+    assert updated.metadata.id == "plan:windsor-2026"
+    assert updated.metadata.updated_at > original.metadata.updated_at
+    assert git(knowledge_repository, "status", "--porcelain") == ""
+
+
+def test_archive_is_timestamped_and_hidden_without_deleting(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+
+    archived = store.archive("booking:trainline-windsor", "The journey is complete.")
+
+    assert archived.metadata.archived_at is not None
+    assert archived.public_payload()["archived"] is True
+    assert store.search("Trainline") == ()
+    assert (
+        store.search("Trainline", include_archived=True)[0].id
+        == "booking:trainline-windsor"
+    )
     with pytest.raises(KnowledgeConflict, match="already archived"):
-        store.archive(
-            archived.metadata.id, archived.revision, "Do not archive this twice."
-        )
+        store.archive("booking:trainline-windsor", "Do not archive twice.")
 
 
 def test_create_avoids_ids_that_are_already_an_alias(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
-    running = store.read(("goal:running",))[0]
     store.update(
         "goal:running",
-        running.revision,
         aliases=("half marathon", "scratch:race-breakfast"),
     )
 
     created = store.create(
         title="Race breakfast",
+        summary="An incomplete food thought.",
         kind="scratch",
+        collection="running/food",
         body="An incomplete food thought.",
     )
 
@@ -224,15 +342,9 @@ def test_update_rejects_contradictory_patch_instead_of_guessing(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
-    plan = store.read(("plan:windsor-2026",))[0]
 
     with pytest.raises(KnowledgeValidationError, match="updated and cleared"):
-        store.update(
-            plan.metadata.id,
-            plan.revision,
-            state="complete",
-            clear=("state",),
-        )
+        store.update("plan:windsor-2026", tags=("complete",), clear=("tags",))
 
 
 def test_unmanaged_changes_block_mutation_without_overwriting_them(
@@ -243,10 +355,16 @@ def test_unmanaged_changes_block_mutation_without_overwriting_them(
     store = KnowledgeStore(knowledge_repository)
 
     with pytest.raises(KnowledgeSyncError, match="unmanaged local changes"):
-        store.create(title="Blocked", kind="scratch", body="Do not write this.")
+        store.create(
+            title="Blocked",
+            summary="This should not be written.",
+            kind="scratch",
+            collection="tests",
+            body="Do not write this.",
+        )
 
     assert unmanaged.read_text(encoding="utf-8") == "mine"
-    assert not (knowledge_repository / "Knowledge/scratch/blocked.md").exists()
+    assert not (knowledge_repository / "scratch/tests/blocked.md").exists()
 
 
 def test_a_local_commit_is_the_retry_state_after_push_failure(
@@ -261,8 +379,10 @@ def test_a_local_commit_is_the_retry_state_after_push_failure(
     with pytest.raises(KnowledgeSyncError, match="synchronized safely"):
         store.create(
             title="Durable retry",
+            summary="A record whose first push is rejected.",
             kind="scratch",
-            body="The local commit should survive a rejected push.",
+            collection="tests",
+            body="The local commit should survive.",
         )
 
     assert git(knowledge_repository, "status", "--porcelain") == ""
@@ -271,11 +391,57 @@ def test_a_local_commit_is_the_retry_state_after_push_failure(
     hook.unlink()
     store.create(
         title="Next thought",
+        summary="The operation first synchronizes the prior commit.",
         kind="scratch",
-        body="This operation first synchronizes the durable retry.",
+        collection="tests",
+        body="Then it writes this record.",
     )
 
     assert store.search("Durable retry")[0].id == "scratch:durable-retry"
+    assert git(knowledge_repository, "rev-list", "@{upstream}..HEAD") == ""
+
+
+def test_a_mutation_automatically_pulls_remote_knowledge_before_writing(
+    knowledge_repository: Path,
+) -> None:
+    origin = Path(git(knowledge_repository, "remote", "get-url", "origin"))
+    other = knowledge_repository.parent / "other"
+    git(
+        knowledge_repository.parent,
+        "clone",
+        "--branch",
+        "main",
+        str(origin),
+        str(other),
+    )
+    git(other, "config", "user.name", "Other Knowledge Process")
+    git(other, "config", "user.email", "other@example.test")
+    write_record(
+        other,
+        "note/travel/remote-change.md",
+        metadata(
+            "note:remote-change",
+            "Remote change",
+            "note",
+            "travel",
+            summary="Knowledge written by another synchronized process.",
+        ),
+        "This must be pulled before the next local write.",
+    )
+    git(other, "add", ".")
+    git(other, "commit", "-m", "Add remote knowledge")
+    git(other, "push")
+
+    store = KnowledgeStore(knowledge_repository)
+    store.create(
+        title="Local change",
+        summary="Knowledge written after synchronizing the remote change.",
+        kind="note",
+        collection="tests",
+        body="This is created only after the automatic pull.",
+    )
+
+    assert store.search("Remote change")[0].id == "note:remote-change"
     assert git(knowledge_repository, "rev-list", "@{upstream}..HEAD") == ""
 
 
@@ -286,59 +452,30 @@ def test_a_long_lived_reader_rebuilds_after_another_writer_changes_head(
     writer = KnowledgeStore(knowledge_repository)
     assert reader.search("new thought") == ()
 
-    writer.create(title="New thought", kind="scratch", body="A useful experiment.")
+    writer.create(
+        title="New thought",
+        summary="A useful experiment.",
+        kind="scratch",
+        collection="experiments",
+        body="A useful experiment.",
+    )
 
     assert reader.search("new thought")[0].title == "New thought"
-
-
-def test_migration_preview_inventories_legacy_records_without_writing(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "thread"
-    (root / "Plans").mkdir(parents=True)
-    legacy = root / "Plans/Windsor.md"
-    legacy.write_text(
-        "# Windsor Trail Run\n\nSee [missing](../People/Missing.md).\n",
-        encoding="utf-8",
-    )
-    old_front_matter = root / "Plans/Breakfast.md"
-    old_front_matter.write_text(
-        "---\nstatus: considering\n---\n\n# Race breakfast\n",
-        encoding="utf-8",
-    )
-    before = legacy.read_bytes()
-
-    report = inspect_migration(root)
-
-    assert report.payload()["summary"] == {
-        "total": 2,
-        "managed": 0,
-        "proposed": 2,
-        "invalid": 0,
-    }
-    candidates = {candidate.path: candidate for candidate in report.candidates}
-    assert candidates["Plans/Windsor.md"].proposed_id == "plan:windsor-trail-run"
-    assert candidates["Plans/Breakfast.md"].proposed_id == "plan:race-breakfast"
-    assert candidates["Plans/Breakfast.md"].problem is not None
-    assert report.broken_links == ("Plans/Windsor.md -> ../People/Missing.md",)
-    assert legacy.read_bytes() == before
 
 
 def test_thousand_record_index_remains_small_and_retrievable(tmp_path: Path) -> None:
     records = []
     for number in range(1_000):
         body = f"Generated context number {number} about training and recovery."
-        content = render_document(
-            metadata(f"note:generated-{number}", f"Generated {number}", "note"),
-            body,
+        record_metadata = metadata(
+            f"note:generated-{number}",
+            f"Generated {number}",
+            "note",
+            "generated",
+            summary=f"Generated training context {number}.",
         )
         records.append(
-            StoredKnowledge(
-                metadata(f"note:generated-{number}", f"Generated {number}", "note"),
-                body,
-                revision_for(content),
-                tmp_path / f"{number}.md",
-            )
+            StoredKnowledge(record_metadata, body, tmp_path / f"generated-{number}.md")
         )
 
     started = time.monotonic()
@@ -350,25 +487,10 @@ def test_thousand_record_index_remains_small_and_retrievable(tmp_path: Path) -> 
     assert elapsed < 2
 
 
-async def test_mcp_tools_hide_storage_and_attach_runtime_provenance(
-    knowledge_repository: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_mcp_tools_hide_storage_ids_timestamps_and_git_details(
+    knowledge_repository: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    context = tmp_path / "context.json"
-    context.write_text(
-        json.dumps(
-            {
-                "sources": [
-                    {
-                        "source": "mail:opaque-test-event",
-                        "observed_at": "2026-08-29T10:00:00Z",
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
     monkeypatch.setenv(knowledge_tools.ROOT_ENVIRONMENT, str(knowledge_repository))
-    monkeypatch.setenv(knowledge_tools.CONTEXT_ENVIRONMENT, str(context))
     knowledge_tools._STORES.clear()
 
     async with Client(create_server()) as client:
@@ -376,21 +498,22 @@ async def test_mcp_tools_hide_storage_and_attach_runtime_provenance(
             "create_knowledge",
             {
                 "title": "Windsor weather",
+                "summary": "Check the forecast before packing.",
                 "kind": "scratch",
+                "collection": "running/weather",
                 "body": "Check the forecast before packing.",
                 "related": [{"record": "plan:windsor-2026", "relation": "supports"}],
             },
         )
 
     payload = created.data["record"]
-    assert payload["sources"] == [
-        {
-            "source": "mail:opaque-test-event",
-            "observed_at": "2026-08-29T10:00:00Z",
-        }
-    ]
     rendered = json.dumps(payload)
+    assert payload["id"] == "scratch:windsor-weather"
     assert str(knowledge_repository) not in rendered
+    assert "created_at" not in rendered
+    assert "updated_at" not in rendered
+    assert "revision" not in rendered
+    assert "sources" not in rendered
     assert "commit" not in rendered.casefold()
 
 
@@ -399,7 +522,28 @@ async def test_knowledge_tool_annotations_distinguish_reads_from_private_writes(
 ):
     tools = {tool.name: tool for tool in await create_server().list_tools()}
 
-    for name in ("search_knowledge", "read_knowledge"):
+    assert "ranked lexical search" in tools["search_knowledge"].description
+    assert set(tools["create_knowledge"].parameters["properties"]) == {
+        "title",
+        "summary",
+        "kind",
+        "collection",
+        "body",
+        "tags",
+        "aliases",
+        "starts_at",
+        "ends_at",
+        "related",
+    }
+    assert {
+        "state",
+        "sources",
+        "revision",
+        "created_at",
+        "updated_at",
+    }.isdisjoint(tools["update_knowledge"].parameters["properties"])
+
+    for name in ("search_knowledge", "browse_knowledge", "read_knowledge"):
         assert tools[name].annotations is not None
         assert tools[name].annotations.readOnlyHint is True
         assert tools[name].annotations.destructiveHint is False
@@ -407,8 +551,3 @@ async def test_knowledge_tool_annotations_distinguish_reads_from_private_writes(
         assert tools[name].annotations is not None
         assert tools[name].annotations.readOnlyHint is False
         assert tools[name].annotations.destructiveHint is False
-
-
-def test_source_model_accepts_explicit_semantic_provenance() -> None:
-    source = KnowledgeSource(source="web:https://example.test/race")
-    assert source.source.startswith("web:")

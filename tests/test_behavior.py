@@ -67,6 +67,7 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "prepare_files",
         "triage_current_mail",
         "search_knowledge",
+        "browse_knowledge",
         "read_knowledge",
         "create_knowledge",
         "update_knowledge",
@@ -130,7 +131,7 @@ async def test_fake_knowledge_is_seeded_and_mutable(
     found = fake_knowledge.search_knowledge("Windsor")
     result = found["results"][0]
     updated = fake_knowledge.update_knowledge(
-        result["id"], result["revision"], body="Transport is arranged."
+        result["id"], body="Transport is arranged."
     )
 
     assert found["count"] == 1

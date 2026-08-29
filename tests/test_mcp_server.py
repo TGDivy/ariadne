@@ -100,6 +100,7 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "delete_calendar_event",
         "respond_to_calendar_invitation",
         "search_knowledge",
+        "browse_knowledge",
         "read_knowledge",
         "create_knowledge",
         "update_knowledge",

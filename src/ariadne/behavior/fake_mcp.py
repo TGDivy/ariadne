@@ -32,6 +32,7 @@ def runtime_status() -> dict[str, Any]:
             "prepare_files",
             "triage_current_mail",
             "search_knowledge",
+            "browse_knowledge",
             "read_knowledge",
             "create_knowledge",
             "update_knowledge",

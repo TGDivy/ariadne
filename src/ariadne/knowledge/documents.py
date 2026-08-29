@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,14 +17,7 @@ class StoredKnowledge:
 
     metadata: KnowledgeMetadata
     body: str
-    revision: str
     path: Path
-
-
-def revision_for(content: bytes) -> str:
-    """Return an opaque content revision, intentionally unrelated to Git."""
-    digest = hashlib.blake2s(content, digest_size=20).hexdigest()
-    return f"r1:{digest}"
 
 
 def parse_document(path: Path) -> StoredKnowledge:
@@ -60,13 +52,13 @@ def parse_document(path: Path) -> StoredKnowledge:
             f"Managed record {path} is invalid: {error}"
         ) from error
     body = text[boundary + 5 :].strip()
-    return StoredKnowledge(metadata, body, revision_for(content), path)
+    return StoredKnowledge(metadata, body, path)
 
 
 def render_document(metadata: KnowledgeMetadata, body: str) -> bytes:
     """Render deterministic, human-readable Markdown."""
     values = metadata.model_dump(mode="json", by_alias=True, exclude_none=True)
-    for field in ("aliases", "related", "sources"):
+    for field in ("tags", "aliases", "related"):
         if not values.get(field):
             values.pop(field, None)
     front_matter = yaml.safe_dump(

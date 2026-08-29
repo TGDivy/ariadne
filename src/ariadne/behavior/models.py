@@ -23,9 +23,11 @@ class ScenarioKnowledge:
 
     id: str
     title: str
+    summary: str
     kind: str
+    collection: str
     body: str
-    state: str | None = None
+    tags: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
     starts_at: str | None = None
     ends_at: str | None = None
@@ -36,8 +38,10 @@ class ScenarioKnowledge:
             "schema": 1,
             "id": self.id,
             "title": self.title,
+            "summary": self.summary,
             "kind": self.kind,
-            "state": self.state,
+            "collection": self.collection,
+            "tags": list(self.tags),
             "aliases": list(self.aliases),
             "starts_at": self.starts_at,
             "ends_at": self.ends_at,
@@ -45,12 +49,8 @@ class ScenarioKnowledge:
                 {"record": record, "relation": relation}
                 for record, relation in self.related
             ],
-            "created_at": "2026-08-29T09:00:00Z",
-            "updated_at": "2026-08-29T09:00:00Z",
-            "sources": [],
+            "archived": False,
             "body": self.body,
-            "revision": "scenario:1",
-            "incoming": [],
         }
 
 

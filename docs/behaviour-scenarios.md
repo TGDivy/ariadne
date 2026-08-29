@@ -71,6 +71,6 @@ The initial stories are the two halves of the Windsor example:
   flexible return, and notice the tight arrival window.
 
 These first runs should make current capability gaps visible. The scenario
-profile now exposes the five semantic knowledge operations so prompt work can
+profile now exposes the six semantic knowledge operations so prompt work can
 be exercised against their exact contracts. The production mail profile still
 does not enable them, and neither profile is cut over from the Thread yet.
