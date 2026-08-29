@@ -20,8 +20,6 @@ class FakeBot:
     def __init__(self, *, reject_rich: bool = False) -> None:
         self.reject_rich = reject_rich
         self.api_calls: list[tuple[str, dict[str, Any]]] = []
-        self.sent: list[dict[str, Any]] = []
-        self.edits: list[dict[str, Any]] = []
 
     async def do_api_request(
         self,
@@ -38,19 +36,11 @@ class FakeBot:
             chat_id=arguments.get("chat_id", 7),
         )
 
-    async def send_message(self, **kwargs: Any) -> SimpleNamespace:
-        self.sent.append(kwargs)
-        return SimpleNamespace(message_id=200 + len(self.sent), chat_id=7)
-
-    async def edit_message_text(self, **kwargs: Any) -> SimpleNamespace:
-        self.edits.append(kwargs)
-        return SimpleNamespace(message_id=kwargs["message_id"], chat_id=7)
-
 
 def test_button_answers_are_validated_and_applied_once(tmp_path: Path) -> None:
     store = TelegramQuestionStore(tmp_path / "questions.sqlite3")
     question = store.create(7, "Where should I deploy?", ["Staging", "Production"])
-    store.attach_message(question.question_id, 90, rich=True)
+    store.attach_message(question.question_id, 90)
 
     wrong_message = store.answer_choice(
         question.question_id, chat_id=7, message_id=91, choice_index=1
@@ -102,7 +92,7 @@ def test_expired_and_cancelled_questions_cannot_be_selected(
     monkeypatch.setattr(question_module.time, "time", lambda: clock[0])
     store = TelegramQuestionStore(tmp_path / "questions.sqlite3")
     expired = store.create(7, "Expired?", ["A", "B"], ttl_seconds=5)
-    store.attach_message(expired.question_id, 90, rich=True)
+    store.attach_message(expired.question_id, 90)
     clock[0] = 106.0
 
     refreshed = store.get(expired.question_id)
@@ -118,7 +108,7 @@ def test_expired_and_cancelled_questions_cannot_be_selected(
 def test_restart_recovery_cancels_orphaned_questions(tmp_path: Path) -> None:
     store = TelegramQuestionStore(tmp_path / "questions.sqlite3")
     question = store.create(7, "Still there?", ["Yes", "No"])
-    store.attach_message(question.question_id, 90, rich=True)
+    store.attach_message(question.question_id, 90)
 
     recovered = TelegramQuestionStore(store.path).cancel_pending(7)
 
@@ -135,8 +125,8 @@ async def test_question_card_uses_embedded_rich_buttons_and_disables_them(
     fake = FakeBot()
     card = TelegramQuestionCard(cast(Bot, fake))
 
-    message, rich = await card.send(question, reply_to_message_id=42)
-    attached = store.attach_message(question.question_id, message.message_id, rich=rich)
+    message = await card.send(question)
+    attached = store.attach_message(question.question_id, message.message_id)
     assert attached is not None
     selection = store.answer_choice(
         question.question_id,
@@ -147,12 +137,10 @@ async def test_question_card_uses_embedded_rich_buttons_and_disables_them(
     assert selection.question is not None
     await card.settle(selection.question)
 
-    assert rich is True
     assert fake.api_calls[0][0] == "sendRichMessage"
     sent_markdown = fake.api_calls[0][1]["rich_message"]["markdown"]
     assert '<tg-button type="callback_data" style="primary"' in sent_markdown
     assert sent_markdown.count("<tg-button-row") == 1
-    assert fake.api_calls[0][1]["reply_parameters"]["message_id"] == 42
     assert fake.api_calls[1][0] == "editMessageText"
     final_markdown = fake.api_calls[1][1]["rich_message"]["markdown"]
     assert '<tg-button type="disabled" style="success">✓ Production' in final_markdown
@@ -170,7 +158,7 @@ async def test_question_choices_use_two_buttons_per_rich_row(tmp_path: Path) -> 
     assert markdown.count("<tg-button-row") == 3
 
 
-async def test_question_card_falls_back_to_a_classic_keyboard(
+async def test_question_card_surfaces_rich_message_rejection(
     tmp_path: Path,
 ) -> None:
     store = TelegramQuestionStore(tmp_path / "questions.sqlite3")
@@ -178,28 +166,8 @@ async def test_question_card_falls_back_to_a_classic_keyboard(
     fake = FakeBot(reject_rich=True)
     card = TelegramQuestionCard(cast(Bot, fake))
 
-    message, rich = await card.send(question)
-    attached = store.attach_message(question.question_id, message.message_id, rich=rich)
-    assert attached is not None
-    answered = store.answer_text(7, "Something else")
-    assert answered is not None
-    await card.settle(answered)
-
-    assert rich is False
-    assert fake.sent[0]["text"] == "Choose"
-    assert (
-        fake.sent[0]["reply_markup"]
-        .inline_keyboard[0][0]
-        .callback_data.startswith("question:")
-    )
-    assert fake.edits == [
-        {
-            "chat_id": 7,
-            "message_id": message.message_id,
-            "text": "Choose\n\nAnswered.",
-            "reply_markup": None,
-        }
-    ]
+    with pytest.raises(BadRequest, match="Rich Messages unavailable"):
+        await card.send(question)
 
 
 def test_question_validation_and_callback_parsing() -> None:

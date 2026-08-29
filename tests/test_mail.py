@@ -324,7 +324,7 @@ class DecidingConversation:
         self.prompts: list[str] = []
         self.closed = False
 
-    async def stream_reply(self, prompt: str):
+    async def stream_turn(self, prompt: str):
         self.prompts.append(prompt)
         self.state.record_model_decision(
             self.job_id,
@@ -344,7 +344,7 @@ class FailingConversation:
         self.prompts: list[str] = []
         self.closed = False
 
-    async def stream_reply(self, prompt: str):
+    async def stream_turn(self, prompt: str):
         self.prompts.append(prompt)
         if False:
             yield ""

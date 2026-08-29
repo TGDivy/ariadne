@@ -14,9 +14,8 @@ from caldav.lib.error import AuthorizationError, ETagMismatchError, RateLimitErr
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from imapclient import IMAPClient  # type: ignore[import-untyped]
-from telegram import Bot, ReplyParameters
-from telegram.constants import ParseMode, ReactionEmoji
-from telegram.error import BadRequest, EndPointNotFound, TelegramError
+from telegram import Bot
+from telegram.error import TelegramError
 
 from .calendar import (
     CalendarConflict,
@@ -36,7 +35,7 @@ from .mail import (
 from .mcp_errors import install_safe_tool_error_handling
 from .profile import PROFILES
 from .telegram.file_delivery import FileDelivery, FileDeliveryError
-from .telegram.format import split_for_telegram, telegram_messages
+from .telegram.outbound import send_rich_text
 from .telegram.questions import (
     QUESTION_TIMEOUT_SECONDS,
     ActiveQuestionError,
@@ -45,25 +44,19 @@ from .telegram.questions import (
     question_state_path,
     validate_question,
 )
-from .telegram.rich import RichBotAPI, split_rich_markdown
 
 LOGGER = logging.getLogger(__name__)
 
 mcp = FastMCP(
     "Ariadne",
     instructions=(
-        "Local runtime inspection, speaking in Telegram, "
+        "Local runtime inspection, proactive Telegram notification, "
         "and explicitly approved Telegram delivery."
     ),
     version="0.1.0",
     strict_input_validation=True,
 )
 install_safe_tool_error_handling(mcp)
-
-VARIATION_SELECTOR = "\ufe0f"
-REACTIONS = {
-    emoji.value.replace(VARIATION_SELECTOR, ""): emoji.value for emoji in ReactionEmoji
-}
 
 
 def _git_status(vault: Path) -> dict[str, Any] | None:
@@ -133,118 +126,28 @@ def _telegram_chat() -> tuple[str, int]:
         raise ToolError("Telegram is not reachable from this runtime.") from error
 
 
-async def _send_chunks(
-    bot: Bot,
-    chat_id: int,
-    chunks: list[str],
-    parse_mode: ParseMode | None,
-    reply_to: ReplyParameters | None,
-) -> list[int]:
-    sent: list[int] = []
-    for chunk in chunks:
-        message = await bot.send_message(
-            chat_id=chat_id,
-            text=chunk,
-            parse_mode=parse_mode,
-            reply_parameters=reply_to if not sent else None,
-        )
-        sent.append(message.message_id)
-    return sent
-
-
-async def _send_rich_chunks(
-    bot: Bot,
-    chat_id: int,
-    chunks: list[str],
-    reply_to_message_id: int | None,
-) -> list[int]:
-    """Send complete Rich Markdown blocks through Bot API forward compatibility."""
-    api = RichBotAPI(bot)
-    sent: list[int] = []
-    for chunk in chunks:
-        message = await api.send(
-            chat_id=chat_id,
-            markdown=chunk,
-            reply_to_message_id=(reply_to_message_id if not sent else None),
-        )
-        sent.append(message.message_id)
-    return sent
-
-
 @mcp.tool
-async def send_telegram_message(
-    text: str, reply_to_message_id: int | None = None
-) -> list[int]:
+async def send_telegram_message(text: str) -> list[int]:
     """Send a persistent message to the human's configured private Telegram.
 
     The only destination belongs to the same human and cannot be supplied or
-    changed by the caller. Use this for notifications outside Telegram turns or
-    to speak before a Telegram turn ends. Ariadne handles Markdown and splitting.
+    changed by the caller. This capability exists only in proactive background
+    turns; Telegram-triggered turns speak through native Codex response phases.
     """
     if not text.strip():
         raise ToolError("A message needs something to say.")
 
     token, chat_id = _telegram_chat()
-    chunks, is_html = telegram_messages(text)
-    reply_to = (
-        ReplyParameters(reply_to_message_id, allow_sending_without_reply=True)
-        if reply_to_message_id is not None
-        else None
-    )
     try:
-        async with Bot(token) as bot:
-            try:
-                return await _send_rich_chunks(
-                    bot,
-                    chat_id,
-                    split_rich_markdown(text),
-                    reply_to_message_id,
-                )
-            except (BadRequest, EndPointNotFound):
-                pass
-            try:
-                return await _send_chunks(
-                    bot,
-                    chat_id,
-                    chunks,
-                    ParseMode.HTML if is_html else None,
-                    reply_to,
-                )
-            except BadRequest:
-                if not is_html:
-                    raise
-                return await _send_chunks(
-                    bot, chat_id, split_for_telegram(text), None, reply_to
-                )
+        return await send_rich_text(token, chat_id, text)
     except TelegramError as error:
         raise ToolError("Telegram could not deliver that message.") from error
-
-
-@mcp.tool
-async def react(message_id: int, reaction: str) -> None:
-    """React to one Telegram message with a single emoji.
-
-    Passing an empty reaction removes the one already there.
-    """
-    emoji = REACTIONS.get(reaction.replace(VARIATION_SELECTOR, ""))
-    if reaction and emoji is None:
-        raise ToolError(f"Telegram has no {reaction} reaction.")
-
-    token, chat_id = _telegram_chat()
-    try:
-        async with Bot(token) as bot:
-            await bot.set_message_reaction(
-                chat_id=chat_id, message_id=message_id, reaction=emoji
-            )
-    except TelegramError as error:
-        raise ToolError("Telegram could not add that reaction.") from error
 
 
 @mcp.tool
 async def ask_telegram_question(
     prompt: str,
     choices: list[str],
-    reply_to_message_id: int | None = None,
 ) -> dict[str, str]:
     """Ask the human one choice question and wait for their answer.
 
@@ -257,9 +160,6 @@ async def ask_telegram_question(
         prompt, normalized_choices = validate_question(prompt, choices)
     except ValueError as error:
         raise ToolError(str(error)) from error
-    if reply_to_message_id is not None and reply_to_message_id < 1:
-        raise ToolError("A reply message id must be positive.")
-
     token, chat_id = _telegram_chat()
     store = TelegramQuestionStore(question_state_path())
     try:
@@ -276,11 +176,9 @@ async def ask_telegram_question(
         async with Bot(token) as bot:
             card = TelegramQuestionCard(bot)
             try:
-                message, rich = await card.send(
-                    question, reply_to_message_id=reply_to_message_id
-                )
+                message = await card.send(question)
                 attached = store.attach_message(
-                    question.question_id, message.message_id, rich=rich
+                    question.question_id, message.message_id
                 )
                 if attached is None:
                     raise RuntimeError("The Telegram question state disappeared.")

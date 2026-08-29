@@ -718,7 +718,6 @@ class RichBotAPI:
         *,
         chat_id: int,
         markdown: str,
-        reply_to_message_id: int | None = None,
         message_thread_id: int | None = None,
         buttons: Sequence[RichButton] = (),
         buttons_per_row: int = 8,
@@ -733,7 +732,6 @@ class RichBotAPI:
                 buttons_per_row=buttons_per_row,
                 disable_interactions=disable_interactions,
             ),
-            reply_to_message_id=reply_to_message_id,
             message_thread_id=message_thread_id,
         )
 
@@ -742,7 +740,6 @@ class RichBotAPI:
         *,
         chat_id: int,
         rich_message: Mapping[str, Any],
-        reply_to_message_id: int | None = None,
         message_thread_id: int | None = None,
     ) -> Message:
         """Send any valid ``InputRichMessage``, including explicit block trees."""
@@ -750,11 +747,6 @@ class RichBotAPI:
             "chat_id": chat_id,
             "rich_message": dict(rich_message),
         }
-        if reply_to_message_id is not None:
-            arguments["reply_parameters"] = {
-                "message_id": reply_to_message_id,
-                "allow_sending_without_reply": True,
-            }
         if message_thread_id is not None:
             arguments["message_thread_id"] = message_thread_id
         return cast(

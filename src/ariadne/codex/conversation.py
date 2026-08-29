@@ -5,7 +5,7 @@ import json
 import logging
 import sys
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Literal, cast
 
@@ -34,6 +34,8 @@ from openai_codex.generated.v2_all import (
     McpToolCallThreadItem,
     MessagePhase,
     PlanThreadItem,
+    ReasoningSummary,
+    ReasoningSummaryTextDeltaNotification,
     ReasoningThreadItem,
     ThreadTokenUsageUpdatedNotification,
     TokenUsageBreakdown,
@@ -44,19 +46,26 @@ from openai_codex.generated.v2_all import (
 from openai_codex.models import JsonObject
 
 from ..telemetry import Telemetry
+from .events import (
+    ActivityUpdated,
+    AgentMessageCompleted,
+    AgentMessageStarted,
+    AgentMessageUpdated,
+    ConversationEvent,
+    WorkStarted,
+    WorkSummaryUpdated,
+)
 from .models import CodexModel, CodexTurnSettings, ResolvedTurnProfile
 
 LOGGER = logging.getLogger(__name__)
 
-ActivityCallback = Callable[[str], Awaitable[None]]
-SpokenCallback = Callable[[str], None]
 StopRequested = Callable[[], bool]
 
 WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_TOOL_TIMEOUT_SECONDS = 16 * 60
 MCP_SERVER_NAME = "ariadne"
 TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
-TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "react", "ask_telegram_question")
+TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "ask_telegram_question")
 MAIL_ACTIVITY = {
     "search_mail": "Searching mail…",
     "read_mail": "Reading mail…",
@@ -115,27 +124,6 @@ def _activity_message(item: object) -> str | None:
     if isinstance(item, CollabAgentToolCallThreadItem):
         return "Coordinating work…"
     return None
-
-
-def _spoken_text(item: object) -> str | None:
-    """Return the text of a message Iris just sent to Telegram herself."""
-    if not isinstance(item, McpToolCallThreadItem):
-        return None
-    if item.server != MCP_SERVER_NAME or item.tool != TELEGRAM_MESSAGE_TOOL:
-        return None
-    if item.status != McpToolCallStatus.completed:
-        return None
-
-    arguments = item.arguments
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments)
-        except json.JSONDecodeError:
-            return None
-    if not isinstance(arguments, dict):
-        return None
-    text = arguments.get("text")
-    return text if isinstance(text, str) else None
 
 
 def _log_mcp_started(item: object, source: str) -> float | None:
@@ -348,20 +336,14 @@ class CodexConversation:
         await turn.steer(_turn_input(message, image_paths))
         return True
 
-    async def stream_reply(
+    async def stream_turn(
         self,
         message: str,
         *,
         image_paths: tuple[Path, ...] = (),
-        activity: ActivityCallback | None = None,
-        spoken: SpokenCallback | None = None,
         stop_requested: StopRequested | None = None,
-    ) -> AsyncIterator[str]:
-        """Yield the complete accumulated agent message as each delta arrives.
-
-        `spoken` receives every message Iris sends to Telegram herself during
-        the turn, so Ariadne knows what has already reached the chat.
-        """
+    ) -> AsyncIterator[ConversationEvent]:
+        """Yield semantic work and speech events for one Codex turn."""
         observation = self._telemetry.start_turn(
             source=self._profile.name,
             model=self._profile.model,
@@ -382,29 +364,65 @@ class CodexConversation:
                 effort=self._profile.effort,
                 model=self._profile.model,
                 sandbox=self._profile.sandbox,
+                summary=ReasoningSummary.model_validate(
+                    self._profile.reasoning_summary
+                ),
             )
             self._active_turn = turn
             if stop_requested is not None and stop_requested():
                 await self.interrupt()
 
-            response = ""
-            final_answer: str | None = None
+            message_phases: dict[str, MessagePhase] = {}
+            message_text: dict[str, str] = {}
+            summary_text: dict[tuple[str, int], str] = {}
             async for event in turn.stream():
                 if isinstance(event.payload, AgentMessageDeltaNotification):
                     if event.payload.delta:
+                        phase = message_phases.get(event.payload.item_id)
+                        if phase is None:
+                            raise RuntimeError(
+                                "Codex streamed speech before declaring its phase."
+                            )
                         observation.first_response()
-                        response += event.payload.delta
-                        yield response
+                        accumulated = (
+                            message_text.get(event.payload.item_id, "")
+                            + event.payload.delta
+                        )
+                        message_text[event.payload.item_id] = accumulated
+                        yield AgentMessageUpdated(
+                            event.payload.item_id, phase, accumulated
+                        )
+                elif isinstance(event.payload, ReasoningSummaryTextDeltaNotification):
+                    key = (event.payload.item_id, event.payload.summary_index)
+                    accumulated = summary_text.get(key, "") + event.payload.delta
+                    summary_text[key] = accumulated
+                    yield WorkSummaryUpdated(
+                        event.payload.item_id,
+                        event.payload.summary_index,
+                        accumulated,
+                    )
                 elif isinstance(event.payload, ItemStartedNotification):
                     item = event.payload.item.root
                     observation.tool_started(item)
                     started_at = _log_mcp_started(item, self._profile.name)
                     if started_at is not None:
                         mcp_started_at[item.id] = started_at
-                    activity_message = _activity_message(item)
-                    if activity_message is not None and activity is not None:
-                        LOGGER.info("Codex activity: %s", activity_message)
-                        await activity(activity_message)
+                    if isinstance(item, AgentMessageThreadItem):
+                        if item.phase is None:
+                            raise RuntimeError(
+                                "Codex started speech without a supported phase."
+                            )
+                        message_phases[item.id] = item.phase
+                        message_text[item.id] = ""
+                        yield AgentMessageStarted(item.id, item.phase)
+                    else:
+                        activity_message = _activity_message(item)
+                        if activity_message is not None:
+                            LOGGER.info("Codex activity: %s", activity_message)
+                            if isinstance(item, (ReasoningThreadItem, PlanThreadItem)):
+                                yield WorkStarted(item.id, activity_message)
+                            else:
+                                yield ActivityUpdated(activity_message)
                 elif isinstance(event.payload, ItemCompletedNotification):
                     item = event.payload.item.root
                     observation.tool_completed(item)
@@ -414,14 +432,14 @@ class CodexConversation:
                             self._profile.name,
                             mcp_started_at.pop(item.id, None),
                         )
-                    if (
-                        isinstance(item, AgentMessageThreadItem)
-                        and item.phase == MessagePhase.final_answer
-                    ):
-                        final_answer = item.text
-                    spoken_text = _spoken_text(item)
-                    if spoken_text is not None and spoken is not None:
-                        spoken(spoken_text)
+                    if isinstance(item, AgentMessageThreadItem):
+                        phase = message_phases.pop(item.id, None)
+                        if item.phase is None or phase != item.phase:
+                            raise RuntimeError(
+                                "Codex completed speech without its declared phase."
+                            )
+                        message_text.pop(item.id, None)
+                        yield AgentMessageCompleted(item.id, phase, item.text)
                 elif isinstance(event.payload, ThreadTokenUsageUpdatedNotification):
                     observation.usage(event.payload.token_usage, usage_baseline)
                     self._thread_token_usage_total = event.payload.token_usage.total
@@ -438,12 +456,6 @@ class CodexConversation:
                     if event.payload.turn.status == TurnStatus.failed:
                         raise RuntimeError("Codex turn failed.")
 
-            if final_answer is not None and final_answer != response:
-                response = final_answer
-                yield response
-
-            if not response:
-                raise RuntimeError("Codex completed without an agent response.")
             status = "success"
         except (TurnInterrupted, asyncio.CancelledError) as caught:
             status = "cancelled"

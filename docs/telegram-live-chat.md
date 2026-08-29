@@ -15,13 +15,21 @@ community-maintained library, not Telegram's official SDK.
 The official [Rich Text Demo bot](https://t.me/richtextdemobot) is the behavior
 reference. Ariadne deliberately does not use `sendRichMessageDraft`: native
 drafts are ephemeral and can make the client's composer unavailable. It sends a
-normal Rich Message once and edits that message instead.
+normal Rich Message for the current work or speech phase and edits that message
+instead.
+
+The live message is the visible activity signal, so Ariadne does not also send
+Telegram typing actions. This avoids a redundant indicator and an unbounded
+refresh loop while preserving the more informative progress state and Stop
+control. Ordinary live responses are top-level messages in the same Telegram
+topic. Telegram replies provide quoted input context but do not force a visual
+reply from Iris.
 
 ```text
                          ┌──────────────┐
 user message ───────────▶│   STARTING   │
                          └──────┬───────┘
-                                │ persistent “Thinking…” + Stop
+                                │ temporary “Thinking…” + Stop
                                 ▼
                          ┌──────────────┐
           follow-up ────▶│   RUNNING    │◀──── rich edit / activity
@@ -41,8 +49,8 @@ user message ───────────▶│   STARTING   │
                                       error ───────────▶ FAILED
 ```
 
-`WAITING_INPUT` is still part of the active Codex turn. The live response and
-its Stop button remain present while the separate question card waits.
+`WAITING_INPUT` is still part of the active Codex turn. The current live bubble
+and its Stop button remain present while the separate question card waits.
 
 ## Mid-turn messages
 
@@ -61,7 +69,7 @@ t3  You: reply to message 123             ┘
     Codex active handle:  t1 → t2 → t3, exactly once each
                                             │
                                             ▼
-    Ariadne: [edited, fully rendered answer]
+    Ariadne: [current phase continues with the steered context]
 ```
 
 If Codex has not exposed an active turn handle yet, or a steering request races
@@ -69,48 +77,51 @@ with turn completion, the input stays queued. Once a safe boundary exists it is
 steered or becomes the next turn. Ariadne sends no “noted” acknowledgement
 bubbles, and it does not discard input on a steering exception.
 
-## Rich response lifecycle
+## Native phase lifecycle
 
 ```text
-STARTING                 TEXT ARRIVES              TOOL AFTER TEXT
-┌────────────────────┐   ┌────────────────────┐   ┌────────────────────┐
-│ ✦ Thinking…       │   │ ## Recommendation  │   │ ## Recommendation  │
-│             [Stop] │ ─▶│ First safe paragraph│ ─▶│ First safe paragraph│
-└────────────────────┘   │                    │   │                    │
-                       │ ✦ Writing…        │   │ ✦ Searching…      │
-                       │             [Stop] │   │             [Stop] │
-                       └────────────────────┘   └────────────────────┘
+reasoning starts       summary streams        commentary starts
+┌──────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
+│ ✦ Analysing…    │  │ Confirming the     │  │ The growth figure does │
+│           [Stop] │─▶│ growth calculation │─▶│ not reconcile.         │
+└──────────────────┘  │ ✦ Analysing…      │  └────────────────────────┘
+                      │             [Stop] │       permanent bubble 1
+                      └────────────────────┘
 
-INCOMPLETE TABLE         COMPLETE
-┌────────────────────┐   ┌────────────────────┐
-│ ## Recommendation  │   │ ## Recommendation  │
-│ | A | B |          │   │ | A | B |          │
-│ | 1 | 2 |          │ ─▶│ | 1 | 2 |          │
-│                    │   │ | 3 | 4 |          │
-│ ✦ Building a table…│   │ final text         │
-│             [Stop] │   └────────────────────┘
-└────────────────────┘
+new work bubble        summary streams        final starts
+┌──────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
+│ ✦ Thinking…     │  │ Choosing the next  │  │ Correct it before the  │
+│           [Stop] │─▶│ action             │─▶│ meeting.               │
+└──────────────────┘  │ ✦ Analysing…      │  └────────────────────────┘
+                      │             [Stop] │       permanent bubble 2
+                      └────────────────────┘
 
-Stop at any live state ─▶ useful stable body + _Stopped._ + [Stopped]
+Stop at any live state ─▶ useful partial speech, or “Stopped” + [Stopped]
 ```
 
-The activity footer is independent from the body. A tool event can therefore
-change `Writing…` to `Searching…`, `Reading mail…`, `Running a command…`, or another
-real state after prose has already appeared, without replacing that prose.
+Codex is asked for concise reasoning summaries. These are generated summaries,
+not raw hidden reasoning; they remain visibly provisional and are replaced by
+the next native commentary or final message. Each completed commentary item is
+permanent, then Ariadne opens a fresh work bubble for the remainder of the turn.
+
+The activity footer is independent from the provisional body. A tool event can
+change `Analysing…` to `Searching…`, `Reading mail…`, or `Running a command…`.
 `Analysing…` and `Planning…` come from corresponding Codex events. The stable `✦`
-is intentionally a quiet sparkle rather than a timer-driven animation: labels
-change only when something actually changes.
+is intentionally quiet rather than timer-driven: labels change only when a real
+event occurs.
 
 Telegram's native shimmering `<tg-thinking>` block is restricted to
 `sendRichMessageDraft`. Because that draft transport can make the composer's
 send action unavailable, the persistent path does not use it.
 
 ```text
-cumulative model delta ──▶ structural stabilizer ─┬─▶ committed rich body ─┐
-                                                └─▶ pending tail kind    │
-real Codex/tool event ───────────────────────────▶ activity footer     ├─▶ same message ID
-latest state within 1 second ──────────────────────────▶ coalesced edit      ┘
-turn completes ──▶ exact final rich source + active safe interactions; no footer
+Codex item start ──▶ item id → commentary/final phase
+summary delta ─────▶ temporary work body ─┐
+message delta ─────▶ structural stabilizer ├─▶ current message ID
+tool event ────────▶ activity footer      │
+latest state within 1 second ─────────────┘
+item completes ───▶ exact rich source, no footer ──▶ permanent bubble
+commentary completes ──▶ open next temporary work bubble
 ```
 
 The stabilizer commits complete paragraphs and table rows, but holds an
@@ -127,10 +138,9 @@ live exception. On the terminal edit, the exact complete rich source restores
 safe links and structured blocks atomically. Callback data is never trusted
 from model text; Ariadne constructs its own active controls.
 
-One Rich Message accepts 32,768 characters. The live preview uses the first
-safe rich chunk; final answers over the limit are split on block boundaries and
-sent as multiple Rich Messages. The 4,096-character classic limit applies only
-to classic fallback paths.
+One Rich Message accepts 32,768 characters. A live preview uses the first safe
+rich chunk; a completed commentary or final message over the limit is split on
+block boundaries and sent as additional Rich Messages.
 
 ## Conversation rhythm
 
@@ -190,12 +200,13 @@ callback identifiers. The state database defaults to
 an absolute path, and is created mode `0600`. On restart, orphaned cards are
 cancelled and disabled.
 
-## Classic fallback
+## Delivery contract
 
-If Telegram's Bot API rejects a Rich Message operation, Ariadne falls back to
-classic HTML/text and inline keyboards. A rich preview failure keeps the last
-valid preview; terminal completion, stop, and failure states use durable
-fallback editing. Telegram itself prompts older client applications to update.
+Rich Messages are required for live responses, proactive messages, and question
+cards. A rejected Rich Message operation is an explicit delivery failure; it is
+not silently converted to classic HTML, plain text, or an inline keyboard. A
+transient preview edit may leave the last valid preview visible, but terminal
+completion, stop, and failure states must succeed through the Rich Message API.
 
 ## Manual smoke test
 
@@ -211,7 +222,8 @@ Run these cases in order:
 
 1. Send “Count slowly to twenty and explain each step.” While it streams, send
    two follow-ups quickly. Both must remain sent in Telegram, arrive in order,
-   and affect the active answer without acknowledgement clutter.
+   and affect the active turn without acknowledgement clutter. Any commentary
+   must settle as a separate message before the final response.
 2. Request a response containing a heading, emphasis, a task list, a table,
    fenced code, inline and block math, a footnote, and expandable details.
    Complete structure must remain rendered during edits. Incomplete table rows,
@@ -231,12 +243,14 @@ Run these cases in order:
    additional formatted Rich Messages without broken fenced-code blocks.
 7. Restart Ariadne while a question is waiting. On startup the old question
    should show Cancelled and its buttons should no longer act.
-8. To exercise fallback in a test environment, make `sendRichMessage` return a
-   Bot API `BadRequest`. The response must continue through classic text with a
-   classic Stop keyboard, and question choices must use an inline keyboard.
+8. Make `sendRichMessage` return a Bot API `BadRequest`. The operation must fail
+   explicitly and must not send a classic text or keyboard substitute.
 9. Send three casual messages such as “ugh, long day”, “that was funny”, and
    “what do you think?” They should feel like continuing one chat, not three
    miniature reports with restatements and headings.
+10. Trigger a mail event worth notifying about. It must use
+    `send_telegram_message`; the tool must not be available in an ordinary
+    Telegram-triggered turn.
 
 Automated coverage for these state transitions lives in `tests/test_bot.py`,
 `tests/test_telegram_rich.py`, `tests/test_telegram_questions.py`, and
@@ -244,6 +258,7 @@ Automated coverage for these state transitions lives in `tests/test_bot.py`,
 
 ## References
 
+- [OpenAI reasoning summaries](https://developers.openai.com/api/docs/guides/reasoning#reasoning-summaries)
 - [Telegram Bot API](https://core.telegram.org/bots/api)
 - [Telegram advanced formatting](https://core.telegram.org/bots/features#advanced-formatting-options)
 - [python-telegram-bot forward compatibility](https://github.com/python-telegram-bot/python-telegram-bot/wiki/Bot-API-Forward-Compatibility)

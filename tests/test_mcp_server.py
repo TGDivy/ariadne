@@ -8,7 +8,6 @@ import pytest
 from caldav.lib.error import PutError
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
-from telegram.constants import ParseMode
 from telegram.error import BadRequest, EndPointNotFound
 
 from ariadne import mcp_server
@@ -20,13 +19,13 @@ from ariadne.mcp_server import (
     delete_calendar_event,
     list_calendars,
     mcp,
-    react,
     read_mail,
     runtime_status,
     search_mail,
     send_telegram_message,
     triage_current_mail,
 )
+from ariadne.telegram import outbound
 from ariadne.telegram.questions import TelegramQuestion, TelegramQuestionStore
 
 
@@ -37,7 +36,6 @@ class FakeBot:
         self.missing_rich_endpoint = False
         self.sent: list[dict[str, Any]] = []
         self.api_calls: list[tuple[str, dict[str, Any]]] = []
-        self.reactions: list[dict[str, Any]] = []
 
     async def __aenter__(self) -> "FakeBot":
         return self
@@ -63,10 +61,6 @@ class FakeBot:
         self.api_calls.append((endpoint, arguments))
         return SimpleNamespace(message_id=100 + len(self.api_calls))
 
-    async def set_message_reaction(self, **kwargs: Any) -> bool:
-        self.reactions.append(kwargs)
-        return True
-
 
 @pytest.fixture
 def telegram(monkeypatch) -> FakeBot:
@@ -74,6 +68,7 @@ def telegram(monkeypatch) -> FakeBot:
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "7")
     bot = FakeBot("token-for-test")
     monkeypatch.setattr(mcp_server, "Bot", lambda token: bot)
+    monkeypatch.setattr(outbound, "Bot", lambda token: bot)
     return bot
 
 
@@ -92,7 +87,6 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
     assert [tool.name for tool in tools] == [
         "runtime_status",
         "send_telegram_message",
-        "react",
         "ask_telegram_question",
         "prepare_files",
         "search_mail",
@@ -351,17 +345,6 @@ async def test_a_message_beyond_the_classic_limit_stays_one_rich_message(
     assert telegram.api_calls[0][1]["rich_message"] == {"markdown": text}
 
 
-async def test_iris_can_reply_to_the_message_she_is_answering(
-    telegram: FakeBot,
-) -> None:
-    await send_telegram_message("Found it.", reply_to_message_id=42)
-
-    assert telegram.api_calls[0][1]["reply_parameters"] == {
-        "message_id": 42,
-        "allow_sending_without_reply": True,
-    }
-
-
 async def test_an_empty_message_is_refused(telegram: FakeBot) -> None:
     with pytest.raises(ToolError):
         await send_telegram_message("   ")
@@ -370,40 +353,26 @@ async def test_an_empty_message_is_refused(telegram: FakeBot) -> None:
     assert telegram.api_calls == []
 
 
-async def test_rich_delivery_rejection_falls_back_to_classic_html(
+async def test_rich_delivery_rejection_is_reported(
     telegram: FakeBot,
 ) -> None:
     telegram.reject_rich = True
 
-    message_ids = await send_telegram_message("**Still formatted**")
+    with pytest.raises(ToolError, match="could not deliver"):
+        await send_telegram_message("**Still formatted**")
 
-    assert message_ids == [101]
-    assert telegram.sent[0]["text"] == "<b>Still formatted</b>"
-    assert telegram.sent[0]["parse_mode"] == ParseMode.HTML
+    assert telegram.sent == []
 
 
-async def test_missing_rich_endpoint_falls_back_to_classic_html(
+async def test_missing_rich_endpoint_is_reported(
     telegram: FakeBot,
 ) -> None:
     telegram.missing_rich_endpoint = True
 
-    message_ids = await send_telegram_message("**Still formatted**")
+    with pytest.raises(ToolError, match="could not deliver"):
+        await send_telegram_message("**Still formatted**")
 
-    assert message_ids == [101]
-    assert telegram.sent[0]["text"] == "<b>Still formatted</b>"
-
-
-async def test_a_reaction_sets_it_on_the_telegram_message(telegram: FakeBot) -> None:
-    await react(42, "❤️")
-
-    assert telegram.reactions == [{"chat_id": 7, "message_id": 42, "reaction": "❤"}]
-
-
-async def test_an_unsupported_reaction_is_refused(telegram: FakeBot) -> None:
-    with pytest.raises(ToolError):
-        await react(42, "🦖")
-
-    assert telegram.reactions == []
+    assert telegram.sent == []
 
 
 async def test_a_typed_answer_resumes_the_waiting_question_tool(
@@ -417,7 +386,6 @@ async def test_a_typed_answer_resumes_the_waiting_question_tool(
         ask_telegram_question(
             "Which environment should I use?",
             ["Staging", "Production"],
-            reply_to_message_id=42,
         )
     )
     question = await wait_for_question(store)
@@ -432,7 +400,6 @@ async def test_a_typed_answer_resumes_the_waiting_question_tool(
     }
     assert question.message_id == 101
     assert telegram.api_calls[0][0] == "sendRichMessage"
-    assert telegram.api_calls[0][1]["reply_parameters"]["message_id"] == 42
 
 
 async def test_a_button_answer_resumes_the_waiting_question_tool(

@@ -50,7 +50,6 @@ async def test_send_rich_message_uses_ptbs_forward_compatible_api() -> None:
     sent = await api.send(
         chat_id=7,
         markdown="## Native heading",
-        reply_to_message_id=11,
         message_thread_id=3,
         buttons=(RichButton("Stop", "callback_data", "turn:stop", "danger"),),
     )
@@ -69,10 +68,6 @@ async def test_send_rich_message_uses_ptbs_forward_compatible_api() -> None:
                         'data="turn:stop">Stop</tg-button>\n'
                         "</tg-button-row>"
                     )
-                },
-                "reply_parameters": {
-                    "message_id": 11,
-                    "allow_sending_without_reply": True,
                 },
                 "message_thread_id": 3,
             },

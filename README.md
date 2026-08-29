@@ -101,10 +101,10 @@ turn that is already running, so Codex folds them into the work in flight. If
 Codex is between turn states, Ariadne retains the messages and drains them in
 arrival order instead of rejecting or silently dropping them.
 Using Telegram's Reply action includes the immediate replied-to message's full
-text or caption and message ID as labelled context. Replies to old media include
-its caption, but do not re-download the old file or image.
+text or caption as labelled context. Replies to old media include its caption,
+but do not re-download the old file or image.
 
-The live-chat state diagrams, supported rich content, fallback behavior, and
+The live-chat state diagrams, supported rich content, delivery contract, and
 manual test cases are in [`docs/telegram-live-chat.md`](docs/telegram-live-chat.md).
 
 At the default INFO log level, stdout shows privacy-safe operational progress:
@@ -342,27 +342,28 @@ contains, what was kept, and what was dropped.
 
 ## Local capabilities
 
-Ariadne exposes local MCP capabilities to Codex: runtime status, speaking and
-reacting in Telegram, asking one blocking choice question, and preparing files
-from the configured user's home directory.
+Ariadne exposes local MCP capabilities to Codex: runtime status, asking one
+blocking choice question, and preparing files from the configured user's home
+directory. Background profiles such as mail can also send proactive Telegram
+notifications; ordinary Telegram turns speak through native Codex phases.
 Prepared files are not sent immediately: Ariadne sends a short-lived Telegram
 approval card that lists the exact files and has Approve and Reject buttons.
 
 ## Speaking
 
-While a turn runs, Ariadne edits one persistent Rich Message in place. It starts
-as “Thinking…” with a native Stop button, gains fully rendered Markdown as Iris
-writes, and becomes the final answer without replacing the chat composer or
-leaving raw formatting behind. Stopping preserves useful partial output. Rich
-Messages carry up to 32,768 characters; exceptional overflow becomes additional
-rich blocks rather than losing formatting.
+While a Telegram turn runs, Ariadne streams concise reasoning summaries into a
+temporary Rich Message with a native Stop button. A native Codex commentary
+phase replaces that temporary text and settles as its own permanent bubble; a
+new temporary bubble then carries the next work phase. The final phase settles
+the last bubble. Casual turns normally use only that final bubble.
 
-`send_telegram_message` and `react` still let Iris speak or react immediately.
 `ask_telegram_question` adds a separate native choice card and waits inside the
-same model turn; a button tap or ordinary typed answer resumes it. Telegram
-Bot API deployments that reject Rich Messages receive classic text and inline
-keyboards; Telegram handles the update prompt for older client applications.
+same model turn; a button tap or ordinary typed answer resumes it. Mail and
+future background profiles retain `send_telegram_message` as an intentional
+notification action, but it is not exposed to Telegram-triggered turns. Rich
+Messages are required: delivery failures are reported rather than silently
+changing the response to classic text or keyboards.
 
-Each incoming message is tagged with its Telegram message id so Iris can reply
-or react to it. If her final response repeats something she already sent
-herself, Ariadne does not send it twice.
+Every ordinary bubble is top-level in the current Telegram topic. Telegram's
+Reply action still supplies quoted context to the model, but Iris does not
+automatically attach her response to the replied-to message.
