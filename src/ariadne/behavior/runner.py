@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,7 @@ _REDACTED_ENVIRONMENT = (
     "GITHUB_TOKEN",
     "GH_TOKEN",
 )
+_SECRET_ENVIRONMENT_MARKERS = ("TOKEN", "PASSWORD", "SECRET", "API_KEY", "CREDENTIAL")
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +182,16 @@ def _read_calls(path: Path) -> tuple[dict[str, Any], ...]:
     )
 
 
+def _redacted_environment() -> dict[str, str]:
+    names = set(_REDACTED_ENVIRONMENT)
+    names.update(
+        name
+        for name in os.environ
+        if any(marker in name.upper() for marker in _SECRET_ENVIRONMENT_MARKERS)
+    )
+    return {name: "" for name in names}
+
+
 async def run_scenario(
     scenario: BehaviorScenario,
     run_profile: BehaviorRunProfile,
@@ -223,7 +235,7 @@ async def run_scenario(
                 config_overrides=_sandbox_config_overrides(profile)
                 + _fake_mcp_overrides(profile.enabled_tools, calls),
                 cwd=str(workspace),
-                env={name: "" for name in _REDACTED_ENVIRONMENT},
+                env=_redacted_environment(),
             )
         )
         conversation = CodexConversation(profile, client=client)

@@ -8,6 +8,7 @@ from ariadne.behavior.runner import (
     BehaviorReport,
     RecordedMessage,
     TimelineEntry,
+    _redacted_environment,
     render_report,
 )
 from ariadne.mcp import mcp as production_mcp
@@ -38,6 +39,19 @@ def test_scenario_lookup_rejects_unknown_names() -> None:
         assert "race-confirmation" in str(error)
     else:
         raise AssertionError("An unknown scenario should not resolve")
+
+
+def test_model_process_does_not_inherit_service_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GITHUB_PERSONAL_ACCESS_TOKEN", "not-for-the-scenario")
+    monkeypatch.setenv("UNRELATED_VALUE", "ordinary")
+
+    redacted = _redacted_environment()
+
+    assert redacted["GITHUB_PERSONAL_ACCESS_TOKEN"] == ""
+    assert redacted["TELEGRAM_BOT_TOKEN"] == ""
+    assert "UNRELATED_VALUE" not in redacted
 
 
 async def test_fake_capabilities_keep_the_production_contract() -> None:
