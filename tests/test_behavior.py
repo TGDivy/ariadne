@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -12,6 +13,7 @@ from ariadne.behavior.runner import (
     render_report,
 )
 from ariadne.mcp import mcp as production_mcp
+from ariadne.mcp import server as production_server
 
 
 def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
@@ -69,6 +71,21 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         assert tool.description == real.description
         assert tool.parameters == real.parameters
         assert tool.output_schema == real.output_schema
+
+
+def test_stdio_servers_do_not_start_the_networked_banner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    production_run = Mock()
+    fake_run = Mock()
+    monkeypatch.setattr(production_server.mcp, "run", production_run)
+    monkeypatch.setattr(fake_mcp.mcp, "run", fake_run)
+
+    production_server.main()
+    fake_mcp.main()
+
+    production_run.assert_called_once_with(show_banner=False)
+    fake_run.assert_called_once_with(show_banner=False)
 
 
 async def test_fake_capabilities_record_calls(
