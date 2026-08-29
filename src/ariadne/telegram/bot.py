@@ -5,7 +5,7 @@ import logging
 import sqlite3
 import time
 from collections import deque
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
@@ -21,14 +21,19 @@ from telegram import (
     PhotoSize,
     Update,
 )
-from telegram.constants import ChatAction, FileSizeLimit, ParseMode
-from telegram.error import BadRequest, EndPointNotFound, TelegramError, TimedOut
+from telegram.constants import FileSizeLimit, ParseMode
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
 from ..prompt import THREAD_PUSH_PERMISSION
 from .file_delivery import FileDelivery, FileDeliveryError
-from .format import render_telegram_html, split_for_telegram, telegram_messages
+from .live import (
+    STOPPED_MESSAGE,
+    STOPPING_MESSAGE,
+    TURN_STOP_CALLBACK,
+    LiveTurn,
+)
 from .questions import (
     QuestionSelection,
     TelegramQuestion,
@@ -37,14 +42,7 @@ from .questions import (
     default_question_state_path,
     parse_question_callback,
 )
-from .rich import (
-    RICH_MESSAGE_LIMIT,
-    RichBotAPI,
-    RichButton,
-    close_unterminated_fence,
-    incoming_rich_markdown,
-    split_rich_markdown,
-)
+from .rich import RichBotAPI, incoming_rich_markdown
 
 LOGGER = logging.getLogger(__name__)
 
@@ -52,8 +50,6 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENT_BYTES = int(FileSizeLimit.FILESIZE_DOWNLOAD)
 ATTACHMENT_ROOT = Path.home() / ".ariadne" / "attachments"
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
-LIVE_EDIT_INTERVAL_SECONDS = 1.0
-TURN_REFRESH_INTERVAL_SECONDS = 4.0
 ALBUM_DEBOUNCE_SECONDS = 1.0
 READY_MESSAGE = "Ariadne is ready."
 NEW_CONVERSATION_MESSAGE = "Started a new conversation. The Thread is still available."
@@ -66,11 +62,7 @@ DOCUMENT_TOO_LARGE_MESSAGE = (
     "That file is too large; Telegram only lets me download files up to 20 MB."
 )
 DOCUMENT_FAILED_MESSAGE = "I couldn't download that file. Please try again."
-FAILURE_MESSAGE = "I ran into a problem while working on that. Please try again."
-STOPPING_MESSAGE = "Stopping…"
-STOPPED_MESSAGE = "Stopped."
 NOTHING_TO_STOP_MESSAGE = "There isn't an active turn to stop."
-THINKING_MESSAGE = "Thinking…"
 SETTINGS_UNAVAILABLE_MESSAGE = (
     "I couldn't load the available Codex settings. Please try again."
 )
@@ -81,17 +73,13 @@ SETTINGS_MODELS_CALLBACK = "settings:models"
 SETTINGS_EFFORT_CALLBACK = "settings:effort"
 SETTINGS_WEB_CALLBACK = "settings:web"
 SETTINGS_BACK_CALLBACK = "settings:back"
-TURN_STOP_CALLBACK = "turn:stop"
-
-TypingSender = Callable[[], Awaitable[None]]
 
 
 def turn_text(
     text: str,
-    message_id: int,
     replied_message: Message | None = None,
 ) -> str:
-    """Add Telegram identity and immediate reply context to one turn."""
+    """Add immediate Telegram reply context to one turn."""
     parts: list[str] = []
     if replied_message is not None:
         content = (
@@ -104,17 +92,10 @@ def turn_text(
         if content is None:
             content = "[The replied-to message has no text or caption.]"
         parts.append(
-            f"Telegram reply context (message id {replied_message.message_id}):\n"
-            f"<quoted_message>\n{content}\n</quoted_message>"
+            f"Telegram reply context:\n<quoted_message>\n{content}\n</quoted_message>"
         )
-    parts.extend((text, f"Telegram message id: {message_id}", THREAD_PUSH_PERMISSION))
+    parts.extend((text, THREAD_PUSH_PERMISSION))
     return "\n\n".join(parts)
-
-
-def _already_said(response: str, spoken: Sequence[str]) -> bool:
-    """Return whether Iris has already sent this exact text herself."""
-    normalized = " ".join(response.split())
-    return any(" ".join(said.split()) == normalized for said in spoken)
 
 
 def _document_filename(document: Document) -> str:
@@ -170,250 +151,6 @@ def document_message(
     return "\n\n".join([caption or default, *lines])
 
 
-class _LiveResponse:
-    """One persistent Telegram message edited as an answer is generated."""
-
-    _stop_button = RichButton(
-        "Stop", "callback_data", TURN_STOP_CALLBACK, style="danger"
-    )
-    _stopping_button = RichButton("Stopping…", "disabled", style="danger")
-    _stopped_button = RichButton("Stopped", "disabled", style="danger")
-
-    def __init__(self, source: Message, rich_api: RichBotAPI | None) -> None:
-        self._source = source
-        self._rich_api = rich_api
-        self._message: Message | None = None
-        self._markdown = ""
-        self._sent_at = 0.0
-        self._rich = rich_api is not None
-        self._phase = "running"
-        self._edit_lock = asyncio.Lock()
-
-    @property
-    def message_id(self) -> int | None:
-        """Return the live bubble's Telegram identity once it exists."""
-        return self._message.message_id if self._message is not None else None
-
-    async def start(self) -> None:
-        """Create an ordinary persistent message with an embedded Stop control."""
-        stopping = self._phase == "stopping"
-        markdown = STOPPING_MESSAGE if stopping else THINKING_MESSAGE
-        buttons = (self._stopping_button,) if stopping else (self._stop_button,)
-        if self._rich_api is not None:
-            try:
-                self._message = await self._rich_api.send(
-                    chat_id=self._source.chat_id,
-                    markdown=markdown,
-                    reply_to_message_id=self._source.message_id,
-                    message_thread_id=getattr(self._source, "message_thread_id", None),
-                    buttons=buttons,
-                )
-                self._markdown = markdown
-                self._sent_at = time.monotonic()
-                return
-            except (BadRequest, EndPointNotFound):
-                LOGGER.exception(
-                    "Telegram Rich Message creation failed; using classic text"
-                )
-        self._rich = False
-        self._message = await self._source.reply_text(
-            markdown,
-            reply_markup=None if stopping else self._classic_stop_keyboard(),
-        )
-        self._markdown = markdown
-        self._sent_at = time.monotonic()
-
-    async def show(self, markdown: str, *, force: bool = False) -> None:
-        """Edit the live bubble with newly accumulated, natively formatted text."""
-        if self._phase != "running":
-            return
-        preview = split_rich_markdown(markdown, RICH_MESSAGE_LIMIT - 1_024)[0]
-        if preview == self._markdown:
-            return
-        if not force and time.monotonic() - self._sent_at < LIVE_EDIT_INTERVAL_SECONDS:
-            return
-        await self._edit(preview, buttons=(self._stop_button,), only_while_running=True)
-
-    async def show_activity(self, activity: str) -> None:
-        """Show a concise activity until answer text becomes available."""
-        await self.show(activity)
-
-    async def stopping(self) -> None:
-        """Disable the control immediately after interruption is requested."""
-        if self._phase != "running":
-            return
-        self._phase = "stopping"
-        await self._edit(
-            self._markdown or STOPPING_MESSAGE,
-            buttons=(self._stopping_button,),
-        )
-
-    async def resume(self) -> None:
-        """Restore the Stop control when Codex rejects an interruption request."""
-        if self._phase != "stopping":
-            return
-        self._phase = "running"
-        await self._edit(
-            self._markdown or THINKING_MESSAGE,
-            buttons=(self._stop_button,),
-            only_while_running=True,
-        )
-
-    async def stopped(self, partial_response: str) -> None:
-        """Preserve useful partial output and mark the message as stopped."""
-        self._phase = "terminal"
-        content = partial_response.strip()
-        if content:
-            content = close_unterminated_fence(content)
-            content += f"\n\n_{STOPPED_MESSAGE}_"
-        else:
-            content = STOPPED_MESSAGE
-        await self._finalize(content, buttons=(self._stopped_button,))
-
-    async def finish(self, markdown: str) -> None:
-        """Finalize this bubble and send any exceptional overflow as rich blocks."""
-        if self._phase == "stopping":
-            raise TurnInterrupted()
-        if self._phase == "terminal":
-            return
-        self._phase = "terminal"
-        await self._finalize(markdown, buttons=())
-
-    async def _finalize(self, markdown: str, *, buttons: Sequence[RichButton]) -> None:
-        """Persist complete content, retaining rich overflow and terminal controls."""
-        chunks = split_rich_markdown(markdown)
-        if not chunks:
-            raise ValueError("A final Telegram response cannot be empty.")
-        if not self._rich or self._rich_api is None:
-            await self._finish_classic(markdown)
-            return
-        try:
-            await self._edit(chunks[0], buttons=buttons, force_rich=True)
-            for chunk in chunks[1:]:
-                await self._rich_api.send(
-                    chat_id=self._source.chat_id,
-                    markdown=chunk,
-                    message_thread_id=getattr(self._source, "message_thread_id", None),
-                )
-        except TelegramError:
-            LOGGER.exception(
-                "Telegram Rich Message finalization failed; using classic text"
-            )
-            await self._finish_classic(markdown)
-
-    async def fail(self) -> None:
-        """Turn the existing live bubble into a durable failure notice."""
-        self._phase = "terminal"
-        await self._durable_edit(FAILURE_MESSAGE, buttons=())
-
-    async def discard(self) -> None:
-        """Remove a placeholder when the agent already sent the same answer."""
-        self._phase = "terminal"
-        if self._message is None:
-            return
-        async with self._edit_lock:
-            try:
-                await self._message.delete()
-            except TelegramError:
-                LOGGER.exception("Telegram live placeholder deletion failed")
-
-    async def _edit(
-        self,
-        markdown: str,
-        *,
-        buttons: Sequence[RichButton],
-        force_rich: bool = False,
-        only_while_running: bool = False,
-    ) -> None:
-        async with self._edit_lock:
-            if only_while_running and self._phase != "running":
-                return
-            await self._edit_now(markdown, buttons=buttons, force_rich=force_rich)
-
-    async def _edit_now(
-        self,
-        markdown: str,
-        *,
-        buttons: Sequence[RichButton],
-        force_rich: bool,
-    ) -> None:
-        if self._message is None:
-            return
-        if self._rich and self._rich_api is not None:
-            try:
-                self._message = await self._rich_api.edit(
-                    self._message, markdown, buttons=buttons
-                )
-                self._markdown = markdown
-                self._sent_at = time.monotonic()
-                return
-            except TelegramError:
-                if force_rich:
-                    raise
-                self._sent_at = time.monotonic()
-                LOGGER.warning(
-                    "Telegram Rich Message preview update failed; retaining preview"
-                )
-                return
-
-        rendered = render_telegram_html(markdown)
-        if len(rendered) > 4_096:
-            rendered = render_telegram_html(split_for_telegram(markdown)[0])
-        try:
-            await self._message.edit_text(
-                rendered,
-                parse_mode=ParseMode.HTML,
-                reply_markup=(
-                    self._classic_stop_keyboard()
-                    if any(button.kind == "callback_data" for button in buttons)
-                    else None
-                ),
-            )
-        except TelegramError:
-            self._sent_at = time.monotonic()
-            LOGGER.exception("Telegram classic live message update failed")
-            return
-        self._markdown = markdown
-        self._sent_at = time.monotonic()
-
-    async def _finish_classic(self, markdown: str) -> None:
-        async with self._edit_lock:
-            await self._finish_classic_now(markdown)
-
-    async def _finish_classic_now(self, markdown: str) -> None:
-        if self._message is None:
-            return
-        messages, is_html = telegram_messages(markdown)
-        parse_mode = ParseMode.HTML if is_html else None
-        try:
-            await self._message.edit_text(messages[0], parse_mode=parse_mode)
-        except TelegramError:
-            LOGGER.exception("Telegram classic final edit failed")
-            await self._source.reply_text(messages[0], parse_mode=parse_mode)
-        for chunk in messages[1:]:
-            await self._source.reply_text(chunk)
-        self._markdown = markdown
-
-    async def _durable_edit(
-        self, markdown: str, *, buttons: Sequence[RichButton]
-    ) -> None:
-        """Use classic editing if Telegram rejects a terminal rich state."""
-        try:
-            await self._edit(markdown, buttons=buttons, force_rich=True)
-        except TelegramError:
-            LOGGER.exception(
-                "Telegram Rich Message terminal edit failed; using classic text"
-            )
-            self._rich = False
-            await self._edit(markdown, buttons=buttons)
-
-    @staticmethod
-    def _classic_stop_keyboard() -> InlineKeyboardMarkup:
-        return InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Stop", callback_data=TURN_STOP_CALLBACK)]]
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class _Attachment:
     """One downloaded file waiting to be sent to Codex."""
@@ -430,7 +167,6 @@ class _Album:
 
     message: Message
     user_id: int | None
-    send_typing: "TypingSender | None" = None
     items: list[_Attachment] = field(default_factory=list)
     timer: asyncio.Task[None] | None = None
 
@@ -443,7 +179,6 @@ class _PendingMessage:
     user_id: int | None
     text: str
     image_paths: tuple[Path, ...]
-    send_typing: TypingSender | None
     force_next_turn: bool = False
 
 
@@ -464,8 +199,7 @@ class AriadneBot:
         self._busy = False
         self._stopping = False
         self._stop_notice: Message | None = None
-        self._live_response: _LiveResponse | None = None
-        self._partial_response = ""
+        self._live_response: LiveTurn | None = None
         self._bot: Bot | None = None
         self._rich_api: RichBotAPI | None = None
         self._questions = TelegramQuestionStore(
@@ -682,19 +416,10 @@ class AriadneBot:
         message = self._message_from(update)
         if message is None or message.text is None:
             return
-
-        async def send_typing() -> None:
-            await context.bot.send_chat_action(
-                chat_id=message.chat_id,
-                action=ChatAction.TYPING,
-                message_thread_id=message.message_thread_id,
-            )
-
         await self.handle_text(
             message,
             self._user_id_from(update),
             message.text,
-            send_typing=send_typing,
         )
 
     async def rich_message(
@@ -710,18 +435,10 @@ class AriadneBot:
         if content is None:
             return
 
-        async def send_typing() -> None:
-            await context.bot.send_chat_action(
-                chat_id=message.chat_id,
-                action=ChatAction.TYPING,
-                message_thread_id=message.message_thread_id,
-            )
-
         await self.handle_text(
             message,
             self._user_id_from(update),
             content,
-            send_typing=send_typing,
         )
 
     async def image(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -750,13 +467,6 @@ class AriadneBot:
             )
             return
 
-        async def send_typing() -> None:
-            await context.bot.send_chat_action(
-                chat_id=message.chat_id,
-                action=ChatAction.TYPING,
-                message_thread_id=message.message_thread_id,
-            )
-
         try:
             path = await self._download_image(message, context, image)
         except (OSError, TelegramError):
@@ -775,7 +485,6 @@ class AriadneBot:
                 image.mime_type if isinstance(image, Document) else None,
                 is_image=True,
             ),
-            send_typing,
         )
 
     async def document(
@@ -794,13 +503,6 @@ class AriadneBot:
             await self._reply_safely(message, DOCUMENT_TOO_LARGE_MESSAGE)
             return
 
-        async def send_typing() -> None:
-            await context.bot.send_chat_action(
-                chat_id=message.chat_id,
-                action=ChatAction.TYPING,
-                message_thread_id=message.message_thread_id,
-            )
-
         try:
             path = await self._download_document(context, document)
         except (OSError, TelegramError):
@@ -812,7 +514,6 @@ class AriadneBot:
             message,
             self._user_id_from(update),
             _Attachment(path, message.caption, document.mime_type, is_image=False),
-            send_typing,
         )
 
     async def handle_document(
@@ -823,14 +524,12 @@ class AriadneBot:
         *,
         caption: str | None = None,
         mime_type: str | None = None,
-        send_typing: TypingSender | None = None,
     ) -> None:
         """Send one downloaded file through Codex as an ordinary message."""
         await self._accept_attachment(
             message,
             user_id,
             _Attachment(path, caption, mime_type, is_image=False),
-            send_typing,
         )
 
     async def handle_start(self, message: Message, user_id: int | None) -> None:
@@ -1101,8 +800,6 @@ class AriadneBot:
         user_id: int | None,
         text: str,
         image_paths: tuple[Path, ...] = (),
-        *,
-        send_typing: TypingSender | None = None,
     ) -> None:
         """Send one user message through Codex and stream its answer back."""
         if not self._is_allowed(user_id):
@@ -1122,7 +819,7 @@ class AriadneBot:
             reply_to,
             len(image_paths),
         )
-        prompt = turn_text(text, message.message_id, message.reply_to_message)
+        prompt = turn_text(text, message.reply_to_message)
         if self._busy:
             LOGGER.info(
                 "Telegram message steering active turn message_id=%s",
@@ -1134,7 +831,6 @@ class AriadneBot:
                     user_id=user_id,
                     text=text,
                     image_paths=image_paths,
-                    send_typing=send_typing,
                 ),
                 prompt,
             )
@@ -1149,13 +845,12 @@ class AriadneBot:
             self._conversation.settings.model,
             self._conversation.settings.effort.value,
         )
-        live = _LiveResponse(message, self._rich_api)
+        if self._rich_api is None:
+            raise RuntimeError("Telegram Rich Messages are not initialized.")
+        live = LiveTurn(message, self._rich_api)
         self._live_response = live
-        self._partial_response = ""
-        live_turn: asyncio.Task[None] | None = None
         try:
             await live.start()
-            live_turn = asyncio.create_task(self._keep_turn_alive(send_typing))
             if self._stopping:
                 await self._send_stopped()
                 return
@@ -1185,15 +880,10 @@ class AriadneBot:
                     )
                     await live.fail()
         finally:
-            if live_turn is not None:
-                live_turn.cancel()
-                with suppress(asyncio.CancelledError):
-                    await live_turn
             await self._cancel_pending_question()
             self._stop_notice = None
             self._stopping = False
             self._live_response = None
-            self._partial_response = ""
             self._busy = False
             LOGGER.info(
                 "Telegram turn finished message_id=%s status=%s duration=%.2fs",
@@ -1207,7 +897,6 @@ class AriadneBot:
         message: Message,
         user_id: int | None,
         attachment: _Attachment,
-        send_typing: TypingSender | None,
     ) -> None:
         """Send one file to Codex, or hold it for the rest of its media group.
 
@@ -1216,14 +905,12 @@ class AriadneBot:
         """
         group = message.media_group_id
         if group is None:
-            await self._submit_album(
-                _Album(message, user_id, send_typing, [attachment])
-            )
+            await self._submit_album(_Album(message, user_id, [attachment]))
             return
 
         album = self._albums.get(group)
         if album is None:
-            album = _Album(message, user_id, send_typing)
+            album = _Album(message, user_id)
             self._albums[group] = album
         album.items.append(attachment)
         if album.timer is not None:
@@ -1258,7 +945,6 @@ class AriadneBot:
             album.user_id,
             text,
             image_paths=images,
-            send_typing=album.send_typing,
         )
 
     async def _accept_followup(
@@ -1319,7 +1005,6 @@ class AriadneBot:
                     else:
                         prompt = turn_text(
                             candidate.text,
-                            candidate.message.message_id,
                             candidate.message.reply_to_message,
                         )
                         try:
@@ -1350,7 +1035,6 @@ class AriadneBot:
                     pending.user_id,
                     pending.text,
                     pending.image_paths,
-                    send_typing=pending.send_typing,
                 )
                 continue
             if wait_for_turn:
@@ -1358,59 +1042,27 @@ class AriadneBot:
 
         self._pending_task = None
 
-    async def _keep_turn_alive(self, send_typing: TypingSender | None) -> None:
-        """Keep Telegram's typing indicator active while Codex is working."""
-        while True:
-            if send_typing is not None:
-                try:
-                    await send_typing()
-                except TimedOut:
-                    LOGGER.warning("Telegram typing indicator timed out; will retry.")
-                except TelegramError:
-                    LOGGER.exception("Telegram typing indicator failed")
-            await asyncio.sleep(TURN_REFRESH_INTERVAL_SECONDS)
-
     async def _stream_response(
         self,
-        live: _LiveResponse,
+        live: LiveTurn,
         prompt: str,
         image_paths: tuple[Path, ...] = (),
     ) -> None:
-        final_response = ""
-        spoken: list[str] = []
-
-        async def show_activity(activity: str) -> None:
-            if final_response or self._stopping:
-                return
-            await live.show_activity(activity)
-
-        async for response in self._conversation.stream_reply(
+        async for event in self._conversation.stream_turn(
             prompt,
             image_paths=image_paths,
-            activity=show_activity,
-            spoken=spoken.append,
             stop_requested=lambda: self._stopping,
         ):
-            final_response = response
-            self._partial_response = response
             if not self._stopping:
-                await live.show(response)
+                await live.apply(event)
 
         if self._stopping:
             raise TurnInterrupted()
-        if not final_response:
-            raise RuntimeError("Codex completed without an agent response.")
-
-        if _already_said(final_response, spoken):
-            LOGGER.info("Iris already sent her answer herself; not repeating it")
-            await live.discard()
-            return
-
-        await live.finish(final_response)
+        await live.complete()
 
     async def _send_stopped(self) -> None:
         if self._live_response is not None:
-            await self._live_response.stopped(self._partial_response)
+            await self._live_response.stopped()
         notice = self._stop_notice
         if notice is not None and await self._edit_safely(notice, STOPPED_MESSAGE):
             return

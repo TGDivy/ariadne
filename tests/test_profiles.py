@@ -28,13 +28,19 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert MAIL_PROFILE.instruction_documents == ("base", "mail")
     assert MAIL_PROFILE.developer_documents == ("grounding", "ariadne")
     assert MAIL_PROFILE.thread_policy == "fresh-per-event"
+    assert MAIL_PROFILE.reasoning_summary == "none"
     assert MAIL_PROFILE.enabled_tools[-1] == "triage_current_mail"
+    assert "send_telegram_message" in MAIL_PROFILE.enabled_tools
+    assert "react" not in MAIL_PROFILE.enabled_tools
 
     assert TELEGRAM_PROFILE.name == "telegram"
     assert TELEGRAM_PROFILE.instruction_documents == ("base", "telegram")
     assert TELEGRAM_PROFILE.developer_documents == ("grounding", "ariadne")
     assert TELEGRAM_PROFILE.thread_policy == "shared"
+    assert TELEGRAM_PROFILE.reasoning_summary == "concise"
     assert "triage_current_mail" not in TELEGRAM_PROFILE.enabled_tools
+    assert "send_telegram_message" not in TELEGRAM_PROFILE.enabled_tools
+    assert "react" not in TELEGRAM_PROFILE.enabled_tools
     assert "ARIADNE_TELEGRAM_STATE" in TELEGRAM_PROFILE.mcp_environment_names
     assert TELEGRAM_PROFILE.enabled_tools[-11:-8] == (
         "search_mail",
@@ -75,8 +81,6 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert profile.allow_local_binding is True
     assert profile.enabled_tools == (
         "runtime_status",
-        "send_telegram_message",
-        "react",
         "ask_telegram_question",
         "prepare_files",
         "search_mail",

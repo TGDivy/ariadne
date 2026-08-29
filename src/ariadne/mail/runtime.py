@@ -1083,7 +1083,7 @@ class MailProcessor:
             move_after_iris,
         )
         try:
-            async for _response in conversation.stream_reply(prompt):
+            async for _event in conversation.stream_turn(prompt):
                 pass
             LOGGER.info(
                 "Mail Codex turn completed job_id=%s duration=%.2fs",

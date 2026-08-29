@@ -18,14 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, cast
 
-from telegram import (
-    Bot,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    Message,
-    ReplyParameters,
-)
-from telegram.error import BadRequest, EndPointNotFound
+from telegram import Bot, Message
 
 from .rich import RichBotAPI, RichButton
 
@@ -95,7 +88,6 @@ class TelegramQuestion:
     status: QuestionStatus
     expires_at: float
     message_id: int | None = None
-    rich: bool = True
     answer: str | None = None
     answer_source: AnswerSource | None = None
 
@@ -140,7 +132,6 @@ class TelegramQuestionStore:
                     prompt TEXT NOT NULL,
                     choices TEXT NOT NULL,
                     message_id INTEGER,
-                    rich INTEGER NOT NULL DEFAULT 1,
                     status TEXT NOT NULL
                         CHECK(status IN ('pending','answered','cancelled','expired')),
                     answer TEXT,
@@ -208,9 +199,9 @@ class TelegramQuestionStore:
             database.execute(
                 """
                 INSERT INTO telegram_questions (
-                    question_id, chat_id, prompt, choices, rich, status,
+                    question_id, chat_id, prompt, choices, status,
                     created_at, expires_at, updated_at
-                ) VALUES (?, ?, ?, ?, 1, 'pending', ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)
                 """,
                 (
                     question.question_id,
@@ -225,17 +216,17 @@ class TelegramQuestionStore:
         return question
 
     def attach_message(
-        self, question_id: str, message_id: int, *, rich: bool
+        self, question_id: str, message_id: int
     ) -> TelegramQuestion | None:
         """Record the Telegram message backing a question card."""
         with self._connect() as database:
             database.execute(
                 """
                 UPDATE telegram_questions
-                SET message_id = ?, rich = ?, updated_at = ?
+                SET message_id = ?, updated_at = ?
                 WHERE question_id = ?
                 """,
-                (message_id, int(rich), time.time(), question_id),
+                (message_id, time.time(), question_id),
             )
             row = self._select(database, question_id)
         return _question(row) if row is not None else None
@@ -382,7 +373,6 @@ class TelegramQuestionStore:
                 status="cancelled",
                 expires_at=question.expires_at,
                 message_id=question.message_id,
-                rich=question.rich,
             )
             for question in map(_question, rows)
         )
@@ -434,65 +424,30 @@ class TelegramQuestionStore:
 
 
 class TelegramQuestionCard:
-    """Send and settle a choice card using Rich Messages with classic fallback."""
+    """Send and settle a choice card using Rich Messages."""
 
     def __init__(self, bot: Bot) -> None:
-        self._bot = bot
         self._rich = RichBotAPI(bot)
 
-    async def send(
-        self,
-        question: TelegramQuestion,
-        *,
-        reply_to_message_id: int | None = None,
-    ) -> tuple[Message, bool]:
-        """Send a rich question, falling back only when Telegram rejects it."""
-        try:
-            message = await self._rich.send(
-                chat_id=question.chat_id,
-                markdown=question.prompt,
-                reply_to_message_id=reply_to_message_id,
-                buttons=_pending_buttons(question),
-                buttons_per_row=2,
-            )
-            return message, True
-        except (BadRequest, EndPointNotFound):
-            message = await self._bot.send_message(
-                chat_id=question.chat_id,
-                text=question.prompt,
-                reply_markup=_classic_keyboard(question),
-                reply_parameters=(
-                    ReplyParameters(
-                        reply_to_message_id, allow_sending_without_reply=True
-                    )
-                    if reply_to_message_id is not None
-                    else None
-                ),
-            )
-            return message, False
+    async def send(self, question: TelegramQuestion) -> Message:
+        """Send a Rich Message question with trusted embedded controls."""
+        return await self._rich.send(
+            chat_id=question.chat_id,
+            markdown=question.prompt,
+            buttons=_pending_buttons(question),
+            buttons_per_row=2,
+        )
 
     async def settle(self, question: TelegramQuestion) -> None:
         """Disable controls and make the terminal question state visible."""
         if question.message_id is None or question.status == "pending":
             return
-        markdown, plain = _settled_content(question)
-        if question.rich:
-            try:
-                await self._rich.edit_by_id(
-                    chat_id=question.chat_id,
-                    message_id=question.message_id,
-                    markdown=markdown,
-                    buttons=_settled_buttons(question),
-                    buttons_per_row=2,
-                )
-                return
-            except BadRequest:
-                pass
-        await self._bot.edit_message_text(
+        await self._rich.edit_by_id(
             chat_id=question.chat_id,
             message_id=question.message_id,
-            text=plain,
-            reply_markup=None,
+            markdown=_settled_content(question),
+            buttons=_settled_buttons(question),
+            buttons_per_row=2,
         )
 
 
@@ -542,24 +497,14 @@ def _settled_buttons(question: TelegramQuestion) -> tuple[RichButton, ...]:
     return (RichButton(label, "disabled", style="danger"),)
 
 
-def _classic_keyboard(question: TelegramQuestion) -> InlineKeyboardMarkup:
-    buttons = [
-        InlineKeyboardButton(choice, callback_data=question.callback_data(index))
-        for index, choice in enumerate(question.choices)
-    ]
-    return InlineKeyboardMarkup(
-        [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
-    )
-
-
-def _settled_content(question: TelegramQuestion) -> tuple[str, str]:
+def _settled_content(question: TelegramQuestion) -> str:
     labels = {
         "answered": "Answered.",
         "cancelled": "Question cancelled.",
         "expired": "Question expired.",
     }
     label = labels[question.status]
-    return f"{question.prompt}\n\n_{label}_", f"{question.prompt}\n\n{label}"
+    return f"{question.prompt}\n\n_{label}_"
 
 
 def _question(row: sqlite3.Row) -> TelegramQuestion:
@@ -570,7 +515,6 @@ def _question(row: sqlite3.Row) -> TelegramQuestion:
         prompt=str(row["prompt"]),
         choices=tuple(str(choice) for choice in choices),
         message_id=(int(row["message_id"]) if row["message_id"] is not None else None),
-        rich=bool(row["rich"]),
         status=cast(QuestionStatus, str(row["status"])),
         answer=str(row["answer"]) if row["answer"] is not None else None,
         answer_source=(

@@ -6,33 +6,38 @@ from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
-from openai_codex.generated.v2_all import ReasoningEffort
+from openai_codex.generated.v2_all import MessagePhase, ReasoningEffort
 from telegram import Message
 from telegram.constants import ParseMode
-from telegram.error import BadRequest, TimedOut
+from telegram.error import BadRequest
 
 from ariadne.codex import (
+    ActivityUpdated,
+    AgentMessageCompleted,
+    AgentMessageStarted,
+    AgentMessageUpdated,
     CodexConversation,
     CodexModel,
     CodexTurnSettings,
     TurnInterrupted,
+    WorkStarted,
+    WorkSummaryUpdated,
 )
 from ariadne.prompt import THREAD_PUSH_PERMISSION
 from ariadne.telegram import bot as telegram_bot
+from ariadne.telegram import live as telegram_live
 from ariadne.telegram.bot import (
     BUSY_MESSAGE,
     DOCUMENT_WITHOUT_CAPTION,
-    FAILURE_MESSAGE,
     NEW_CONVERSATION_MESSAGE,
     NOTHING_TO_STOP_MESSAGE,
     SETTINGS_BUSY_MESSAGE,
     STOPPED_MESSAGE,
-    THINKING_MESSAGE,
     document_message,
     turn_text,
 )
 from ariadne.telegram.bot import AriadneBot as TelegramBot
-from ariadne.telegram.format import TELEGRAM_MESSAGE_LIMIT, split_for_telegram
+from ariadne.telegram.live import FAILURE_MESSAGE, _LiveBubble
 from ariadne.telegram.questions import TelegramQuestionStore
 from ariadne.telegram.rich import RICH_MESSAGE_LIMIT, RichBotAPI, RichButton
 
@@ -58,12 +63,14 @@ def AriadneBot(
     question_state: Path | None = None,
 ) -> TelegramBot:
     """Build the bot with the required test credential."""
-    return TelegramBot(
+    bot = TelegramBot(
         allowed_user_id,
         conversation,
         bot_token="token-for-test",
         question_state=question_state,
     )
+    bot._rich_api = cast(RichBotAPI, FakeRichAPI())
+    return bot
 
 
 class FakeMessage:
@@ -126,13 +133,13 @@ class FakeConversation:
         *,
         failures: int = 0,
         activities: list[str] | None = None,
-        spoken: list[str] | None = None,
+        events: list[object] | None = None,
         models: tuple[CodexModel, ...] = DEFAULT_MODELS,
     ) -> None:
         self._responses = responses
         self._failures = failures
         self._activities = activities or []
-        self._spoken = spoken or []
+        self._events = events
         self._models = models
         self.settings = DEFAULT_SETTINGS
         self.prompts: list[str] = []
@@ -140,27 +147,30 @@ class FakeConversation:
         self.set_settings_calls = 0
         self.interrupt_calls = 0
 
-    async def stream_reply(
+    async def stream_turn(
         self,
         prompt: str,
         *,
         image_paths=(),
-        activity=None,
-        spoken=None,
         stop_requested=None,
     ):
         self.prompts.append(prompt)
         if self._failures:
             self._failures -= 1
             raise RuntimeError("Codex failed")
-        if activity is not None:
-            for update in self._activities:
-                await activity(update)
-        if spoken is not None:
-            for said in self._spoken:
-                spoken(said)
+        if self._events is not None:
+            for event in self._events:
+                yield event
+            return
+        for update in self._activities:
+            yield ActivityUpdated(update)
+        yield AgentMessageStarted("final", MessagePhase.final_answer)
         for response in self._responses:
-            yield response
+            yield AgentMessageUpdated("final", MessagePhase.final_answer, response)
+        if self._responses:
+            yield AgentMessageCompleted(
+                "final", MessagePhase.final_answer, self._responses[-1]
+            )
 
     def reset(self) -> None:
         self.reset_calls += 1
@@ -191,23 +201,23 @@ class BlockingConversation:
         self.steer_accepted = True
         self.failure_after_release: Exception | None = None
 
-    async def stream_reply(
+    async def stream_turn(
         self,
         _: str,
         *,
         image_paths=(),
-        activity=None,
-        spoken=None,
         stop_requested=None,
     ):
         self.started.set()
-        yield "Working"
+        yield AgentMessageStarted("final", MessagePhase.final_answer)
+        yield AgentMessageUpdated("final", MessagePhase.final_answer, "Working")
         await self.release.wait()
         if self.failure_after_release is not None:
             raise self.failure_after_release
         if self.interrupted:
             raise TurnInterrupted()
-        yield "Finished"
+        yield AgentMessageUpdated("final", MessagePhase.final_answer, "Finished")
+        yield AgentMessageCompleted("final", MessagePhase.final_answer, "Finished")
 
     def reset(self) -> None:
         self.reset_calls += 1
@@ -234,32 +244,23 @@ class BlockingConversation:
         return True
 
 
-class FakeTyping:
-    def __init__(self) -> None:
-        self.calls = 0
-        self.started = asyncio.Event()
-
-    async def send(self) -> None:
-        self.calls += 1
-        self.started.set()
-
-
-class TimedOutTyping(FakeTyping):
-    async def send(self) -> None:
-        self.calls += 1
-        self.started.set()
-        raise TimedOut
-
-
 class FakeRichAPI:
     def __init__(self) -> None:
-        self.live_message = FakeMessage(message_id=90)
+        self.messages: list[FakeMessage] = []
         self.sent: list[dict[str, object]] = []
         self.edits: list[tuple[str, tuple[RichButton, ...]]] = []
+        self.edit_message_ids: list[int] = []
+        self.edit_interactions_disabled: list[bool] = []
+
+    @property
+    def live_message(self) -> FakeMessage:
+        return self.messages[0]
 
     async def send(self, **kwargs: object) -> FakeMessage:
         self.sent.append(kwargs)
-        return self.live_message
+        message = FakeMessage(message_id=90 + len(self.messages))
+        self.messages.append(message)
+        return message
 
     async def edit(
         self,
@@ -267,10 +268,12 @@ class FakeRichAPI:
         markdown: str,
         *,
         buttons: tuple[RichButton, ...] = (),
+        disable_interactions: bool = False,
     ) -> FakeMessage:
-        assert message.message_id == 90
+        self.edit_message_ids.append(message.message_id)
         self.edits.append((markdown, buttons))
-        return self.live_message
+        self.edit_interactions_disabled.append(disable_interactions)
+        return message
 
 
 class RejectingRichAPI:
@@ -285,7 +288,7 @@ def message() -> FakeMessage:
 
 @pytest.fixture
 def unthrottled_live_edits(monkeypatch) -> None:
-    monkeypatch.setattr(telegram_bot, "LIVE_EDIT_INTERVAL_SECONDS", 0.0)
+    monkeypatch.setattr(telegram_live, "LIVE_EDIT_INTERVAL_SECONDS", 0.0)
 
 
 @pytest.fixture(autouse=True)
@@ -336,9 +339,11 @@ async def test_a_streamed_reply_edits_one_persistent_message(
 
     await bot.handle_text(cast(Message, message), 7, "Say hello")
 
-    assert conversation.prompts == [turn_text("Say hello", 11)]
-    assert message.replies == [THINKING_MESSAGE]
-    assert message.edits[-1] == "Hello, Ariadne!"
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert conversation.prompts == [turn_text("Say hello")]
+    assert rich.sent[0]["markdown"] == "> ✦ _Thinking…_"
+    assert "reply_to_message_id" not in rich.sent[0]
+    assert rich.edits[-1][0] == "Hello, Ariadne!"
     assert message.draft_ids == []
     assert "Telegram message received message_id=11" in caplog.text
     assert "Telegram turn started message_id=11" in caplog.text
@@ -357,36 +362,180 @@ async def test_bound_bot_streams_and_finalizes_native_rich_messages(
     await bot.handle_text(cast(Message, message), 7, "Use native formatting")
 
     assert message.replies == []
-    assert rich.sent[0]["markdown"] == THINKING_MESSAGE
-    assert rich.sent[0]["reply_to_message_id"] == 11
+    assert rich.sent[0]["markdown"] == "> ✦ _Thinking…_"
+    assert "reply_to_message_id" not in rich.sent[0]
     assert rich.sent[0]["buttons"]
+    assert rich.sent[0]["disable_interactions"] is True
     assert [edit[0] for edit in rich.edits] == [
-        "## Heading",
-        "## Heading\n\n| A | B |",
+        "## Heading\n\n> ✦ _Writing…_",
+        "## Heading\n\n> ✦ _Building a table…_",
         "## Heading\n\n| A | B |",
     ]
+    assert rich.edit_interactions_disabled == [True, True, False]
     assert rich.edits[-1][1] == ()
 
 
-async def test_rich_message_rejection_falls_back_to_classic_streaming(
+async def test_reasoning_summaries_are_replaced_by_separate_native_messages(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    events = [
+        WorkStarted("reasoning-1", "Analysing…"),
+        WorkSummaryUpdated("reasoning-1", 0, "**Checking the growth claim**"),
+        AgentMessageStarted("commentary", MessagePhase.commentary),
+        AgentMessageUpdated(
+            "commentary",
+            MessagePhase.commentary,
+            "The stated growth rate does not reconcile.",
+        ),
+        AgentMessageCompleted(
+            "commentary",
+            MessagePhase.commentary,
+            "The stated growth rate does not reconcile.",
+        ),
+        WorkStarted("reasoning-2", "Analysing…"),
+        WorkSummaryUpdated("reasoning-2", 0, "**Choosing the next action**"),
+        AgentMessageStarted("final", MessagePhase.final_answer),
+        AgentMessageUpdated(
+            "final", MessagePhase.final_answer, "Correct it before the meeting."
+        ),
+        AgentMessageCompleted(
+            "final", MessagePhase.final_answer, "Correct it before the meeting."
+        ),
+    ]
+    conversation = FakeConversation([], events=events)
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_text(cast(Message, message), 7, "Audit the board pack")
+
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert len(rich.sent) == 2
+    assert all("reply_to_message_id" not in sent for sent in rich.sent)
+    first_edits = [
+        markdown
+        for message_id, (markdown, _buttons) in zip(
+            rich.edit_message_ids, rich.edits, strict=True
+        )
+        if message_id == 90
+    ]
+    second_edits = [
+        markdown
+        for message_id, (markdown, _buttons) in zip(
+            rich.edit_message_ids, rich.edits, strict=True
+        )
+        if message_id == 91
+    ]
+    assert any("Checking the growth claim" in markdown for markdown in first_edits)
+    assert first_edits[-1] == "The stated growth rate does not reconcile."
+    assert "Checking the growth claim" not in first_edits[-1]
+    assert any("Choosing the next action" in markdown for markdown in second_edits)
+    assert second_edits[-1] == "Correct it before the meeting."
+    assert "Choosing the next action" not in second_edits[-1]
+
+
+async def test_live_activity_coexists_with_body_and_resolves_in_the_same_message(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    rich = FakeRichAPI()
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+
+    await live.show_message("## Finding\n\nThe first result is useful.")
+    await live.show_activity("Reading mail…")
+    await live.show_message(
+        "## Finding\n\nThe first result is useful. The second confirms it."
+    )
+    await live.finish(
+        "## Finding\n\nThe first result is useful. The second confirms it."
+    )
+
+    assert len(rich.sent) == 1
+    assert rich.edits == [
+        (
+            "## Finding\n\nThe first result is useful.\n\n> ✦ _Writing…_",
+            (_LiveBubble._stop_button,),
+        ),
+        (
+            "## Finding\n\nThe first result is useful.\n\n> ✦ _Reading mail…_",
+            (_LiveBubble._stop_button,),
+        ),
+        (
+            "## Finding\n\nThe first result is useful. The second confirms it."
+            "\n\n> ✦ _Writing…_",
+            (_LiveBubble._stop_button,),
+        ),
+        (
+            "## Finding\n\nThe first result is useful. The second confirms it.",
+            (),
+        ),
+    ]
+    assert rich.edit_interactions_disabled == [True, True, True, False]
+
+
+async def test_live_preview_keeps_partial_advanced_block_behind_status(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    rich = FakeRichAPI()
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+
+    await live.show_message(
+        "## Options\n\n| Choice | Cost |\n|---|---|\n| Local | Low |\n| Cloud"
+    )
+
+    assert rich.edits[-1][0] == (
+        "## Options\n\n| Choice | Cost |\n|---|---|\n| Local | Low |"
+        "\n\n> ✦ _Building a table…_"
+    )
+
+
+async def test_live_edit_throttle_publishes_the_latest_real_state(
+    message: FakeMessage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(telegram_live, "LIVE_EDIT_INTERVAL_SECONDS", 0.01)
+    rich = FakeRichAPI()
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+
+    await live.show_message("A useful partial answer.")
+    await live.show_activity("Searching the web…")
+    await asyncio.sleep(0.03)
+
+    assert [edit[0] for edit in rich.edits] == [
+        "A useful partial answer.\n\n> ✦ _Searching the web…_"
+    ]
+    await live.finish("A useful partial answer.")
+
+
+async def test_stopping_drops_an_unsafe_tail_without_raw_markup(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    rich = FakeRichAPI()
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    await live.start()
+    partial = "Useful result.\n\n<details><summary>Logs</summary>unfinished"
+
+    await live.stopped(partial)
+
+    assert rich.edits[-1][0] == f"Useful result.\n\n_{STOPPED_MESSAGE}_"
+    assert "<details>" not in rich.edits[-1][0]
+
+
+async def test_rich_message_rejection_is_not_replaced_with_classic_text(
     message: FakeMessage,
 ) -> None:
-    conversation = FakeConversation(["**Still formatted**"])
-    bot = AriadneBot(7, cast(CodexConversation, conversation))
-    bot._rich_api = cast(RichBotAPI, RejectingRichAPI())
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, RejectingRichAPI()))
 
-    await bot.handle_text(cast(Message, message), 7, "Fallback safely")
+    with pytest.raises(BadRequest, match="Rich Messages unavailable"):
+        await live.start()
 
-    assert message.replies == [THINKING_MESSAGE]
-    assert message.edits[-1] == "<b>Still formatted</b>"
-    assert message.edit_parse_modes[-1] == ParseMode.HTML
+    assert message.replies == []
 
 
 async def test_stopping_wins_over_a_racing_rich_completion(
     message: FakeMessage,
 ) -> None:
     rich = FakeRichAPI()
-    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
     await live.start()
 
     await live.stopping()
@@ -400,7 +549,7 @@ async def test_stopping_preserves_rich_partial_output_beyond_one_message(
     message: FakeMessage,
 ) -> None:
     rich = FakeRichAPI()
-    live = telegram_bot._LiveResponse(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
     await live.start()
     partial = "A" * RICH_MESSAGE_LIMIT + "\n\n" + "B" * 100
 
@@ -422,12 +571,11 @@ async def test_telegram_reply_includes_the_replied_message_text() -> None:
     await bot.handle_text(cast(Message, message), 7, "What does this mean?")
 
     assert conversation.prompts == [
-        "Telegram reply context (message id 10):\n"
+        "Telegram reply context:\n"
         "<quoted_message>\n"
         "The cache hit rate was 96%.\n"
         "</quoted_message>\n\n"
-        "What does this mean?\n\n"
-        "Telegram message id: 11"
+        "What does this mean?"
         f"\n\n{THREAD_PUSH_PERMISSION}"
     ]
 
@@ -436,10 +584,10 @@ def test_telegram_reply_uses_the_replied_message_caption() -> None:
     replied_message = FakeMessage(message_id=10)
     replied_message.caption = "The first dashboard after setup"
 
-    prompt = turn_text("Why is this empty?", 11, cast(Message, replied_message))
+    prompt = turn_text("Why is this empty?", cast(Message, replied_message))
 
     assert "The first dashboard after setup" in prompt
-    assert "Telegram reply context (message id 10)" in prompt
+    assert "Telegram reply context:" in prompt
 
 
 async def test_streamed_text_is_shown_as_formatted_message_edits(
@@ -450,10 +598,11 @@ async def test_streamed_text_is_shown_as_formatted_message_edits(
 
     await bot.handle_text(cast(Message, message), 7, "Say hello")
 
-    assert "Hello" in message.edits
-    assert message.edits[-1] == "Hello, Ariadne!"
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert rich.edits[0][0].startswith("Hello\n\n")
+    assert "Writing…" in rich.edits[0][0]
+    assert rich.edits[-1][0] == "Hello, Ariadne!"
     assert message.drafts == []
-    assert message.replies == [THINKING_MESSAGE]
 
 
 async def test_final_response_uses_rich_telegram_formatting(
@@ -464,9 +613,8 @@ async def test_final_response_uses_rich_telegram_formatting(
 
     await bot.handle_text(cast(Message, message), 7, "Format this")
 
-    assert message.replies == [THINKING_MESSAGE]
-    assert message.edits[-1] == "<b>C++</b> with <code>std::vector</code>"
-    assert message.edit_parse_modes[-1] == ParseMode.HTML
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert rich.edits[-1][0] == "**C++** with `std::vector`"
 
 
 async def test_safe_activity_status_is_shown_before_the_answer(
@@ -480,39 +628,9 @@ async def test_safe_activity_status_is_shown_before_the_answer(
 
     await bot.handle_text(cast(Message, message), 7, "Research this")
 
-    assert "Searching the web…" in message.edits
-    assert message.edits[-1] == "The answer"
-    assert message.replies == [THINKING_MESSAGE]
-
-
-async def test_an_answer_iris_already_sent_herself_is_not_repeated(
-    message: FakeMessage,
-) -> None:
-    conversation = FakeConversation(
-        ["This is the latest one."],
-        spoken=["This is the latest one."],
-    )
-    bot = AriadneBot(7, cast(CodexConversation, conversation))
-
-    await bot.handle_text(cast(Message, message), 7, "Find my CV")
-
-    assert message.replies == [THINKING_MESSAGE]
-    assert message.deleted
-
-
-async def test_a_final_answer_beyond_what_iris_sent_is_still_delivered(
-    message: FakeMessage,
-) -> None:
-    conversation = FakeConversation(
-        ["Found two. The newer one is from June."],
-        spoken=["Looking through your projects."],
-    )
-    bot = AriadneBot(7, cast(CodexConversation, conversation))
-
-    await bot.handle_text(cast(Message, message), 7, "Find my CV")
-
-    assert message.replies == [THINKING_MESSAGE]
-    assert message.edits[-1] == "Found two. The newer one is from June."
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert any("Searching the web…" in edit for edit, _ in rich.edits)
+    assert rich.edits[-1][0] == "The answer"
 
 
 async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
@@ -543,11 +661,11 @@ async def test_message_during_an_active_turn_steers_it_instead_of_being_rejected
     conversation.release.set()
     await first_turn
 
-    assert conversation.steered == [turn_text("Actually check the other file too", 11)]
+    assert conversation.steered == [turn_text("Actually check the other file too")]
     assert conversation.interrupt_calls == 0
     assert second_message.replies == []
-    assert first_message.replies == [THINKING_MESSAGE]
-    assert first_message.edits[-1] == "Finished"
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert rich.edits[-1][0] == "Finished"
 
 
 async def test_multiple_live_followups_keep_arrival_order_without_ack_messages() -> (
@@ -569,8 +687,8 @@ async def test_multiple_live_followups_keep_arrival_order_without_ack_messages()
     await turn
 
     assert conversation.steered == [
-        turn_text("Check tests too", 11),
-        turn_text("Focus on races", 12),
+        turn_text("Check tests too"),
+        turn_text("Focus on races"),
     ]
     assert second_message.replies == []
     assert third_message.replies == []
@@ -591,7 +709,7 @@ async def test_typed_question_answer_resumes_the_turn_without_steering(
     )
     await conversation.started.wait()
     question = store.create(7, "Which environment?", ["Staging", "Production"])
-    store.attach_message(question.question_id, 90, rich=True)
+    store.attach_message(question.question_id, 90)
 
     await bot.handle_text(cast(Message, answer_message), 7, "Use canary production")
 
@@ -621,7 +739,7 @@ async def test_question_button_is_atomic_and_double_taps_are_idempotent(
     )
     await conversation.started.wait()
     question = store.create(7, "Where?", ["Staging", "Production"])
-    store.attach_message(question.question_id, 90, rich=True)
+    store.attach_message(question.question_id, 90)
 
     selected = bot.handle_question_selection(
         cast(Message, question_message), 7, question.callback_data(1)
@@ -655,7 +773,7 @@ async def test_stop_cancels_a_question_waiting_inside_the_turn(
     )
     await conversation.started.wait()
     question = store.create(7, "Where?", ["Staging", "Production"])
-    store.attach_message(question.question_id, 90, rich=True)
+    store.attach_message(question.question_id, 90)
 
     await bot.handle_stop(cast(Message, stop_message), 7)
     await turn
@@ -684,7 +802,7 @@ async def test_reply_context_is_preserved_when_steering_an_active_turn() -> None
 
     assert len(conversation.steered) == 1
     assert "Review the vault" in conversation.steered[0]
-    assert "Telegram reply context (message id 10)" in conversation.steered[0]
+    assert "Telegram reply context:" in conversation.steered[0]
 
 
 async def test_steering_failure_preserves_the_message_as_the_next_turn() -> None:
@@ -704,10 +822,11 @@ async def test_steering_failure_preserves_the_message_as_the_next_turn() -> None
     assert bot._pending_task is not None
     await asyncio.wait_for(bot._pending_task, timeout=1)
 
-    assert second_message.replies == [THINKING_MESSAGE]
-    assert second_message.edits[-1] == "Finished"
-    assert first_message.replies == [THINKING_MESSAGE]
-    assert first_message.edits[-1] == "Finished"
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert [edit[0] for edit in rich.edits if edit[0] == "Finished"] == [
+        "Finished",
+        "Finished",
+    ]
 
 
 async def test_message_sent_before_codex_accepts_the_turn_is_not_lost() -> None:
@@ -728,11 +847,11 @@ async def test_message_sent_before_codex_accepts_the_turn_is_not_lost() -> None:
     await asyncio.wait_for(bot._pending_task, timeout=1)
 
     assert conversation.steered == []
-    assert len(second_message.replies) == 1
-    assert second_message.replies == [THINKING_MESSAGE]
-    assert second_message.edits[-1] == "Finished"
-    assert first_message.replies == [THINKING_MESSAGE]
-    assert first_message.edits[-1] == "Finished"
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert [edit[0] for edit in rich.edits if edit[0] == "Finished"] == [
+        "Finished",
+        "Finished",
+    ]
 
 
 async def test_new_does_not_interrupt_an_active_turn() -> None:
@@ -770,9 +889,9 @@ async def test_stop_interrupts_the_active_turn_and_frees_the_conversation() -> N
 
     assert conversation.interrupt_calls == 1
     assert stop_message.replies == []
-    assert active_message.replies == [THINKING_MESSAGE]
-    assert "Working" in active_message.edits[-1]
-    assert STOPPED_MESSAGE in active_message.edits[-1]
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert "Working" in rich.edits[-1][0]
+    assert STOPPED_MESSAGE in rich.edits[-1][0]
     assert new_message.replies == [NEW_CONVERSATION_MESSAGE]
 
 
@@ -790,8 +909,9 @@ async def test_stop_state_wins_when_question_cancellation_races_a_tool_error() -
     await bot.handle_stop(cast(Message, stop_message), 7)
     await turn
 
-    assert STOPPED_MESSAGE in active_message.edits[-1]
-    assert FAILURE_MESSAGE not in active_message.edits
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert STOPPED_MESSAGE in rich.edits[-1][0]
+    assert all(FAILURE_MESSAGE not in edit for edit, _ in rich.edits)
 
 
 async def test_stop_when_idle_has_a_clear_response(message: FakeMessage) -> None:
@@ -869,73 +989,6 @@ async def test_settings_rejects_changes_during_an_active_turn() -> None:
     assert settings_message.edits == [SETTINGS_BUSY_MESSAGE]
 
 
-async def test_typing_indicator_runs_for_an_active_turn_and_stops_afterward(
-    message: FakeMessage,
-) -> None:
-    conversation = BlockingConversation()
-    bot = AriadneBot(7, cast(CodexConversation, conversation))
-    typing = FakeTyping()
-
-    turn = asyncio.create_task(
-        bot.handle_text(
-            cast(Message, message),
-            7,
-            "First",
-            send_typing=typing.send,
-        )
-    )
-    await conversation.started.wait()
-    await typing.started.wait()
-    conversation.release.set()
-    await turn
-
-    calls_after_turn = typing.calls
-    await asyncio.sleep(0)
-    assert calls_after_turn == 1
-    assert typing.calls == calls_after_turn
-
-
-async def test_typing_timeout_is_logged_without_a_traceback(
-    message: FakeMessage, caplog
-) -> None:
-    conversation = BlockingConversation()
-    bot = AriadneBot(7, cast(CodexConversation, conversation))
-    typing = TimedOutTyping()
-
-    turn = asyncio.create_task(
-        bot.handle_text(
-            cast(Message, message),
-            7,
-            "First",
-            send_typing=typing.send,
-        )
-    )
-    await conversation.started.wait()
-    await typing.started.wait()
-    conversation.release.set()
-    await turn
-
-    timeout_log = next(
-        record
-        for record in caplog.records
-        if record.getMessage() == "Telegram typing indicator timed out; will retry."
-    )
-    assert timeout_log.exc_info is None
-
-
-async def test_long_responses_are_split_at_telegrams_limit(
-    message: FakeMessage,
-) -> None:
-    response = "x" * (TELEGRAM_MESSAGE_LIMIT + 1)
-    conversation = FakeConversation([response])
-    bot = AriadneBot(7, cast(CodexConversation, conversation))
-
-    await bot.handle_text(cast(Message, message), 7, "Long answer")
-
-    assert message.replies == [THINKING_MESSAGE, "x"]
-    assert message.edits[-1] == "x" * TELEGRAM_MESSAGE_LIMIT
-
-
 async def test_response_beyond_the_rich_limit_keeps_rich_chunks(
     message: FakeMessage,
 ) -> None:
@@ -952,27 +1005,6 @@ async def test_response_beyond_the_rich_limit_keeps_rich_chunks(
     assert rich.sent[1]["markdown"] == "B" * 100
 
 
-@pytest.mark.parametrize("separator", ["\n\n", "\n", " "])
-def test_long_text_prefers_readable_telegram_split_boundaries(separator: str) -> None:
-    suffix = "y" * 25
-    response = "x" * (TELEGRAM_MESSAGE_LIMIT - 20 - len(separator)) + separator + suffix
-
-    chunks = split_for_telegram(response)
-
-    assert chunks == [response[: -len(suffix)], suffix]
-    assert "".join(chunks) == response
-    assert all(len(chunk) <= TELEGRAM_MESSAGE_LIMIT for chunk in chunks)
-
-
-def test_long_text_avoids_a_tiny_telegram_message_before_a_hard_split() -> None:
-    response = "intro\n\n" + "x" * TELEGRAM_MESSAGE_LIMIT
-
-    chunks = split_for_telegram(response)
-
-    assert chunks[0] == response[:TELEGRAM_MESSAGE_LIMIT]
-    assert "".join(chunks) == response
-
-
 async def test_failed_turn_replies_and_allows_the_next_turn(
     message: FakeMessage,
 ) -> None:
@@ -984,11 +1016,9 @@ async def test_failed_turn_replies_and_allows_the_next_turn(
     next_message = FakeMessage()
     await bot.handle_text(cast(Message, next_message), 7, "Second")
 
-    assert message.replies == [THINKING_MESSAGE]
-    assert message.edits[-1] == FAILURE_MESSAGE
-    assert next_message.replies == [THINKING_MESSAGE]
-    assert next_message.edits[-1] == "Recovered"
-    assert conversation.prompts == [turn_text("First", 11), turn_text("Second", 11)]
+    rich = cast(FakeRichAPI, bot._rich_api)
+    assert [edit[0] for edit in rich.edits[-2:]] == [FAILURE_MESSAGE, "Recovered"]
+    assert conversation.prompts == [turn_text("First"), turn_text("Second")]
 
 
 def test_document_message_uses_the_caption_as_the_request(tmp_path) -> None:
@@ -1028,7 +1058,7 @@ async def test_document_sent_during_a_turn_steers_it_and_is_kept(
     )
 
     assert conversation.steered == [
-        turn_text(document_message("what looks odd here?", [(attachment, None)]), 11)
+        turn_text(document_message("what looks odd here?", [(attachment, None)]))
     ]
 
     conversation.release.set()
@@ -1047,7 +1077,7 @@ async def test_document_is_kept_after_the_turn_it_started(tmp_path) -> None:
     await bot.handle_document(cast(Message, FakeMessage()), 7, attachment)
 
     assert conversation.prompts == [
-        turn_text(document_message(None, [(attachment, None)]), 11)
+        turn_text(document_message(None, [(attachment, None)]))
     ]
     assert attachment.exists()
 
@@ -1078,8 +1108,7 @@ async def test_a_media_group_becomes_one_turn(tmp_path, monkeypatch) -> None:
         turn_text(
             document_message(
                 "what looks odd here?", [(paths[0], None), (paths[1], None)]
-            ),
-            11,
+            )
         )
     ]
 

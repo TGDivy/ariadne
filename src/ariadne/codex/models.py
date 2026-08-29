@@ -11,6 +11,7 @@ from openai_codex.generated.v2_all import ReasoningEffort
 
 WebSearchSetting = Literal["disabled", "live"]
 ThreadPolicy = Literal["shared", "fresh-per-event"]
+ReasoningSummarySetting = Literal["none", "concise", "auto", "detailed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +45,7 @@ class TurnProfile:
     developer_documents: tuple[str, ...]
     enabled_tools: tuple[str, ...]
     thread_policy: ThreadPolicy
+    reasoning_summary: ReasoningSummarySetting = "none"
     sandbox: Sandbox = Sandbox.workspace_write
     approval_mode: ApprovalMode = ApprovalMode.auto_review
     permission_profile: str = "ariadne"
@@ -94,6 +96,10 @@ class ResolvedTurnProfile:
     @property
     def thread_policy(self) -> ThreadPolicy:
         return self.profile.thread_policy
+
+    @property
+    def reasoning_summary(self) -> ReasoningSummarySetting:
+        return self.profile.reasoning_summary
 
     @property
     def sandbox(self) -> Sandbox:

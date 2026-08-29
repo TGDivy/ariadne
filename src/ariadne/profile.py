@@ -31,8 +31,6 @@ TELEGRAM_PROFILE = TurnProfile(
     developer_documents=("grounding", "ariadne"),
     enabled_tools=(
         "runtime_status",
-        "send_telegram_message",
-        "react",
         "ask_telegram_question",
         "prepare_files",
         "search_mail",
@@ -48,6 +46,7 @@ TELEGRAM_PROFILE = TurnProfile(
         "respond_to_calendar_invitation",
     ),
     thread_policy="shared",
+    reasoning_summary="concise",
     sandbox=Sandbox.workspace_write,
     approval_mode=ApprovalMode.auto_review,
     permission_profile="ariadne",
@@ -79,7 +78,6 @@ MAIL_PROFILE = TurnProfile(
     enabled_tools=(
         "runtime_status",
         "send_telegram_message",
-        "react",
         "prepare_files",
         "triage_current_mail",
     ),

@@ -38,8 +38,9 @@ the rest safe.
 
 Load-bearing, because Ariadne's own code depends on it:
 
-- The `commentary`/`final` channel contract. `stream_reply` swaps the streamed
-  text for the item whose `phase == MessagePhase.final_answer`.
+- The `commentary`/`final` channel contract. `stream_turn` preserves each
+  declared phase as a semantic event, while Telegram renders commentary and
+  final items as separate messages.
 - `apply_patch` for edits — the 5.6 models are `apply_patch_tool_type: freeform`.
 - CommonMark's blank line before a list, or `telegram_format` will not render it.
 

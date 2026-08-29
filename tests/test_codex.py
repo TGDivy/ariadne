@@ -22,7 +22,11 @@ from openai_codex.generated.v2_all import (
     McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
+    PlanThreadItem,
     ReasoningEffort,
+    ReasoningSummary,
+    ReasoningSummaryTextDeltaNotification,
+    ReasoningThreadItem,
     ThreadItem,
     ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification,
@@ -38,9 +42,14 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 import ariadne.codex.conversation as conversation_module
 from ariadne.codex import (
+    ActivityUpdated,
+    AgentMessageCompleted,
+    AgentMessageUpdated,
     CodexConversation,
     CodexTurnSettings,
     TurnInterrupted,
+    WorkStarted,
+    WorkSummaryUpdated,
     _mcp_config_overrides,
 )
 from ariadne.codex.resolver import resolve_profile
@@ -147,6 +156,21 @@ class FakeTurn:
             )
             yield SimpleNamespace(payload=payload)
 
+        agent = AgentMessageThreadItem(
+            id="item",
+            phase=MessagePhase.final_answer,
+            text="",
+            type="agentMessage",
+        )
+        yield SimpleNamespace(
+            payload=ItemStartedNotification(
+                item=ThreadItem(root=agent),
+                startedAtMs=0,
+                threadId="thread",
+                turnId="turn",
+            )
+        )
+
         for delta in self._deltas:
             payload = AgentMessageDeltaNotification(
                 delta=delta,
@@ -164,20 +188,16 @@ class FakeTurn:
             )
             yield SimpleNamespace(payload=payload)
 
-        if self._final_answer is not None:
-            item = AgentMessageThreadItem(
-                id="item",
-                phase=MessagePhase.final_answer,
-                text=self._final_answer,
-                type="agentMessage",
-            )
-            payload = ItemCompletedNotification(
-                completedAtMs=0,
-                item=ThreadItem(root=item),
-                threadId="thread",
-                turnId="turn",
-            )
-            yield SimpleNamespace(payload=payload)
+        item = agent.model_copy(
+            update={"text": self._final_answer or "".join(self._deltas)}
+        )
+        payload = ItemCompletedNotification(
+            completedAtMs=0,
+            item=ThreadItem(root=item),
+            threadId="thread",
+            turnId="turn",
+        )
+        yield SimpleNamespace(payload=payload)
 
 
 class InterruptibleTurn:
@@ -202,6 +222,45 @@ class InterruptibleTurn:
             turn=Turn(id="turn", items=[], status=TurnStatus.interrupted),
         )
         yield SimpleNamespace(payload=payload)
+
+
+class ReasoningSummaryTurn(FakeTurn):
+    async def stream(self):
+        item = ReasoningThreadItem(
+            id="reasoning", content=[], summary=[], type="reasoning"
+        )
+        yield SimpleNamespace(
+            payload=ItemStartedNotification(
+                item=ThreadItem(root=item),
+                startedAtMs=0,
+                threadId="thread",
+                turnId="turn",
+            )
+        )
+        for delta in ("Confirming ", "the calculation"):
+            yield SimpleNamespace(
+                payload=ReasoningSummaryTextDeltaNotification(
+                    delta=delta,
+                    itemId="reasoning",
+                    summaryIndex=0,
+                    threadId="thread",
+                    turnId="turn",
+                )
+            )
+        yield SimpleNamespace(
+            payload=ItemCompletedNotification(
+                completedAtMs=0,
+                item=ThreadItem(
+                    root=item.model_copy(
+                        update={"summary": ["Confirming the calculation"]}
+                    )
+                ),
+                threadId="thread",
+                turnId="turn",
+            )
+        )
+        async for event in super().stream():
+            yield event
 
 
 class FakeThread:
@@ -255,11 +314,21 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
         client=cast(AsyncCodex, client),
     )
 
-    first = [text async for text in conversation.stream_reply("First message")]
-    second = [text async for text in conversation.stream_reply("Follow-up")]
+    first = [event async for event in conversation.stream_turn("First message")]
+    second = [event async for event in conversation.stream_turn("Follow-up")]
 
-    assert first == ["Hello", "Hello world"]
-    assert second == ["Hello", "Hello world"]
+    assert [
+        event.text for event in first if isinstance(event, AgentMessageUpdated)
+    ] == [
+        "Hello",
+        "Hello world",
+    ]
+    assert [
+        event.text for event in second if isinstance(event, AgentMessageUpdated)
+    ] == [
+        "Hello",
+        "Hello world",
+    ]
     assert thread.inputs == ["First message", "Follow-up"]
     assert client.thread_start_options == [
         {
@@ -282,6 +351,7 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
             "effort": ReasoningEffort.low,
             "model": "gpt-5.6-luna",
             "sandbox": Sandbox.workspace_write,
+            "summary": ReasoningSummary.model_validate("concise"),
         },
         {
             "approval_mode": ApprovalMode.auto_review,
@@ -289,6 +359,7 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
             "effort": ReasoningEffort.low,
             "model": "gpt-5.6-luna",
             "sandbox": Sandbox.workspace_write,
+            "summary": ReasoningSummary.model_validate("concise"),
         },
     ]
 
@@ -340,8 +411,8 @@ async def test_codex_conversation_emits_the_cumulative_turn_usage_delta_once(
         telemetry=telemetry,
     )
 
-    _ = [text async for text in conversation.stream_reply("First question")]
-    _ = [text async for text in conversation.stream_reply("Second question")]
+    _ = [event async for event in conversation.stream_turn("First question")]
+    _ = [event async for event in conversation.stream_turn("Second question")]
 
     values = {
         metric.name: tuple(
@@ -380,7 +451,7 @@ async def test_codex_conversation_enables_live_web_search_explicitly(
         client=cast(AsyncCodex, client),
     )
 
-    _ = [text async for text in conversation.stream_reply("Research this")]
+    _ = [event async for event in conversation.stream_turn("Research this")]
 
     assert client.thread_start_options[0]["config"] == {
         "model_reasoning_effort": "high",
@@ -413,20 +484,51 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
         human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
-    activities: list[str] = []
-
-    async def record_activity(activity: str) -> None:
-        activities.append(activity)
-
-    _ = [
-        text
-        async for text in conversation.stream_reply(
-            "Research", activity=record_activity
-        )
-    ]
+    events = [event async for event in conversation.stream_turn("Research")]
+    activities = [event.text for event in events if isinstance(event, ActivityUpdated)]
 
     assert activities == ["Searching the web…"]
     assert "private" not in activities[0]
+
+
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        (
+            ReasoningThreadItem(
+                id="reasoning", content=[], summary=[], type="reasoning"
+            ),
+            "Analysing…",
+        ),
+        (PlanThreadItem(id="plan", text="private plan", type="plan"), "Planning…"),
+    ],
+)
+def test_codex_reasoning_states_have_concise_private_activity_labels(
+    item: object, expected: str
+) -> None:
+    assert conversation_module._activity_message(item) == expected
+    assert "private" not in expected
+
+
+async def test_codex_streams_only_the_requested_reasoning_summary(
+    tmp_path: Path,
+) -> None:
+    conversation = make_conversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        human=HUMAN,
+        client=cast(
+            AsyncCodex,
+            FakeCodex(FakeThread(turn=ReasoningSummaryTurn(["Done"]))),
+        ),
+    )
+
+    events = [event async for event in conversation.stream_turn("Check it")]
+
+    assert WorkStarted("reasoning", "Analysing…") in events
+    assert [
+        event.text for event in events if isinstance(event, WorkSummaryUpdated)
+    ] == ["Confirming ", "Confirming the calculation"]
 
 
 async def test_codex_conversation_reports_mcp_activity_without_tool_details(
@@ -457,19 +559,10 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
         human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
-    activities: list[str] = []
+    events = [event async for event in conversation.stream_turn("Prepare the file")]
+    activities = [event.text for event in events if isinstance(event, ActivityUpdated)]
 
-    async def record_activity(activity: str) -> None:
-        activities.append(activity)
-
-    _ = [
-        text
-        async for text in conversation.stream_reply(
-            "Prepare the file", activity=record_activity
-        )
-    ]
-
-    assert activities == ["Using Ariadne's local capability…"]
+    assert activities == ["Preparing files…"]
     assert "private" not in activities[0]
     assert (
         "Codex MCP call started source=telegram server=ariadne "
@@ -553,30 +646,21 @@ async def test_codex_conversation_reports_specific_service_activity(
         human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
-    activities: list[str] = []
-
-    async def record_activity(activity: str) -> None:
-        activities.append(activity)
-
-    _ = [
-        text
-        async for text in conversation.stream_reply(
-            "Find the email", activity=record_activity
-        )
-    ]
+    events = [event async for event in conversation.stream_turn("Find the email")]
+    activities = [event.text for event in events if isinstance(event, ActivityUpdated)]
 
     assert activities == [expected]
 
 
-async def test_iris_speaking_for_herself_is_not_announced_as_a_tool(
+async def test_telegram_question_is_not_announced_as_a_tool(
     tmp_path: Path,
 ) -> None:
     mcp_item = McpToolCallThreadItem(
-        arguments={"text": "Found the repo."},
+        arguments={"prompt": "Which one?", "choices": ["A", "B"]},
         id="mcp",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="send_telegram_message",
+        tool="ask_telegram_question",
         type="mcpToolCall",
     )
     thread = FakeThread(
@@ -588,63 +672,10 @@ async def test_iris_speaking_for_herself_is_not_announced_as_a_tool(
         human=HUMAN,
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
-    activities: list[str] = []
-
-    async def record_activity(activity: str) -> None:
-        activities.append(activity)
-
-    _ = [
-        text
-        async for text in conversation.stream_reply(
-            "Find my CV", activity=record_activity
-        )
-    ]
+    events = [event async for event in conversation.stream_turn("Choose")]
+    activities = [event.text for event in events if isinstance(event, ActivityUpdated)]
 
     assert activities == []
-
-
-async def test_codex_conversation_reports_what_iris_said_in_telegram_herself(
-    tmp_path: Path,
-) -> None:
-    def spoke(tool: str, arguments: object) -> ThreadItem:
-        return ThreadItem(
-            root=McpToolCallThreadItem(
-                arguments=arguments,
-                id=tool,
-                server="ariadne",
-                status=McpToolCallStatus.completed,
-                tool=tool,
-                type="mcpToolCall",
-            )
-        )
-
-    thread = FakeThread(
-        turn=FakeTurn(
-            ["Done"],
-            completed_items=[
-                spoke("send_telegram_message", {"text": "Found the repo."}),
-                spoke(
-                    "send_telegram_message",
-                    '{"text": "This is the latest one."}',
-                ),
-                spoke("prepare_files", {"paths": ["/tmp/example-cv.pdf"]}),
-            ],
-        )
-    )
-    conversation = make_conversation(
-        tmp_path,
-        DEFAULT_SETTINGS,
-        human=HUMAN,
-        client=cast(AsyncCodex, FakeCodex(thread)),
-    )
-    spoken: list[str] = []
-
-    _ = [
-        text
-        async for text in conversation.stream_reply("Find my CV", spoken=spoken.append)
-    ]
-
-    assert spoken == ["Found the repo.", "This is the latest one."]
 
 
 async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(
@@ -659,7 +690,7 @@ async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(
     )
 
     async def consume_turn() -> None:
-        _ = [text async for text in conversation.stream_reply("Stop me")]
+        _ = [event async for event in conversation.stream_turn("Stop me")]
 
     task = asyncio.create_task(consume_turn())
     await turn.started.wait()
@@ -685,7 +716,7 @@ async def test_codex_conversation_steers_the_turn_it_is_already_running(
     assert await conversation.steer("Nothing is running yet") is False
 
     async def consume_turn() -> None:
-        _ = [text async for text in conversation.stream_reply("Review the vault")]
+        _ = [event async for event in conversation.stream_turn("Review the vault")]
 
     task = asyncio.create_task(consume_turn())
     await turn.started.wait()
@@ -715,7 +746,7 @@ async def test_codex_conversation_steers_with_a_local_image_attachment(
     )
 
     async def consume_turn() -> None:
-        _ = [text async for text in conversation.stream_reply("Review the vault")]
+        _ = [event async for event in conversation.stream_turn("Review the vault")]
 
     task = asyncio.create_task(consume_turn())
     await turn.started.wait()
@@ -745,8 +776,8 @@ async def test_codex_conversation_interrupts_a_turn_that_starts_after_stop_reque
 
     with pytest.raises(TurnInterrupted):
         _ = [
-            text
-            async for text in conversation.stream_reply(
+            event
+            async for event in conversation.stream_turn(
                 "Stop before start",
                 stop_requested=lambda: True,
             )
@@ -764,9 +795,17 @@ async def test_codex_conversation_uses_the_final_agent_answer(tmp_path: Path) ->
         client=cast(AsyncCodex, FakeCodex(thread)),
     )
 
-    responses = [text async for text in conversation.stream_reply("Question")]
+    events = [event async for event in conversation.stream_turn("Question")]
 
-    assert responses == ["Hello", "Hello world", "The final answer."]
+    assert [
+        event.text for event in events if isinstance(event, AgentMessageUpdated)
+    ] == [
+        "Hello",
+        "Hello world",
+    ]
+    assert [
+        event.text for event in events if isinstance(event, AgentMessageCompleted)
+    ] == ["The final answer."]
 
 
 async def test_codex_conversation_sends_local_images_with_caption(
@@ -783,8 +822,8 @@ async def test_codex_conversation_sends_local_images_with_caption(
     )
 
     _ = [
-        text
-        async for text in conversation.stream_reply(
+        event
+        async for event in conversation.stream_turn(
             "What is shown here?", image_paths=(image_path,)
         )
     ]
@@ -807,12 +846,12 @@ async def test_codex_conversation_starts_a_new_thread_after_reset(
         client=cast(AsyncCodex, client),
     )
 
-    _ = [text async for text in conversation.stream_reply("First message")]
+    _ = [event async for event in conversation.stream_turn("First message")]
     conversation.reset()
 
     assert len(client.thread_start_options) == 1
 
-    _ = [text async for text in conversation.stream_reply("Second message")]
+    _ = [event async for event in conversation.stream_turn("Second message")]
 
     assert first_thread.inputs == ["First message"]
     assert second_thread.inputs == ["Second message"]
@@ -839,8 +878,8 @@ async def test_fresh_per_event_profile_starts_a_new_thread_after_each_turn(
         client=cast(AsyncCodex, client),
     )
 
-    _ = [text async for text in conversation.stream_reply("First event")]
-    _ = [text async for text in conversation.stream_reply("Second event")]
+    _ = [event async for event in conversation.stream_turn("First event")]
+    _ = [event async for event in conversation.stream_turn("Second event")]
 
     assert first_thread.inputs == ["First event"]
     assert second_thread.inputs == ["Second event"]
