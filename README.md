@@ -79,6 +79,19 @@ values. Every declarative source profile lives together in
 `src/ariadne/profile.py`; runtime trigger policy such as polling, queues,
 retries, and UID state remains in each surface's runtime code.
 
+Important companion behaviours can also be replayed with synthetic inputs.
+Listing and inspection are free, deterministic, and CI-safe; a real Codex run
+is an explicit local command and may incur usage:
+
+```bash
+uv run python -m ariadne.scripts.behavior list
+uv run python -m ariadne.scripts.behavior show race-confirmation
+uv run python -m ariadne.scripts.behavior run race-confirmation
+```
+
+See [`docs/behaviour-scenarios.md`](docs/behaviour-scenarios.md) for the isolation
+boundary, recorded fake capabilities, and report contents.
+
 ### Read-only mail export experiment
 
 The one-off operator script can export recent iCloud Mail messages for local

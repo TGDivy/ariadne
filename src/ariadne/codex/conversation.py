@@ -51,6 +51,7 @@ from .events import (
     AgentMessageCompleted,
     AgentMessageStarted,
     AgentMessageUpdated,
+    CapabilityCallCompleted,
     ConversationEvent,
     WorkStarted,
     WorkSummaryUpdated,
@@ -431,6 +432,14 @@ class CodexConversation:
                             item,
                             self._profile.name,
                             mcp_started_at.pop(item.id, None),
+                        )
+                        yield CapabilityCallCompleted(
+                            server=item.server,
+                            tool=item.tool,
+                            status=item.status.value,
+                            error=item.error.message
+                            if item.error is not None
+                            else None,
                         )
                     if isinstance(item, AgentMessageThreadItem):
                         phase = message_phases.pop(item.id, None)

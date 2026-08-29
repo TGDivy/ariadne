@@ -33,4 +33,4 @@ mcp = create_server()
 
 def main() -> None:
     """Run the local server over FastMCP's default stdio transport."""
-    mcp.run()
+    mcp.run(show_banner=False)
