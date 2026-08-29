@@ -282,6 +282,7 @@ class CodexConversation:
         )
         self._thread: AsyncThread | None = None
         self._thread_token_usage_total: TokenUsageBreakdown | None = None
+        self._last_turn_token_usage: TokenUsageBreakdown | None = None
         self._active_turn: AsyncTurnHandle | None = None
         self._interrupting_turn: AsyncTurnHandle | None = None
 
@@ -294,6 +295,11 @@ class CodexConversation:
     def profile(self) -> ResolvedTurnProfile:
         """Return the complete configuration of the next turn."""
         return self._profile
+
+    @property
+    def last_turn_token_usage(self) -> TokenUsageBreakdown | None:
+        """Return Codex's latest reported usage for the preceding turn."""
+        return self._last_turn_token_usage
 
     async def available_models(self) -> tuple[CodexModel, ...]:
         """Return the non-hidden models available to the current Codex runtime."""
@@ -360,6 +366,7 @@ class CodexConversation:
             model=self._profile.model,
             reasoning_effort=self._profile.effort.value,
         )
+        self._last_turn_token_usage = None
         usage_baseline = self._thread_token_usage_total
         turn: AsyncTurnHandle | None = None
         status: Literal["success", "failure", "cancelled"] = "failure"
@@ -461,6 +468,7 @@ class CodexConversation:
                         yield AgentMessageCompleted(item.id, phase, item.text)
                 elif isinstance(event.payload, ThreadTokenUsageUpdatedNotification):
                     observation.usage(event.payload.token_usage, usage_baseline)
+                    self._last_turn_token_usage = event.payload.token_usage.last
                     self._thread_token_usage_total = event.payload.token_usage.total
                 elif isinstance(event.payload, ContextCompactedNotification):
                     observation.compacted()

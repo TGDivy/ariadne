@@ -8,8 +8,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +31,12 @@ from ariadne.codex.conversation import (
 )
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
+from ariadne.knowledge import KnowledgeMetadata, KnowledgeRelation
+from ariadne.knowledge.documents import render_document
+from ariadne.knowledge.paths import slug
 from ariadne.profile import MAIL_PROFILE
 
+from .fake_calendar import CALENDAR_ENVIRONMENT
 from .fake_knowledge import KNOWLEDGE_ENVIRONMENT
 from .fake_mcp import STATE_ENVIRONMENT
 from .models import BehaviorScenario
@@ -82,11 +88,14 @@ class BehaviorReport:
     model: str
     reasoning_effort: str
     web_search: str
+    duration_seconds: float
+    token_usage: dict[str, int] | None
     enabled_capabilities: tuple[str, ...]
     timeline: tuple[TimelineEntry, ...]
     messages: tuple[RecordedMessage, ...]
     capability_attempts: tuple[dict[str, str | None], ...]
     capability_calls: tuple[dict[str, Any], ...]
+    calendar_events: tuple[dict[str, Any], ...]
     commits: tuple[str, ...]
     workspace_patch: str
     review_questions: tuple[str, ...]
@@ -97,6 +106,8 @@ class BehaviorReport:
             "model": self.model,
             "reasoning_effort": self.reasoning_effort,
             "web_search": self.web_search,
+            "duration_seconds": self.duration_seconds,
+            "token_usage": self.token_usage,
             "enabled_capabilities": list(self.enabled_capabilities),
             "timeline": [
                 {"kind": entry.kind, "text": entry.text} for entry in self.timeline
@@ -107,6 +118,7 @@ class BehaviorReport:
             ],
             "capability_attempts": list(self.capability_attempts),
             "capability_calls": list(self.capability_calls),
+            "calendar_events": list(self.calendar_events),
             "commits": list(self.commits),
             "workspace_patch": self.workspace_patch,
             "review_questions": list(self.review_questions),
@@ -131,6 +143,30 @@ def _write_scenario(scenario: BehaviorScenario, workspace: Path) -> None:
             raise ValueError(f"Scenario file escapes its workspace: {fixture.path}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(fixture.content, encoding="utf-8")
+    recorded_at = datetime(2026, 8, 29, 10, tzinfo=UTC)
+    for record in scenario.knowledge:
+        metadata = KnowledgeMetadata(
+            id=record.id,
+            title=record.title,
+            summary=record.summary,
+            kind=record.kind,
+            collection=record.collection,
+            tags=record.tags,
+            aliases=record.aliases,
+            starts_at=record.starts_at,
+            ends_at=record.ends_at,
+            related=tuple(
+                KnowledgeRelation(record=target, relation=relation)
+                for target, relation in record.related
+            ),
+            created_at=recorded_at,
+            updated_at=recorded_at,
+        )
+        destination = (
+            workspace / record.kind / record.collection / f"{slug(record.title)}.md"
+        )
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(render_document(metadata, record.body))
 
 
 def _snapshot(workspace: Path) -> dict[str, str]:
@@ -165,7 +201,7 @@ def _snapshot_patch(before: dict[str, str], after: dict[str, str]) -> str:
 
 
 def _fake_mcp_overrides(
-    enabled_tools: tuple[str, ...], calls: Path, knowledge: Path
+    enabled_tools: tuple[str, ...], calls: Path, knowledge: Path, calendar: Path
 ) -> tuple[str, ...]:
     return (
         f"mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(sys.executable)}",
@@ -178,6 +214,8 @@ def _fake_mcp_overrides(
         + json.dumps(str(calls)),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{KNOWLEDGE_ENVIRONMENT}="
         + json.dumps(str(knowledge)),
+        f"mcp_servers.{MCP_SERVER_NAME}.env.{CALENDAR_ENVIRONMENT}="
+        + json.dumps(str(calendar)),
     )
 
 
@@ -187,6 +225,11 @@ def _read_calls(path: Path) -> tuple[dict[str, Any], ...]:
     return tuple(
         json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
     )
+
+
+def _read_calendar(path: Path) -> tuple[dict[str, Any], ...]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return tuple(payload["events"])
 
 
 def _redacted_environment() -> dict[str, str]:
@@ -212,11 +255,31 @@ async def run_scenario(
         origin = root / "origin.git"
         calls = root / "capability-calls.jsonl"
         knowledge = root / "knowledge.json"
+        calendar = root / "calendar.json"
         workspace.mkdir()
         _write_scenario(scenario, workspace)
         knowledge.write_text(
             json.dumps(
                 {"records": [record.payload() for record in scenario.knowledge]},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        calendar.write_text(
+            json.dumps(
+                {
+                    "timezone": "Europe/London",
+                    "calendars": [
+                        {
+                            "id": "scenario-calendar",
+                            "name": "Personal",
+                            "supports_events": True,
+                            "is_default": True,
+                        }
+                    ],
+                    "events": [event.payload() for event in scenario.calendar],
+                },
                 ensure_ascii=False,
                 indent=2,
             ),
@@ -250,7 +313,9 @@ async def run_scenario(
         client = AsyncCodex(
             CodexConfig(
                 config_overrides=_sandbox_config_overrides(profile)
-                + _fake_mcp_overrides(profile.enabled_tools, calls, knowledge),
+                + _fake_mcp_overrides(
+                    profile.enabled_tools, calls, knowledge, calendar
+                ),
                 cwd=str(workspace),
                 env=_redacted_environment(),
             )
@@ -259,6 +324,7 @@ async def run_scenario(
         timeline: list[TimelineEntry] = []
         messages: list[RecordedMessage] = []
         capability_attempts: list[dict[str, str | None]] = []
+        started_at = time.monotonic()
         try:
             async for event in conversation.stream_turn(scenario.turn_input(workspace)):
                 if isinstance(event, AgentMessageCompleted):
@@ -290,6 +356,8 @@ async def run_scenario(
                     progress(entry)
         finally:
             await conversation.close()
+        duration_seconds = time.monotonic() - started_at
+        usage = conversation.last_turn_token_usage
 
         commits_text = _run_git(
             "log", "--format=%h %s", f"{baseline}..HEAD", cwd=workspace
@@ -299,11 +367,14 @@ async def run_scenario(
             model=profile.model,
             reasoning_effort=profile.effort.value,
             web_search=profile.web_search,
+            duration_seconds=duration_seconds,
+            token_usage=usage.model_dump() if usage is not None else None,
             enabled_capabilities=profile.enabled_tools,
             timeline=tuple(timeline),
             messages=tuple(messages),
             capability_attempts=tuple(capability_attempts),
             capability_calls=_read_calls(calls),
+            calendar_events=_read_calendar(calendar),
             commits=tuple(commits_text.splitlines()) if commits_text else (),
             workspace_patch=_snapshot_patch(before, _snapshot(workspace)),
             review_questions=scenario.review_questions,
@@ -316,6 +387,16 @@ def render_report(report: BehaviorReport) -> str:
         "",
         f"Model: `{report.model}` ({report.reasoning_effort})",
         f"Web search: `{report.web_search}`",
+        f"Duration: `{report.duration_seconds:.1f}s`",
+        "Token usage: "
+        + (
+            ", ".join(
+                f"{name.replace('_', ' ')} `{value}`"
+                for name, value in report.token_usage.items()
+            )
+            if report.token_usage is not None
+            else "not reported"
+        ),
         "Capabilities: "
         + ", ".join(f"`{name}`" for name in report.enabled_capabilities),
         "",
@@ -346,6 +427,16 @@ def render_report(report: BehaviorReport) -> str:
         lines.extend(
             f"- `{call['tool']}`: `{json.dumps(call['arguments'], ensure_ascii=False)}`"
             for call in report.capability_calls
+        )
+    else:
+        lines.append("- none")
+    lines.extend(("", "## Calendar after turn", ""))
+    if report.calendar_events:
+        lines.extend(
+            f"- **{event['title']}** — {event['start']} to {event['end']}"
+            + (f" — {event['location']}" if event.get("location") else "")
+            + (" — free/flexible" if not event.get("busy", True) else "")
+            for event in report.calendar_events
         )
     else:
         lines.append("- none")

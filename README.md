@@ -258,9 +258,11 @@ pairwise overlaps, and up to five sample subjects per rule.
 Mailbox moves use IMAP `MOVE` when available. On iCloud, Ariadne uses its
 `UIDPLUS` support to copy, mark deleted, and expunge only the exact source UIDs.
 
-Mail turns default independently to `gpt-5.6-luna` at medium reasoning effort
-with web search disabled. Override those defaults under `[profiles.mail]`;
-Telegram's `/settings` choices do not affect mail.
+Mail turns default independently to `gpt-5.6-terra` at medium reasoning effort
+with live web search available when useful. When Calendar is enabled, mail turns
+can also inspect and maintain it as part of handling a life event. Override the
+model defaults under `[profiles.mail]`; Telegram's `/settings` choices do not
+affect mail.
 
 To apply only deterministic `move` rules to mail that was already in `INBOX`,
 stop Ariadne and preview the separate backfill:

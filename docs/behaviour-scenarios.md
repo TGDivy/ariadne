@@ -25,6 +25,10 @@ uv run python -m ariadne.scripts.behavior run race-confirmation \
   --output /tmp/race-confirmation.md
 ```
 
+Add `--effort low`, `--effort medium`, or `--effort high` to compare reasoning
+levels for a manual run without changing production configuration. Use
+`--model` when deliberately comparing another locally available model.
+
 It uses the mail model, reasoning effort, web-search setting, and instruction
 layers from the repository defaults. It needs local Codex authentication and
 may incur usage, but it does not need an Ariadne config or service credentials.
@@ -37,13 +41,15 @@ name, personality, model, reasoning effort, and web-search setting are used, but
 its service credentials still are not forwarded to the run.
 
 Each run creates a disposable Git-backed Thread containing only synthetic
-fixtures. Telegram delivery, file delivery, mail triage, and semantic knowledge
-are replaced with harmless capabilities that preserve the production tool
-contracts and record their calls. The knowledge substitute starts with the
-scenario's synthetic records and writes only its temporary state. Real
-Telegram, mail, calendar, and Thread credentials are not passed to the scenario
-MCP process. The Codex workspace is writable only inside the disposable
-scenario directory and shell network domains are empty.
+fixtures. Telegram delivery, file delivery, mail triage, Calendar, and semantic
+knowledge are replaced with harmless capabilities that preserve the production
+tool contracts and record their calls. The knowledge and Calendar substitutes
+start with the scenario's synthetic records and write only temporary state. The
+report renders the resulting calendar after the turn so several creates or
+updates can be reviewed as one outcome. Real Telegram, mail, Calendar, and
+Thread credentials are not passed to the scenario MCP process. The Codex
+workspace is writable only inside the disposable scenario directory and shell
+network domains are empty.
 
 The fake capabilities are explicitly annotated as closed-world and harmless.
 Their only effect is appending to the temporary call record, so they do not need
@@ -58,10 +64,10 @@ substituted.
 
 The command streams safe activity labels, model-visible speech, and MCP call
 boundaries while the model works. The report retains the activity/speech
-timeline, exact recorded capability calls, commits, a full text patch of
-workspace changes, and a short set of questions for manual review. It
-deliberately does not expose hidden reasoning or declare a scenario passed
-because a sentence happened to match.
+timeline, elapsed time, Codex's reported token usage, exact recorded capability
+calls, commits, a full text patch of workspace changes, and a short set of
+questions for manual review. It deliberately does not expose hidden reasoning
+or declare a scenario passed because a sentence happened to match.
 
 The initial stories are the two halves of the Windsor example:
 

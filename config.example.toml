@@ -39,10 +39,10 @@ export_interval_seconds = 60
 # Profile overrides are optional. Omitted values come from src/ariadne/profile.py.
 # [profiles.telegram]
 # model = "gpt-5.6-luna"
-# effort = "low"
+# effort = "high"
 # web_search = "disabled"
 
 # [profiles.mail]
-# model = "gpt-5.6-luna"
+# model = "gpt-5.6-terra"
 # effort = "medium"
-# web_search = "disabled"
+# web_search = "live"

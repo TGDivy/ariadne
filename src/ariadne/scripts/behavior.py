@@ -6,7 +6,10 @@ import argparse
 import asyncio
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
+
+from openai_codex.generated.v2_all import ReasoningEffort
 
 from ariadne.behavior import SCENARIOS, get_scenario
 from ariadne.behavior.runner import (
@@ -22,6 +25,10 @@ from ariadne.profile import MAIL_PROFILE
 def _render_scenario(identifier: str) -> str:
     scenario = get_scenario(identifier)
     prompt = scenario.turn_input(Path("/scenario/thread"))
+    calendar = [
+        f"- `{event.id}` — {event.title}, {event.start} to {event.end}"
+        for event in scenario.calendar
+    ] or ["- empty"]
     lines = [
         f"# {scenario.title}",
         "",
@@ -33,6 +40,14 @@ def _render_scenario(identifier: str) -> str:
         "## Disposable Thread files",
         "",
         *(f"- `{fixture.path}`" for fixture in scenario.files),
+        "",
+        "## Initial private knowledge",
+        "",
+        *(f"- `{record.id}` — {record.summary}" for record in scenario.knowledge),
+        "",
+        "## Initial calendar",
+        "",
+        *calendar,
         "",
         "## Review questions",
         "",
@@ -67,6 +82,12 @@ def main() -> None:
     run.add_argument("--personality", type=Path)
     run.add_argument("--output", type=Path)
     run.add_argument("--json", action="store_true")
+    run.add_argument("--model", help="override the model for this manual run")
+    run.add_argument(
+        "--effort",
+        choices=("low", "medium", "high"),
+        help="override reasoning effort for this manual run",
+    )
     args = parser.parse_args()
 
     if args.command == "list":
@@ -92,6 +113,19 @@ def main() -> None:
             human_name=args.human,
             personality=args.personality,
             settings=MAIL_PROFILE.settings,
+        )
+    turn_settings = run_profile.settings
+    if args.model is not None:
+        turn_settings = replace(turn_settings, model=args.model)
+    if args.effort is not None:
+        turn_settings = replace(
+            turn_settings,
+            effort=ReasoningEffort(args.effort),
+        )
+    if turn_settings is not run_profile.settings:
+        run_profile = replace(
+            run_profile,
+            settings=turn_settings,
         )
     print(
         f"Running {scenario.identifier!r} with local Codex; this may incur usage.",

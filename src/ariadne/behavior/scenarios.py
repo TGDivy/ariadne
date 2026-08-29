@@ -6,7 +6,12 @@ from email.message import EmailMessage
 
 from ariadne.mail import MailRoute
 
-from .models import BehaviorScenario, ScenarioFile, ScenarioKnowledge
+from .models import (
+    BehaviorScenario,
+    ScenarioCalendarEvent,
+    ScenarioFile,
+    ScenarioKnowledge,
+)
 
 ROUTES = """\
 version: 1
@@ -85,10 +90,10 @@ instructions and the course guide are available on the event website.
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="person:divy",
+            id="people:divy",
             title="Divy",
             summary="Divy's practical personal preferences and standing context.",
-            kind="person",
+            kind="people",
             collection="self",
             tags=("profile",),
             body=(
@@ -110,17 +115,20 @@ instructions and the course guide are available on the event website.
             aliases=("half marathon goal",),
         ),
     ),
+    calendar=(),
     review_questions=(
         "Did Iris treat the booking as a commitment rather than merely summarise it?",
         "Did she inspect the relevant existing context and preserve useful new "
         "context?",
         "Did she notice concrete open loops such as transport, bib collection, "
         "food, and packing?",
+        "Did she inspect the calendar and add useful structure without inventing "
+        "unverified timings?",
+        "Did she use current public research where it materially improved the plan?",
         "Was the Telegram message short, warm, and useful rather than an "
         "operations report?",
         "Did she record a sensible mail triage decision?",
-        "Which desired actions were impossible because the mail profile lacks "
-        "capabilities?",
+        "Did any useful follow-through remain incomplete, and why?",
     ),
 )
 
@@ -185,6 +193,19 @@ selected itinerary, not a booked-train restriction.
             body="Complete the Windsor half marathon comfortably.",
         ),
     ),
+    calendar=(
+        ScenarioCalendarEvent(
+            id="scenario-race-event",
+            title="Windsor Trail Run Half Marathon",
+            start="2026-08-30T09:20:00+01:00",
+            end="2026-08-30T12:00:00+01:00",
+            description=(
+                "Collect the bib before the race. Transport, breakfast, fuel, "
+                "packing, and recovery remain open."
+            ),
+            location="Alexandra Gardens, Windsor",
+        ),
+    ),
     review_questions=(
         "Did Iris connect this booking to the existing Windsor race without being "
         "told?",
@@ -192,6 +213,10 @@ selected itinerary, not a booked-train restriction.
         "a commitment?",
         "Did she notice that 08:44 arrival leaves a tight bib-collection window "
         "before 09:20?",
+        "Did she inspect the existing calendar event and add or update transport "
+        "without duplicating the race?",
+        "Did any return entry remain visibly flexible rather than blocking the "
+        "afternoon?",
         "Did she update the existing plan rather than create unrelated duplicate "
         "context?",
         "Was the Telegram message concise and centred on what changed?",
