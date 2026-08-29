@@ -67,13 +67,15 @@ live web research for the running process. Each change starts a new in-memory
 Codex conversation. Use `/stop` to ask Codex to interrupt the active turn; it
 cannot undo work that already completed.
 
-Telegram and mail have independent turn profiles. To inspect the exact model,
-prompts, tools, thread behavior, permissions, and forwarded environment variable
-names that either surface will use, run:
+Telegram, mail, and each revisit attention level have independent turn
+profiles. To inspect the exact model, prompts, tools, thread behavior,
+permissions, and forwarded environment variable names that a surface will use,
+run:
 
 ```bash
 uv run python -m ariadne.scripts.profile telegram
 uv run python -m ariadne.scripts.profile mail
+uv run python -m ariadne.scripts.profile revisit-focused
 ```
 
 Add `--json` for machine-readable output. Inspection never prints environment
@@ -165,7 +167,8 @@ permissions and never check it into the repository.
 Import `docs/grafana/ariadne-observability.json` in Grafana and select the
 stack's Prometheus data source. The dashboard covers tokens, caching, usage by
 source and model, flexible-usage equivalents, failures, latency, cumulative
-thread usage, and tool calls.
+thread usage, tool calls, background-job outcomes, and turns where Ariadne's
+MCP server was never reached.
 Use **Explore → Tempo** for individual traces. Turn spans use OpenTelemetry
 GenAI attributes; child tool spans include only the safe tool name and timing.
 
@@ -178,12 +181,15 @@ The detailed Ariadne metrics are:
   `turn.flex_cost_equivalent_usd`, and `unpriced_usage_reports`
 - `turn.duration`, `turn.time_to_first_response`,
   `thread.total_tokens`, and `compactions`
-- `tool.calls` and `tool.duration`
+- `tool.calls`, `tool.duration`, `turn.mcp_calls`, and
+  `turns_without_mcp_calls`
+- `ariadne.background.jobs`
 
 They use the bounded labels `source`, `model`, `reasoning_effort`, and `status`;
 tool metrics add `tool`. `source` comes from the turn profile, currently
-`telegram` or `mail`. Ariadne also emits the conventional
-`gen_ai.client.operation.duration` and `gen_ai.client.token.usage` histograms.
+`telegram`, `mail`, or one of the three `revisit-*` attention profiles. Ariadne
+also emits the conventional `gen_ai.client.operation.duration` and
+`gen_ai.client.token.usage` histograms.
 It never adds prompts, responses, commands, tool arguments/results, thread IDs,
 turn IDs, Telegram IDs, or mail IDs to metrics or traces.
 
@@ -263,6 +269,33 @@ with live web search available when useful. When Calendar is enabled, mail turns
 can also inspect and maintain it as part of handling a life event. Override the
 model defaults under `[profiles.mail]`; Telegram's `/settings` choices do not
 affect mail.
+
+### One-off future revisits
+
+Iris can schedule one future wake-up from Telegram, mail, or another revisit.
+The operation stores a timezone-aware time, a self-contained note to her future
+self, and one explicit attention level:
+
+| Attention | Runtime | Intended work |
+| --- | --- | --- |
+| `light` | Luna low | A predetermined reminder or simple nudge |
+| `focused` | Luna high | A bounded check using current mail, Calendar, or knowledge |
+| `deep` | Terra medium | Cross-source investigation, research, planning, or ambiguity |
+
+The lightweight runtime check defaults to every 15 seconds and does not start a
+model turn unless an item is due. A due item starts a fresh conversation with
+the same private capabilities at every attention level. Iris reinspects current
+context, does useful reversible work, and either uses `send_telegram_message` or
+finishes silently; native output from the background turn is discarded. There
+is no recurrence or runtime heuristic that chooses a model.
+
+Revisits are always available. Their operational state defaults to
+`~/.local/state/ariadne/revisits.sqlite3`; `[revisits]` can change that path and
+the polling interval. Interrupted work is returned to the pending queue on
+startup. A model failure is retained visibly as failed rather than retried or
+routed to a different model automatically. The `revisit-light`,
+`revisit-focused`, and `revisit-deep` profile mappings can be overridden in the
+same TOML `[profiles.*]` form as other turn profiles.
 
 To apply only deterministic `move` rules to mail that was already in `INBOX`,
 stop Ariadne and preview the separate backfill:
@@ -359,12 +392,12 @@ contains, what was kept, and what was dropped.
 
 ## Local capabilities
 
-Ariadne exposes local MCP capabilities to Codex: semantic private knowledge,
-runtime status, asking one blocking choice question, and preparing files from
-the configured user's home directory. Background profiles such as mail can also
-send proactive Telegram notifications; ordinary Telegram turns speak through
-native Codex phases.
-Prepared files are not sent immediately: Ariadne sends a short-lived Telegram
+Ariadne exposes clearly named local MCP capabilities to Codex: semantic private
+knowledge, `inspect_ariadne_runtime`, `ask_telegram_question`, and
+`request_telegram_file_delivery`, plus mail, Calendar, and future wake-up
+operations. Background profiles such as mail can also send proactive Telegram
+notifications; ordinary Telegram turns speak through native Codex phases.
+Requested files are not sent immediately: Ariadne sends a short-lived Telegram
 approval card that lists the exact files and has Approve and Reject buttons.
 
 ## Speaking

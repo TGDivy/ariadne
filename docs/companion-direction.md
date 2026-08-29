@@ -437,6 +437,14 @@ Persist one simple future revisit, wake Iris at the chosen time, allow her to
 inspect current context, and let the turn end silently or message Divy. Avoid a
 general recurring-job system.
 
+The first implementation keeps this deliberately narrow: Iris schedules one
+timezone-aware wake-up with a self-contained note and explicitly chooses
+`light`, `focused`, or `deep` attention. Those map to Luna low, Luna high, and
+Terra medium respectively. All three retain the same capabilities; the choice
+changes computational depth, not authority. Due work starts a fresh conversation
+and may finish silently, while the small polling loop itself never invokes a
+model when nothing is due.
+
 ### 5. Let Iris inspect recent interaction history
 
 Preserve enough recent messages, proactive sends, actions, corrections, and

@@ -13,6 +13,8 @@ from ..knowledge.orientation import render_orientation
 from ..knowledge.store import KnowledgeStore
 from .models import CodexTurnSettings, ResolvedTurnProfile, TurnProfile
 
+_SURFACE_DOCUMENTS = frozenset({"telegram", "mail", "revisit"})
+
 
 def _repository_root() -> Path | None:
     for directory in Path(__file__).resolve().parents:
@@ -22,8 +24,8 @@ def _repository_root() -> Path | None:
 
 
 def _source(profile: TurnProfile, document: str) -> str:
-    if document == profile.name:
-        return f"ariadne.{profile.name}/instructions.md"
+    if document in _SURFACE_DOCUMENTS:
+        return f"ariadne.{document}/instructions.md"
     return f"ariadne.instructions/{document}.md"
 
 
@@ -36,9 +38,9 @@ def _render_document(
 ) -> str | None:
     if document == "ariadne" and repository is None:
         return None
-    if document == profile.name:
+    if document in _SURFACE_DOCUMENTS:
         text = (
-            files(f"ariadne.{profile.name}")
+            files(f"ariadne.{document}")
             .joinpath("instructions.md")
             .read_text(encoding="utf-8")
             .strip()

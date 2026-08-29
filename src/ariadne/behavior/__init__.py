@@ -5,6 +5,7 @@ from .models import (
     ScenarioCalendarEvent,
     ScenarioFile,
     ScenarioKnowledge,
+    ScenarioRevisit,
 )
 from .scenarios import SCENARIOS, get_scenario
 
@@ -14,5 +15,6 @@ __all__ = [
     "ScenarioCalendarEvent",
     "ScenarioFile",
     "ScenarioKnowledge",
+    "ScenarioRevisit",
     "get_scenario",
 ]

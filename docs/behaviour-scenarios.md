@@ -12,7 +12,7 @@ uv run python -m ariadne.scripts.behavior show race-confirmation
 ```
 
 They list or render checked-in synthetic inputs. `show` uses the production mail
-prompt builder, so it also makes prompt drift inspectable. Ordinary tests verify
+or revisit activation builder, so it also makes prompt drift inspectable. Ordinary tests verify
 that every scenario remains valid and that the recorded fake capabilities keep
 the same names, descriptions, and schemas as their production counterparts.
 These checks do not initialize Codex, need credentials or network access, or
@@ -29,20 +29,20 @@ Add `--effort low`, `--effort medium`, or `--effort high` to compare reasoning
 levels for a manual run without changing production configuration. Use
 `--model` when deliberately comparing another locally available model.
 
-It uses the mail model, reasoning effort, web-search setting, and instruction
-layers from the repository defaults. It needs local Codex authentication and
+It uses the scenario's mail or attention-selected revisit profile, web-search
+setting, and instruction layers from the repository defaults. It needs local Codex authentication and
 may incur usage, but it does not need an Ariadne config or service credentials.
 It is not called by the test suite or CI.
 
 Pass `--personality path/to/personality.md` to include a personality without
 loading any service configuration. Pass `--config path/to/config.toml` when an
-exact reproduction of a deployed mail profile is wanted; in that case its human
+exact reproduction of a deployed profile is wanted; in that case its human
 name, personality, model, reasoning effort, and web-search setting are used, but
 its service credentials still are not forwarded to the run.
 
 Each run creates a disposable Git-backed Thread containing only synthetic
-fixtures. Telegram delivery, file delivery, mail triage, Calendar, and semantic
-knowledge are replaced with harmless capabilities that preserve the production
+fixtures. Telegram delivery, file delivery, mail access and triage, Calendar,
+semantic knowledge, and future revisits are replaced with harmless capabilities that preserve the production
 tool contracts and record their calls. The knowledge and Calendar substitutes
 start with the scenario's synthetic records and write only temporary state. The
 report renders the resulting calendar after the turn so several creates or
@@ -69,12 +69,14 @@ calls, commits, a full text patch of workspace changes, and a short set of
 questions for manual review. It deliberately does not expose hidden reasoning
 or declare a scenario passed because a sentence happened to match.
 
-The initial stories are the two halves of the Windsor example:
+The initial stories cover the Windsor event from arrival to a later revisit:
 
 - `race-confirmation`: recognise that a booking is a commitment with open
   preparation loops;
 - `train-confirmation`: connect transport to the existing race, preserve the
-  flexible return, and notice the tight arrival window.
+  flexible return, and notice the tight arrival window;
+- `race-evening-revisit`: wake once, reassess what has changed, finish useful
+  preparation, and message only if something still matters.
 
 These first runs should make current capability gaps visible. The scenario uses
 the same six semantic knowledge operations and generated orientation as the

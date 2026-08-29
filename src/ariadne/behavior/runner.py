@@ -34,7 +34,7 @@ from ariadne.codex.resolver import resolve_profile
 from ariadne.knowledge import KnowledgeMetadata, KnowledgeRelation
 from ariadne.knowledge.documents import render_document
 from ariadne.knowledge.paths import slug
-from ariadne.profile import MAIL_PROFILE
+from ariadne.profile import MAIL_PROFILE, profile_for_attention
 
 from .fake_calendar import CALENDAR_ENVIRONMENT
 from .fake_knowledge import KNOWLEDGE_ENVIRONMENT
@@ -55,6 +55,7 @@ _REDACTED_ENVIRONMENT = (
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_ALLOWED_USER_ID",
     "ARIADNE_TELEGRAM_STATE",
+    "ARIADNE_REVISIT_STATE",
     "GITHUB_TOKEN",
     "GH_TOKEN",
 )
@@ -201,7 +202,11 @@ def _snapshot_patch(before: dict[str, str], after: dict[str, str]) -> str:
 
 
 def _fake_mcp_overrides(
-    enabled_tools: tuple[str, ...], calls: Path, knowledge: Path, calendar: Path
+    profile_name: str,
+    enabled_tools: tuple[str, ...],
+    calls: Path,
+    knowledge: Path,
+    calendar: Path,
 ) -> tuple[str, ...]:
     return (
         f"mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(sys.executable)}",
@@ -210,6 +215,8 @@ def _fake_mcp_overrides(
         f"mcp_servers.{MCP_SERVER_NAME}.enabled=true",
         f"mcp_servers.{MCP_SERVER_NAME}.tool_timeout_sec={MCP_TOOL_TIMEOUT_SECONDS}",
         f"mcp_servers.{MCP_SERVER_NAME}.enabled_tools=" + json.dumps(enabled_tools),
+        f"mcp_servers.{MCP_SERVER_NAME}.env.ARIADNE_PROFILE="
+        + json.dumps(profile_name),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{STATE_ENVIRONMENT}="
         + json.dumps(str(calls)),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{KNOWLEDGE_ENVIRONMENT}="
@@ -297,8 +304,13 @@ async def run_scenario(
         _run_git("push", "-u", "origin", "main", cwd=workspace)
         before = _snapshot(workspace)
 
+        surface = (
+            profile_for_attention(scenario.revisit.attention)
+            if scenario.revisit is not None
+            else MAIL_PROFILE
+        )
         declaration = replace(
-            MAIL_PROFILE,
+            surface,
             writable_roots=(root,),
             network_domains=(),
         )
@@ -314,7 +326,7 @@ async def run_scenario(
             CodexConfig(
                 config_overrides=_sandbox_config_overrides(profile)
                 + _fake_mcp_overrides(
-                    profile.enabled_tools, calls, knowledge, calendar
+                    profile.name, profile.enabled_tools, calls, knowledge, calendar
                 ),
                 cwd=str(workspace),
                 env=_redacted_environment(),
@@ -326,7 +338,9 @@ async def run_scenario(
         capability_attempts: list[dict[str, str | None]] = []
         started_at = time.monotonic()
         try:
-            async for event in conversation.stream_turn(scenario.turn_input(workspace)):
+            async for event in conversation.stream_turn(
+                scenario.turn_input(workspace, human=run_profile.human_name)
+            ):
                 if isinstance(event, AgentMessageCompleted):
                     messages.append(RecordedMessage(event.phase.value, event.text))
                     entry = TimelineEntry(event.phase.value, event.text)

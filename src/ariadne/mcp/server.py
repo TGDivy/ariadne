@@ -6,6 +6,7 @@ from .calendar import register_tools as register_calendar_tools
 from .errors import install_safe_tool_error_handling
 from .knowledge import register_tools as register_knowledge_tools
 from .mail import register_tools as register_mail_tools
+from .revisit import register_tools as register_revisit_tools
 from .runtime import register_tools as register_runtime_tools
 from .telegram import register_tools as register_telegram_tools
 
@@ -27,6 +28,7 @@ def create_server() -> FastMCP:
     register_mail_tools(server)
     register_calendar_tools(server)
     register_knowledge_tools(server)
+    register_revisit_tools(server)
     return server
 
 

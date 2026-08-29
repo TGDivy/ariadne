@@ -39,6 +39,7 @@ LOGGER = logging.getLogger(__name__)
 TurnStatus = Literal["success", "failure", "cancelled"]
 
 _INSTRUMENTATION_NAME = "ariadne"
+_ARIADNE_MCP_SERVER = "ariadne"
 _GEN_AI_OPERATION = "invoke_agent"
 _GEN_AI_PROVIDER = "openai"
 _TOKEN_BUCKETS = (
@@ -256,6 +257,24 @@ class Telemetry:
             description="Codex tool-call duration.",
             unit="s",
         )
+        self._turn_mcp_calls: Histogram = self._meter.create_histogram(
+            "ariadne.codex.turn.mcp_calls",
+            description="Ariadne MCP calls observed in one completed Codex turn.",
+            unit="{call}",
+        )
+        self._turns_without_mcp_calls: Counter = self._meter.create_counter(
+            "ariadne.codex.turns_without_mcp_calls",
+            description=(
+                "Completed Codex turns with no Ariadne MCP call; useful for "
+                "detecting missing capability startup in background profiles."
+            ),
+            unit="{turn}",
+        )
+        self._background_jobs: Counter = self._meter.create_counter(
+            "ariadne.background.jobs",
+            description="Completed mail and revisit jobs by outcome.",
+            unit="{job}",
+        )
 
         # These two instruments follow the OpenTelemetry GenAI conventions.
         self._gen_ai_duration: Histogram = self._meter.create_histogram(
@@ -297,6 +316,10 @@ class Telemetry:
             },
         )
 
+    def background_job(self, *, source: str, status: TurnStatus) -> None:
+        """Record one durable background job outcome without private details."""
+        self._background_jobs.add(1, {"source": source, "status": status})
+
     def shutdown(self) -> None:
         """Flush owned providers. Export failures are logged by the OTel SDK."""
         if not self._owns_providers:
@@ -336,6 +359,7 @@ class TurnObservation:
         self._usage: ThreadTokenUsage | None = None
         self._usage_baseline: TokenUsageBreakdown | None = None
         self._tools: dict[str, _ToolObservation] = {}
+        self._mcp_call_ids: set[str] = set()
         self._finished = False
         self._span = telemetry._tracer.start_span(
             f"{_GEN_AI_OPERATION} {model}",
@@ -371,6 +395,11 @@ class TurnObservation:
         item_id = getattr(item, "id", None)
         if name is None or not isinstance(item_id, str) or item_id in self._tools:
             return
+        if (
+            isinstance(item, McpToolCallThreadItem)
+            and item.server == _ARIADNE_MCP_SERVER
+        ):
+            self._mcp_call_ids.add(item_id)
         span = self._telemetry._tracer.start_span(
             f"execute_tool {name}",
             context=trace.set_span_in_context(self._span),
@@ -390,6 +419,11 @@ class TurnObservation:
         item_id = getattr(item, "id", None)
         if name is None or not isinstance(item_id, str):
             return
+        if (
+            isinstance(item, McpToolCallThreadItem)
+            and item.server == _ARIADNE_MCP_SERVER
+        ):
+            self._mcp_call_ids.add(item_id)
         observation = self._tools.pop(item_id, None)
         status = _tool_status(item)
         attributes = {**self._attributes, "tool": name, "status": status}
@@ -437,6 +471,11 @@ class TurnObservation:
         self._telemetry._active_turns.add(-1, self._attributes)
         self._telemetry._turns.add(1, attributes)
         self._telemetry._turn_duration.record(duration, attributes)
+        mcp_calls = len(self._mcp_call_ids)
+        self._telemetry._turn_mcp_calls.record(mcp_calls, attributes)
+        self._span.set_attribute("ariadne.codex.mcp_calls", mcp_calls)
+        if mcp_calls == 0:
+            self._telemetry._turns_without_mcp_calls.add(1, attributes)
         if self._first_response_at is not None:
             self._telemetry._time_to_first_response.record(
                 self._first_response_at - self._started_at, attributes

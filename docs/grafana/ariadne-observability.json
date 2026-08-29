@@ -991,6 +991,109 @@
       ],
       "title": "Per-turn USD-equivalent distribution",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 40
+      },
+      "id": 20,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(increase(ariadne_codex_turns_without_mcp_calls_total{source=~\"$source\",source!=\"telegram\",model=~\"$model\"}[$__range]))",
+          "instant": true,
+          "legendFormat": "Turns without Ariadne MCP calls",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Background turns without Ariadne MCP calls",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 16,
+        "x": 8,
+        "y": 40
+      },
+      "id": 21,
+      "options": {
+        "displayMode": "gradient",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": false
+        },
+        "orientation": "horizontal",
+        "showUnfilled": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum by (source, status) (increase(ariadne_background_jobs_total[$__range]))",
+          "instant": true,
+          "legendFormat": "{{source}} · {{status}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Background jobs by outcome",
+      "type": "bargauge"
     }
   ],
   "refresh": "1m",

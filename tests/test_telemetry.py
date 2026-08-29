@@ -15,6 +15,15 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
 from ariadne.telemetry import Telemetry, configure_telemetry
 
 
+def _metrics(reader: InMemoryMetricReader) -> dict[str, object]:
+    return {
+        metric.name: metric
+        for resource in reader.get_metrics_data().resource_metrics
+        for scope in resource.scope_metrics
+        for metric in scope.metrics
+    }
+
+
 def test_telemetry_does_not_fall_back_to_environment(monkeypatch) -> None:
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "https://ignored.example/otlp")
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_HEADERS", "Authorization=ignored")
@@ -79,6 +88,63 @@ def test_tool_traces_contain_metadata_but_not_arguments() -> None:
         "status": "success",
     }
     tracer_provider.shutdown()
+    meter_provider.shutdown()
+
+
+def test_turn_metrics_distinguish_missing_and_present_mcp_calls() -> None:
+    reader = InMemoryMetricReader()
+    meter_provider = MeterProvider(metric_readers=[reader])
+    telemetry = Telemetry(meter_provider=meter_provider)
+
+    empty = telemetry.start_turn(
+        source="mail",
+        model="gpt-test",
+        reasoning_effort="medium",
+    )
+    empty.finish("success")
+
+    called = telemetry.start_turn(
+        source="revisit",
+        model="gpt-test",
+        reasoning_effort="high",
+    )
+    tool = McpToolCallThreadItem(
+        arguments={},
+        id="tool-1",
+        server="ariadne",
+        status=McpToolCallStatus.completed,
+        tool="search_knowledge",
+        type="mcpToolCall",
+    )
+    called.tool_completed(tool)
+    called.tool_completed(
+        tool.model_copy(update={"id": "external-tool", "server": "another-server"})
+    )
+    called.finish("success")
+
+    metrics = _metrics(reader)
+    mcp_points = metrics["ariadne.codex.turn.mcp_calls"].data.data_points
+    assert {(point.attributes["source"], point.sum) for point in mcp_points} == {
+        ("mail", 0),
+        ("revisit", 1),
+    }
+    zero_points = metrics["ariadne.codex.turns_without_mcp_calls"].data.data_points
+    assert [(point.attributes["source"], point.value) for point in zero_points] == [
+        ("mail", 1)
+    ]
+    meter_provider.shutdown()
+
+
+def test_background_job_metric_records_source_and_outcome() -> None:
+    reader = InMemoryMetricReader()
+    meter_provider = MeterProvider(metric_readers=[reader])
+    telemetry = Telemetry(meter_provider=meter_provider)
+
+    telemetry.background_job(source="revisit", status="failure")
+
+    point = _metrics(reader)["ariadne.background.jobs"].data.data_points[0]
+    assert point.value == 1
+    assert point.attributes == {"source": "revisit", "status": "failure"}
     meter_provider.shutdown()
 
 

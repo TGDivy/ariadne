@@ -550,7 +550,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
         id="mcp",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="prepare_files",
+        tool="request_telegram_file_delivery",
         type="mcpToolCall",
     )
     completed_mcp_item = mcp_item.model_copy(
@@ -576,7 +576,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     assert (
         CapabilityCallCompleted(
             server="ariadne",
-            tool="prepare_files",
+            tool="request_telegram_file_delivery",
             status="completed",
             error=None,
         )
@@ -585,11 +585,12 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     assert "private" not in activities[0]
     assert (
         "Codex MCP call started source=telegram server=ariadne "
-        "tool=prepare_files call_id=mcp" in caplog.text
+        "tool=request_telegram_file_delivery call_id=mcp" in caplog.text
     )
     assert (
         "Codex MCP call finished source=telegram server=ariadne "
-        "tool=prepare_files call_id=mcp status=completed duration=1.25s" in caplog.text
+        "tool=request_telegram_file_delivery call_id=mcp status=completed "
+        "duration=1.25s" in caplog.text
     )
     assert "/private/path" not in caplog.text
 
@@ -633,9 +634,9 @@ def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
         ("read_mail", "Reading mail…"),
         ("read_mail_thread", "Reading mail thread…"),
         ("list_calendars", "Checking calendars…"),
-        ("search_calendar", "Searching the calendar…"),
+        ("search_calendar_events", "Searching the calendar…"),
         ("read_calendar_event", "Reading a calendar event…"),
-        ("calendar_free_busy", "Checking availability…"),
+        ("check_calendar_availability", "Checking availability…"),
         ("create_calendar_event", "Creating a calendar event…"),
         ("update_calendar_event", "Updating a calendar event…"),
         ("delete_calendar_event", "Deleting a calendar event…"),

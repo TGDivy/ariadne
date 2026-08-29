@@ -37,6 +37,7 @@ from ariadne.mail import (
 from ariadne.mail.runtime import _enter_idle
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 from ariadne.scripts.mail_route_lint import render_report
+from ariadne.telemetry import Telemetry
 
 TURN_SETTINGS = CodexTurnSettings("gpt-5.6-luna", ReasoningEffort.low, "disabled")
 
@@ -981,6 +982,7 @@ async def test_each_connection_catches_up_before_entering_idle(tmp_path: Path) -
     loop.routes = routes()
     loop.state = MailState(tmp_path / "mail.sqlite3")
     loop.state.initialize()
+    loop.telemetry = Telemetry()
     loop._stop = asyncio.Event()
     loop._client_factory = cast(Any, lambda: client)
 
@@ -1036,8 +1038,8 @@ def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) 
         )
     )
 
-    assert not any("triage_current_mail" in value for value in normal)
-    assert any("triage_current_mail" in value for value in mail)
+    assert not any("record_current_mail_decision" in value for value in normal)
+    assert any("record_current_mail_decision" in value for value in mail)
     assert any("ARIADNE_MAIL_JOB_ID" in value for value in mail)
 
 

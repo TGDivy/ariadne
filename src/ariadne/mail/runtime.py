@@ -878,12 +878,14 @@ class MailProcessor:
         state: MailState,
         conversation_factory: Callable[[str], CodexConversation],
         routes_path: Path,
+        telemetry: Telemetry | None = None,
     ) -> None:
         self.client = client
         self.routes = routes
         self.state = state
         self.conversation_factory = conversation_factory
         self.routes_path = routes_path
+        self.telemetry = telemetry or Telemetry()
         self.uidvalidity = 0
 
     async def reconcile(self) -> None:
@@ -1073,6 +1075,11 @@ class MailProcessor:
                 finished.action if finished is not None else None,
                 time.monotonic() - started_at,
             )
+            if finished is not None and finished.status in {"done", "failed"}:
+                self.telemetry.background_job(
+                    source="mail",
+                    status="success" if finished.status == "done" else "failure",
+                )
 
     async def _mail_turn(
         self,
@@ -1228,6 +1235,7 @@ class MailLoop:
                 self.state,
                 self._conversation,
                 self.settings.routes,
+                self.telemetry,
             )
             while not self._stop.is_set():
                 await processor.reconcile()

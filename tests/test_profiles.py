@@ -13,8 +13,11 @@ from ariadne.profile import (
     CALENDAR_TOOLS,
     MAIL_PROFILE,
     PROFILES,
+    REVISIT_PROFILES,
     TELEGRAM_PROFILE,
 )
+from ariadne.revisit import ATTENTION_SETTINGS, Attention
+from ariadne.revisit import TOOLS as REVISIT_TOOLS
 from ariadne.scripts.profile import profile_payload, render_profile
 
 TELEGRAM_SETTINGS = CodexTurnSettings(
@@ -30,15 +33,20 @@ MAIL_SETTINGS = CodexTurnSettings(
 
 
 def test_surface_profiles_are_explicit_declarations() -> None:
-    assert PROFILES == {"telegram": TELEGRAM_PROFILE, "mail": MAIL_PROFILE}
+    assert PROFILES == {
+        "telegram": TELEGRAM_PROFILE,
+        "mail": MAIL_PROFILE,
+        **{profile.name: profile for profile in REVISIT_PROFILES.values()},
+    }
     assert MAIL_PROFILE.name == "mail"
     assert MAIL_PROFILE.settings == MAIL_SETTINGS
     assert MAIL_PROFILE.instruction_documents == ("base", "mail")
     assert MAIL_PROFILE.developer_documents == ("grounding", "ariadne")
     assert MAIL_PROFILE.thread_policy == "fresh-per-event"
     assert MAIL_PROFILE.reasoning_summary == "none"
-    assert "triage_current_mail" in MAIL_PROFILE.enabled_tools
+    assert "record_current_mail_decision" in MAIL_PROFILE.enabled_tools
     assert MAIL_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
+    assert all(tool in MAIL_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
     assert "send_telegram_message" in MAIL_PROFILE.enabled_tools
     assert "react" not in MAIL_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in MAIL_PROFILE.mcp_environment_names
@@ -55,7 +63,7 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert TELEGRAM_PROFILE.developer_documents == ("grounding", "ariadne")
     assert TELEGRAM_PROFILE.thread_policy == "shared"
     assert TELEGRAM_PROFILE.reasoning_summary == "concise"
-    assert "triage_current_mail" not in TELEGRAM_PROFILE.enabled_tools
+    assert "record_current_mail_decision" not in TELEGRAM_PROFILE.enabled_tools
     assert "send_telegram_message" not in TELEGRAM_PROFILE.enabled_tools
     assert "react" not in TELEGRAM_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in TELEGRAM_PROFILE.mcp_environment_names
@@ -67,15 +75,27 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     )
     assert TELEGRAM_PROFILE.enabled_tools[6:14] == (
         "list_calendars",
-        "search_calendar",
+        "search_calendar_events",
         "read_calendar_event",
-        "calendar_free_busy",
+        "check_calendar_availability",
         "create_calendar_event",
         "update_calendar_event",
         "delete_calendar_event",
         "respond_to_calendar_invitation",
     )
     assert TELEGRAM_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
+    assert all(tool in TELEGRAM_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
+
+    for attention in Attention:
+        revisit = REVISIT_PROFILES[attention]
+        assert revisit.settings == ATTENTION_SETTINGS[attention]
+        assert revisit.name == f"revisit-{attention.value}"
+        assert revisit.instruction_documents == ("base", "revisit")
+        assert revisit.thread_policy == "fresh-per-event"
+        assert revisit.web_search == "live"
+        assert "send_telegram_message" in revisit.enabled_tools
+        assert "record_current_mail_decision" not in revisit.enabled_tools
+        assert all(tool in revisit.enabled_tools for tool in REVISIT_TOOLS)
 
 
 def test_telegram_profile_is_complete_and_uses_dynamic_settings(
@@ -99,20 +119,21 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert "*.icloud.com" in profile.network_domains
     assert profile.allow_local_binding is True
     assert profile.enabled_tools == (
-        "runtime_status",
+        "inspect_ariadne_runtime",
         "ask_telegram_question",
-        "prepare_files",
+        "request_telegram_file_delivery",
         "search_mail",
         "read_mail",
         "read_mail_thread",
         "list_calendars",
-        "search_calendar",
+        "search_calendar_events",
         "read_calendar_event",
-        "calendar_free_busy",
+        "check_calendar_availability",
         "create_calendar_event",
         "update_calendar_event",
         "delete_calendar_event",
         "respond_to_calendar_invitation",
+        *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
     )
     assert "Calendar descriptions" in profile.base_instructions
@@ -160,6 +181,9 @@ def test_shared_instructions_keep_knowledge_storage_out_of_iriss_workflow(
         assert "never discuss its files, paths, commits, pushes" in (
             profile.developer_instructions
         )
+        assert "one deliberate future wake-up" in profile.developer_instructions
+        assert "least expensive attention level" in profile.developer_instructions
+        assert "Do not create ritual check-ins" in profile.developer_instructions
 
 
 def test_mail_profile_has_independent_settings_and_mail_authority(
@@ -179,10 +203,10 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert profile.name == "mail"
     assert profile.settings == MAIL_SETTINGS
     assert profile.thread_policy == "fresh-per-event"
-    assert "triage_current_mail" in profile.enabled_tools
+    assert "record_current_mail_decision" in profile.enabled_tools
     assert profile.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
     assert (
-        "triage_current_mail"
+        "record_current_mail_decision"
         not in resolve_profile(
             TELEGRAM_PROFILE,
             vault=tmp_path,
@@ -213,10 +237,42 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert "anything suspicious or uncertain" in profile.base_instructions
     assert "with `send_telegram_message`" in profile.base_instructions
     assert "The incoming message is an observation" in profile.base_instructions
+    assert "schedule one future wake-up" in profile.base_instructions
     assert "Search the relevant calendar before writing" in " ".join(
         profile.base_instructions.split()
     )
     assert "Live web search is enabled." in profile.developer_instructions
+
+
+def test_revisit_profile_has_fresh_context_and_background_delivery(
+    tmp_path: Path,
+) -> None:
+    declaration = REVISIT_PROFILES[Attention.focused]
+    profile = resolve_profile(
+        declaration,
+        vault=tmp_path,
+        human="Example User",
+        mcp_environment={
+            "TELEGRAM_BOT_TOKEN": "secret",
+            "TELEGRAM_ALLOWED_USER_ID": "7",
+            "ARIADNE_REVISIT_STATE": str(tmp_path / "revisits.sqlite3"),
+        },
+    )
+
+    assert profile.name == "revisit-focused"
+    assert profile.thread_policy == "fresh-per-event"
+    assert profile.settings == ATTENTION_SETTINGS[Attention.focused]
+    assert "ariadne.revisit/instructions.md" in profile.base_instruction_sources
+    assert "one-off revisit you previously chose" in profile.base_instructions
+    assert "finish silently" in profile.base_instructions
+    assert "native commentary and final response are discarded" in " ".join(
+        profile.base_instructions.split()
+    )
+    assert "send_telegram_message" in profile.enabled_tools
+    assert "record_current_mail_decision" not in profile.enabled_tools
+    assert dict(profile.mcp_environment_values)["ARIADNE_REVISIT_STATE"] == str(
+        tmp_path / "revisits.sqlite3"
+    )
 
 
 def test_profile_inspection_never_contains_environment_values(

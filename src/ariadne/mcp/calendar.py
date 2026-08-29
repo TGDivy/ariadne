@@ -72,7 +72,7 @@ def list_calendars() -> dict[str, Any]:
     return _calendar("list_calendars")
 
 
-def search_calendar(
+def search_calendar_events(
     start: str,
     end: str,
     query: str | None = None,
@@ -100,7 +100,7 @@ def read_calendar_event(id: str) -> dict[str, Any]:
     return _calendar("read_event", id)
 
 
-def calendar_free_busy(
+def check_calendar_availability(
     start: str, end: str, calendar_ids: list[str] | None = None
 ) -> dict[str, Any]:
     """Return merged busy intervals across selected iCloud calendars."""
@@ -213,9 +213,9 @@ def respond_to_calendar_invitation(
 def register_tools(server: FastMCP) -> None:
     """Register calendar tools."""
     server.tool(list_calendars)
-    server.tool(search_calendar)
+    server.tool(search_calendar_events)
     server.tool(read_calendar_event)
-    server.tool(calendar_free_busy)
+    server.tool(check_calendar_availability)
     server.tool(create_calendar_event)
     server.tool(update_calendar_event)
     server.tool(delete_calendar_event)

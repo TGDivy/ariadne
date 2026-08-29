@@ -28,7 +28,7 @@ def _process(pid: int) -> dict[str, Any]:
     return result
 
 
-def runtime_status() -> dict[str, Any]:
+def inspect_ariadne_runtime() -> dict[str, Any]:
     """Inspect Ariadne's current local runtime.
 
     Secrets, paths, environment values, and knowledge storage details are never
@@ -54,4 +54,4 @@ def runtime_status() -> dict[str, Any]:
 
 def register_tools(server: FastMCP) -> None:
     """Register runtime inspection tools."""
-    server.tool(runtime_status)
+    server.tool(inspect_ariadne_runtime)

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from email.message import EmailMessage
 
 from ariadne.mail import MailRoute
+from ariadne.revisit import Attention
 
 from .models import (
     BehaviorScenario,
     ScenarioCalendarEvent,
     ScenarioFile,
     ScenarioKnowledge,
+    ScenarioRevisit,
 )
 
 ROUTES = """\
@@ -224,7 +227,112 @@ selected itinerary, not a booked-train restriction.
     ),
 )
 
-SCENARIOS = (RACE_CONFIRMATION, TRAIN_CONFIRMATION)
+RACE_EVENING_REVISIT = BehaviorScenario(
+    identifier="race-evening-revisit",
+    title="An evening revisit reassesses tomorrow's race",
+    description=(
+        "Transport is now arranged, but the earlier race plan still had practical "
+        "preparation gaps. Iris wakes once and must decide what still warrants "
+        "work or a message."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="plan:windsor-trail-run-2026-08",
+            title="Windsor Trail Run — 30 August 2026",
+            summary=(
+                "Tomorrow's Windsor half marathon; transport is confirmed and "
+                "final preparation remains."
+            ),
+            kind="plan",
+            collection="running",
+            tags=("running", "travel"),
+            starts_at="2026-08-30T09:20:00+01:00",
+            body=(
+                "Race starts at 09:20 at Alexandra Gardens. Outbound train leaves "
+                "Waterloo at 07:27 and arrives Windsor at 08:44 after changing at "
+                "Staines. The off-peak return is flexible; 12:32 is only a suggested "
+                "service. Bib collection is before the start. Breakfast, gels, "
+                "packing, and the tight station-to-registration window remain open."
+            ),
+            aliases=("Windsor half marathon",),
+            related=(("goal:running", "supports"),),
+        ),
+        ScenarioKnowledge(
+            id="people:divy",
+            title="Divy",
+            summary="Divy's practical personal preferences and standing context.",
+            kind="people",
+            collection="self",
+            tags=("profile",),
+            body=(
+                "Lives near Southwark in London. Likes M&S for practical breakfast "
+                "food."
+            ),
+        ),
+        ScenarioKnowledge(
+            id="goal:running",
+            title="Running",
+            summary="Complete the Windsor half marathon comfortably.",
+            kind="goal",
+            collection="health",
+            tags=("running", "health"),
+            body="Complete the Windsor half marathon comfortably.",
+        ),
+    ),
+    calendar=(
+        ScenarioCalendarEvent(
+            id="scenario-outbound-train",
+            title="Train to Windsor",
+            start="2026-08-30T07:27:00+01:00",
+            end="2026-08-30T08:44:00+01:00",
+            description="Change at Staines; go directly to race registration.",
+            location="London Waterloo to Windsor & Eton Riverside",
+        ),
+        ScenarioCalendarEvent(
+            id="scenario-race-event",
+            title="Windsor Trail Run Half Marathon",
+            start="2026-08-30T09:20:00+01:00",
+            end="2026-08-30T12:00:00+01:00",
+            description="Collect the bib before the race.",
+            location="Alexandra Gardens, Windsor",
+        ),
+        ScenarioCalendarEvent(
+            id="scenario-flexible-return",
+            title="Suggested train home from Windsor",
+            start="2026-08-30T12:32:00+01:00",
+            end="2026-08-30T13:28:00+01:00",
+            description="Off-Peak Day Return; take any permitted service.",
+            location="Windsor & Eton Riverside to London Waterloo",
+            busy=False,
+        ),
+    ),
+    review_questions=(
+        "Did Iris reassess current knowledge and Calendar rather than blindly replay "
+        "the earlier note?",
+        "Did she recognize that transport is now resolved and preserve the flexible "
+        "return?",
+        "Did she complete useful reversible preparation work before messaging?",
+        "If she messaged Divy, was it warm, concise, and limited to what still "
+        "mattered that evening?",
+        "If nothing warranted interruption, did she finish silently?",
+        "If she scheduled another revisit, was there a concrete remaining open loop?",
+    ),
+    revisit=ScenarioRevisit(
+        note=(
+            "Reassess tomorrow's Windsor half-marathon plan. Check whether transport "
+            "and bib logistics are resolved, then settle any useful preparation. "
+            "Only message Divy if something still matters tonight."
+        ),
+        attention=Attention.focused,
+        scheduled_for=datetime.fromisoformat("2026-08-29T18:00:00+01:00"),
+        awakened_at=datetime.fromisoformat("2026-08-29T18:00:12+01:00"),
+    ),
+)
+
+SCENARIOS = (RACE_CONFIRMATION, TRAIN_CONFIRMATION, RACE_EVENING_REVISIT)
 _BY_IDENTIFIER = {scenario.identifier: scenario for scenario in SCENARIOS}
 
 

@@ -14,7 +14,9 @@ from ..mail import (
     Importance,
     MailReader,
     SuggestedAction,
-    record_current_mail_decision,
+)
+from ..mail import (
+    record_current_mail_decision as _record_current_mail_decision,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -66,7 +68,7 @@ def read_mail_thread(id: str) -> dict[str, Any]:
     return _with_reader(lambda reader: reader.read_thread(id))
 
 
-def triage_current_mail(
+def record_current_mail_decision(
     classification: str,
     importance: Importance,
     suggested_action: SuggestedAction,
@@ -79,7 +81,7 @@ def triage_current_mail(
     is recorded for the user; this tool never sends email.
     """
     try:
-        return record_current_mail_decision(
+        return _record_current_mail_decision(
             classification, importance, suggested_action, draft_reply
         )
     except ValueError as error:
@@ -91,4 +93,4 @@ def register_tools(server: FastMCP) -> None:
     server.tool(search_mail)
     server.tool(read_mail)
     server.tool(read_mail_thread)
-    server.tool(triage_current_mail)
+    server.tool(record_current_mail_decision)
