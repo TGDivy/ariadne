@@ -25,10 +25,16 @@ uv run python -m ariadne.scripts.behavior run race-confirmation \
   --output /tmp/race-confirmation.md
 ```
 
-It uses the mail model, reasoning effort, web-search setting, personality, and
-instruction layers from the selected Ariadne config. It therefore needs the
-same local Codex authentication as Ariadne and may incur usage. It is not called
-by the test suite or CI.
+It uses the mail model, reasoning effort, web-search setting, and instruction
+layers from the repository defaults. It needs local Codex authentication and
+may incur usage, but it does not need an Ariadne config or service credentials.
+It is not called by the test suite or CI.
+
+Pass `--personality path/to/personality.md` to include a personality without
+loading any service configuration. Pass `--config path/to/config.toml` when an
+exact reproduction of a deployed mail profile is wanted; in that case its human
+name, personality, model, reasoning effort, and web-search setting are used, but
+its service credentials still are not forwarded to the run.
 
 Each run creates a disposable Git-backed Thread containing only synthetic
 fixtures. Telegram delivery, file delivery, and mail triage are replaced with

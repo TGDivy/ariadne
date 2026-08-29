@@ -9,8 +9,9 @@ import sys
 from pathlib import Path
 
 from ariadne.behavior import SCENARIOS, get_scenario
-from ariadne.behavior.runner import render_report, run_scenario
+from ariadne.behavior.runner import BehaviorRunProfile, render_report, run_scenario
 from ariadne.config import load_settings
+from ariadne.profile import MAIL_PROFILE
 
 
 def _render_scenario(identifier: str) -> str:
@@ -52,6 +53,8 @@ def main() -> None:
     )
     run.add_argument("scenario", choices=[item.identifier for item in SCENARIOS])
     run.add_argument("--config", type=Path)
+    run.add_argument("--human", default="Divy")
+    run.add_argument("--personality", type=Path)
     run.add_argument("--output", type=Path)
     run.add_argument("--json", action="store_true")
     args = parser.parse_args()
@@ -65,12 +68,26 @@ def main() -> None:
         return
 
     scenario = get_scenario(args.scenario)
-    settings = load_settings(args.config)
+    if args.config is not None:
+        settings = load_settings(args.config)
+        run_profile = BehaviorRunProfile(
+            human_name=settings.human_name,
+            personality=settings.personality,
+            settings=settings.turn_settings("mail"),
+        )
+    else:
+        if args.personality is not None and not args.personality.is_file():
+            parser.error(f"personality file does not exist: {args.personality}")
+        run_profile = BehaviorRunProfile(
+            human_name=args.human,
+            personality=args.personality,
+            settings=MAIL_PROFILE.settings,
+        )
     print(
         f"Running {scenario.identifier!r} with local Codex; this may incur usage.",
         file=sys.stderr,
     )
-    report = asyncio.run(run_scenario(scenario, settings))
+    report = asyncio.run(run_scenario(scenario, run_profile))
     rendered = (
         json.dumps(report.payload(), ensure_ascii=False, indent=2) + "\n"
         if args.json

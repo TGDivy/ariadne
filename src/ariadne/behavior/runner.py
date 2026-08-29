@@ -19,8 +19,8 @@ from ariadne.codex.conversation import (
     MCP_TOOL_TIMEOUT_SECONDS,
     _sandbox_config_overrides,
 )
+from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
-from ariadne.config import Settings
 from ariadne.profile import MAIL_PROFILE
 
 from .fake_mcp import STATE_ENVIRONMENT
@@ -50,6 +50,15 @@ _REDACTED_ENVIRONMENT = (
 class RecordedMessage:
     phase: str
     text: str
+
+
+@dataclass(frozen=True, slots=True)
+class BehaviorRunProfile:
+    """The few local values a model-backed scenario actually needs."""
+
+    human_name: str
+    personality: Path | None
+    settings: CodexTurnSettings
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,7 +166,7 @@ def _read_calls(path: Path) -> tuple[dict[str, Any], ...]:
 
 async def run_scenario(
     scenario: BehaviorScenario,
-    settings: Settings,
+    run_profile: BehaviorRunProfile,
 ) -> BehaviorReport:
     """Run a paid, explicitly requested local smoke test and return its evidence."""
     with tempfile.TemporaryDirectory(prefix="ariadne-behaviour-") as temporary:
@@ -187,9 +196,9 @@ async def run_scenario(
         profile = resolve_profile(
             declaration,
             vault=workspace,
-            human=settings.human_name,
-            personality=settings.personality,
-            settings=settings.turn_settings("mail"),
+            human=run_profile.human_name,
+            personality=run_profile.personality,
+            settings=run_profile.settings,
         )
         client = AsyncCodex(
             CodexConfig(
