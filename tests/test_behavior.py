@@ -28,7 +28,8 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         assert "Owner-authorized mail task" in prompt
         assert f"ordered route {scenario.route.id!r}" in prompt
         assert str(tmp_path / "mail-routes.yaml") in prompt
-        assert prompt.endswith("wait.")
+        assert "I give you permission to push" not in prompt
+        assert "do not edit the routing configuration" in prompt
         assert scenario.review_questions
         assert scenario.knowledge
 

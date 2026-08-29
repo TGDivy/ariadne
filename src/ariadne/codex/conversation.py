@@ -82,6 +82,14 @@ CALENDAR_ACTIVITY = {
     "delete_calendar_event": "Deleting a calendar event…",
     "respond_to_calendar_invitation": "Responding to a calendar invitation…",
 }
+KNOWLEDGE_ACTIVITY = {
+    "search_knowledge": "Searching memory…",
+    "browse_knowledge": "Browsing memory…",
+    "read_knowledge": "Reading memory…",
+    "create_knowledge": "Remembering…",
+    "update_knowledge": "Updating memory…",
+    "archive_knowledge": "Organising memory…",
+}
 LOCAL_ACTIVITY = {
     "prepare_files": "Preparing files…",
     "runtime_status": "Checking Ariadne…",
@@ -109,6 +117,8 @@ def _activity_message(item: object) -> str | None:
             return MAIL_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in CALENDAR_ACTIVITY:
             return CALENDAR_ACTIVITY[item.tool]
+        if item.server == MCP_SERVER_NAME and item.tool in KNOWLEDGE_ACTIVITY:
+            return KNOWLEDGE_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in LOCAL_ACTIVITY:
             return LOCAL_ACTIVITY[item.tool]
         return "Using Ariadne's local capability…"
@@ -487,7 +497,7 @@ class CodexConversation:
         await self._client.close()
 
     def reset(self) -> None:
-        """Discard the in-memory thread while retaining The Thread vault."""
+        """Discard the in-memory thread while retaining private knowledge."""
         self._thread = None
         self._thread_token_usage_total = None
 

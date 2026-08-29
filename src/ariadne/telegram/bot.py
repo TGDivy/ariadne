@@ -26,7 +26,6 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 from ..codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
-from ..prompt import THREAD_PUSH_PERMISSION
 from .file_delivery import FileDelivery, FileDeliveryError
 from .live import (
     STOPPED_MESSAGE,
@@ -52,7 +51,9 @@ ATTACHMENT_ROOT = Path.home() / ".ariadne" / "attachments"
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 ALBUM_DEBOUNCE_SECONDS = 1.0
 READY_MESSAGE = "Ariadne is ready."
-NEW_CONVERSATION_MESSAGE = "Started a new conversation. The Thread is still available."
+NEW_CONVERSATION_MESSAGE = (
+    "Started a new conversation. Your shared memory is still available."
+)
 BUSY_MESSAGE = "I'm still working on your previous message."
 IMAGE_WITHOUT_CAPTION = "Please inspect the attached image."
 IMAGES_WITHOUT_CAPTION = "Please inspect the attached images."
@@ -94,7 +95,7 @@ def turn_text(
         parts.append(
             f"Telegram reply context:\n<quoted_message>\n{content}\n</quoted_message>"
         )
-    parts.extend((text, THREAD_PUSH_PERMISSION))
+    parts.append(text)
     return "\n\n".join(parts)
 
 
@@ -539,7 +540,7 @@ class AriadneBot:
         await self._reply_safely(message, READY_MESSAGE)
 
     async def handle_new(self, message: Message, user_id: int | None) -> None:
-        """Start a fresh Codex session without changing The Thread."""
+        """Start a fresh Codex session without changing private knowledge."""
         if not self._is_allowed(user_id):
             return
         if self._busy:

@@ -86,6 +86,7 @@ def main() -> None:
         human=settings.human_name,
         personality=settings.personality,
         mcp_environment=settings.mcp_environment,
+        knowledge_root=settings.vault,
     )
 
     if args.json:

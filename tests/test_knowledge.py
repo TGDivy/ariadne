@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from fastmcp import Client
 
-from ariadne.codex.resolver import resolve_profile, with_knowledge_orientation
+from ariadne.codex.resolver import resolve_profile
 from ariadne.knowledge import (
     KnowledgeConflict,
     KnowledgeMetadata,
@@ -16,6 +16,7 @@ from ariadne.knowledge import (
     KnowledgeSyncError,
     KnowledgeValidationError,
 )
+from ariadne.knowledge.capability import ROOT_ENVIRONMENT
 from ariadne.knowledge.documents import StoredKnowledge, parse_document, render_document
 from ariadne.knowledge.orientation import render_orientation
 from ariadne.knowledge.search import KnowledgeIndex
@@ -252,22 +253,25 @@ def test_browse_and_orientation_expose_a_two_level_human_map(
     assert "Relationships: supports (2)" in rendered
 
 
-def test_shared_orientation_function_enriches_a_resolved_profile(
+def test_profile_resolution_applies_live_knowledge_orientation_and_root(
     knowledge_repository: Path,
 ) -> None:
-    profile = resolve_profile(
+    enriched = resolve_profile(
         MAIL_PROFILE,
         vault=knowledge_repository,
         human="Divy",
+        knowledge_root=knowledge_repository,
     )
-
-    enriched = with_knowledge_orientation(profile, knowledge_repository)
 
     assert enriched.developer_instruction_sources[-1] == (
         "generated/knowledge-orientation"
     )
     assert "booking/\n  travel/" in enriched.developer_instructions
     assert "Kinds: booking (1), goal (1), plan (1)" in (enriched.developer_instructions)
+    assert dict(enriched.mcp_environment_values)[ROOT_ENVIRONMENT] == str(
+        knowledge_repository
+    )
+    assert str(knowledge_repository) not in enriched.developer_instructions
 
 
 def test_whole_repository_validation_checks_records_and_relationships(

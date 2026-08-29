@@ -6,6 +6,8 @@ from openai_codex import ApprovalMode, Sandbox
 from openai_codex.generated.v2_all import ReasoningEffort
 
 from .codex.models import TurnProfile
+from .knowledge.capability import ROOT_ENVIRONMENT as KNOWLEDGE_ROOT_ENVIRONMENT
+from .knowledge.capability import TOOLS as KNOWLEDGE_TOOLS
 
 NETWORK_DOMAINS = (
     "github.com",
@@ -44,6 +46,7 @@ TELEGRAM_PROFILE = TurnProfile(
         "update_calendar_event",
         "delete_calendar_event",
         "respond_to_calendar_invitation",
+        *KNOWLEDGE_TOOLS,
     ),
     thread_policy="shared",
     reasoning_summary="concise",
@@ -54,7 +57,6 @@ TELEGRAM_PROFILE = TurnProfile(
     network_domains=NETWORK_DOMAINS,
     allow_local_binding=True,
     mcp_environment_names=(
-        "ARIADNE_VAULT",
         "ARIADNE_PROFILE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
@@ -65,6 +67,7 @@ TELEGRAM_PROFILE = TurnProfile(
         "ARIADNE_ICLOUD_APP_PASSWORD",
         "ARIADNE_CALENDAR_TIMEZONE",
         "ARIADNE_CALENDAR_DEFAULT",
+        KNOWLEDGE_ROOT_ENVIRONMENT,
     ),
 )
 
@@ -80,6 +83,7 @@ MAIL_PROFILE = TurnProfile(
         "send_telegram_message",
         "prepare_files",
         "triage_current_mail",
+        *KNOWLEDGE_TOOLS,
     ),
     thread_policy="fresh-per-event",
     sandbox=Sandbox.workspace_write,
@@ -89,12 +93,12 @@ MAIL_PROFILE = TurnProfile(
     network_domains=NETWORK_DOMAINS,
     allow_local_binding=True,
     mcp_environment_names=(
-        "ARIADNE_VAULT",
         "ARIADNE_PROFILE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
         "ARIADNE_MAIL_JOB_ID",
         "ARIADNE_MAIL_STATE",
+        KNOWLEDGE_ROOT_ENVIRONMENT,
     ),
 )
 

@@ -97,6 +97,7 @@ def main() -> None:
             human=settings.human_name,
             personality=settings.personality,
             mcp_environment=settings.mcp_environment,
+            knowledge_root=settings.vault,
         ),
         telemetry=telemetry,
     )
@@ -186,7 +187,7 @@ def main() -> None:
     # without competing with the native text/media handlers above.
     application.add_handler(TypeHandler(Update, ariadne.rich_message), group=1)
 
-    LOGGER.info("Starting Ariadne with The Thread vault %s", settings.vault)
+    LOGGER.info("Starting Ariadne with private knowledge at %s", settings.vault)
     try:
         application.run_polling(allowed_updates=Update.ALL_TYPES)
     except Exception:

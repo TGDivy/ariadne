@@ -304,39 +304,31 @@ def test_a_mail_turn_can_record_but_not_execute_its_decision(
 def test_runtime_status_never_returns_environment_values(
     tmp_path: Path, monkeypatch
 ) -> None:
-    vault = tmp_path / "vault"
-    vault.mkdir()
-    monkeypatch.setenv("ARIADNE_VAULT", str(vault))
     monkeypatch.setenv("ARIADNE_PROFILE", "telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "must-not-appear")
 
     payload = runtime_status()
 
-    assert payload["vault"] == str(vault)
-    assert payload["git"] == {
-        "root": str(vault),
-        "available": False,
-        "reason": "not_a_repository",
-    }
+    assert payload["profile"] == "telegram"
+    assert "vault" not in payload
+    assert "git" not in payload
+    assert "cwd" not in payload
+    assert str(tmp_path) not in json.dumps(payload)
     assert "must-not-appear" not in json.dumps(payload)
 
 
-@pytest.mark.parametrize("missing", ["ARIADNE_VAULT", "ARIADNE_PROFILE"])
 def test_runtime_status_requires_explicit_context(
-    missing: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ARIADNE_VAULT", str(tmp_path))
-    monkeypatch.setenv("ARIADNE_PROFILE", "telegram")
-    monkeypatch.delenv(missing)
+    monkeypatch.delenv("ARIADNE_PROFILE", raising=False)
 
-    with pytest.raises(ToolError, match=f"missing {missing}"):
+    with pytest.raises(ToolError, match="missing ARIADNE_PROFILE"):
         runtime_status()
 
 
 def test_runtime_status_rejects_an_unknown_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("ARIADNE_VAULT", str(tmp_path))
     monkeypatch.setenv("ARIADNE_PROFILE", "unknown")
 
     with pytest.raises(ToolError, match="not recognized"):
@@ -344,12 +336,19 @@ def test_runtime_status_rejects_an_unknown_profile(
 
 
 def test_runtime_status_reports_the_current_profiles_capabilities(monkeypatch) -> None:
-    monkeypatch.setenv("ARIADNE_VAULT", str(Path.cwd()))
     monkeypatch.setenv("ARIADNE_PROFILE", "mail")
 
     payload = runtime_status()
 
-    assert payload["capabilities"][-1] == "triage_current_mail"
+    assert "triage_current_mail" in payload["capabilities"]
+    assert payload["capabilities"][-6:] == [
+        "search_knowledge",
+        "browse_knowledge",
+        "read_knowledge",
+        "create_knowledge",
+        "update_knowledge",
+        "archive_knowledge",
+    ]
 
 
 async def test_a_message_from_iris_is_sent_as_rich_markdown(telegram: FakeBot) -> None:

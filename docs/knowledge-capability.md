@@ -1,7 +1,7 @@
 # A first-class knowledge capability
 
-Status: accepted capability design; the live Thread conversion and runtime
-cutover remain separate work
+Status: implemented; the live Thread is canonical and production Telegram and
+mail turns use the semantic capability
 
 ## The boundary
 
@@ -73,8 +73,8 @@ Every record lives beneath at least a kind and collection. All folder and file
 segments are lowercase kebab-case:
 
 ```text
-person/friends/lily.md
-person/family/mum.md
+people/friends/lily.md
+people/family/mum.md
 event/running/windsor-trail-run-2026.md
 goal/health/half-marathon.md
 project/ariadne/overview.md
@@ -160,7 +160,7 @@ the canonical store:
 ```text
 Current knowledge structure:
 
-person/
+people/
   family/
   friends/
 
@@ -225,8 +225,13 @@ pre-emptively leaking storage concurrency into the model API.
 
 ## Runtime boundary
 
-This capability PR does not enable the tools in production profiles, modify the
-live prompts, convert the Thread, or change Codex's working directory. After the
-manual conversion has been reviewed, a separate cutover can activate the shared
-orientation assembly for production, enable all six operations for Telegram and
-background turns, and remove direct Git and folder-editing instructions.
+Production Telegram and mail profiles expose all six semantic operations. Their
+resolved developer instructions include generated orientation from the current
+canonical records, while record bodies remain available only through search,
+browse, and read. Storage configuration is forwarded privately to Ariadne's MCP
+process and is never included in profile inspection or model-visible results.
+
+The backing repository remains Codex's working directory for now, but the prompt
+explicitly directs Iris to use semantic memory rather than inspect or edit its
+storage. Ariadne alone validates, writes, commits, pulls, and pushes knowledge
+mutations.
