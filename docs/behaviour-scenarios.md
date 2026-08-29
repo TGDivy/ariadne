@@ -43,6 +43,11 @@ their calls. Real Telegram, mail, calendar, and Thread credentials are not
 passed to the scenario MCP process. The Codex workspace is writable only inside
 the disposable scenario directory and shell network domains are empty.
 
+The fake capabilities are explicitly annotated as closed-world and harmless.
+Their only effect is appending to the temporary call record, so they do not need
+Codex's external-action reviewer. This keeps a missing local reviewer model from
+being confused with Iris choosing not to use a capability.
+
 Native Codex web search is different: it is never simulated. If the mail
 profile has `web_search = "live"`, the run uses the real locally available web
 search capability; if it is disabled, the model is told it is disabled. A

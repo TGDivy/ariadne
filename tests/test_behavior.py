@@ -71,6 +71,11 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         assert tool.description == real.description
         assert tool.parameters == real.parameters
         assert tool.output_schema == real.output_schema
+        assert tool.annotations is not None
+        assert tool.annotations.readOnlyHint is True
+        assert tool.annotations.destructiveHint is False
+        assert tool.annotations.idempotentHint is True
+        assert tool.annotations.openWorldHint is False
 
 
 def test_stdio_servers_do_not_start_the_networked_banner(
