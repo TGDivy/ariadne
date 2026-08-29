@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 
 from ariadne.behavior import SCENARIOS, fake_mcp, get_scenario
-from ariadne.behavior.runner import BehaviorReport, RecordedMessage, render_report
+from ariadne.behavior.runner import (
+    BehaviorReport,
+    RecordedMessage,
+    TimelineEntry,
+    render_report,
+)
 from ariadne.mcp import mcp as production_mcp
 
 
@@ -75,6 +80,7 @@ def test_report_is_plain_reviewable_evidence() -> None:
         reasoning_effort="medium",
         web_search="disabled",
         enabled_capabilities=("send_telegram_message",),
+        timeline=(TimelineEntry("activity", "Reading context…"),),
         messages=(RecordedMessage("final_answer", "Done."),),
         capability_calls=(
             {"tool": "send_telegram_message", "arguments": {"text": "Hi"}},
@@ -87,6 +93,7 @@ def test_report_is_plain_reviewable_evidence() -> None:
     rendered = render_report(report)
 
     assert "# Behaviour run: race-confirmation" in rendered
+    assert "**activity:** Reading context…" in rendered
     assert "### final_answer\n\nDone." in rendered
     assert "`send_telegram_message`" in rendered
     assert "abc123 Update plan" in rendered

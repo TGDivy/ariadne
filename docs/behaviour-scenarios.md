@@ -49,10 +49,12 @@ search capability; if it is disabled, the model is told it is disabled. A
 missing live capability is reported as a run failure rather than silently
 substituted.
 
-The report captures model-visible commentary/final messages, recorded
-capability calls, commits, a full text patch of workspace changes, and a short
-set of questions for manual review. It deliberately does not expose hidden
-reasoning or declare a scenario passed because a sentence happened to match.
+The command streams safe activity labels, model-visible speech, and MCP call
+boundaries while the model works. The report retains the activity/speech
+timeline, exact recorded capability calls, commits, a full text patch of
+workspace changes, and a short set of questions for manual review. It
+deliberately does not expose hidden reasoning or declare a scenario passed
+because a sentence happened to match.
 
 The initial stories are the two halves of the Windsor example:
 

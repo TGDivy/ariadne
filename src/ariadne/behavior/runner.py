@@ -7,13 +7,19 @@ import json
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from openai_codex import AsyncCodex, CodexConfig
 
-from ariadne.codex import AgentMessageCompleted, CodexConversation
+from ariadne.codex import (
+    ActivityUpdated,
+    AgentMessageCompleted,
+    CodexConversation,
+    WorkStarted,
+)
 from ariadne.codex.conversation import (
     MCP_SERVER_NAME,
     MCP_TOOL_TIMEOUT_SECONDS,
@@ -53,6 +59,12 @@ class RecordedMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class TimelineEntry:
+    kind: str
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
 class BehaviorRunProfile:
     """The few local values a model-backed scenario actually needs."""
 
@@ -68,6 +80,7 @@ class BehaviorReport:
     reasoning_effort: str
     web_search: str
     enabled_capabilities: tuple[str, ...]
+    timeline: tuple[TimelineEntry, ...]
     messages: tuple[RecordedMessage, ...]
     capability_calls: tuple[dict[str, Any], ...]
     commits: tuple[str, ...]
@@ -81,6 +94,9 @@ class BehaviorReport:
             "reasoning_effort": self.reasoning_effort,
             "web_search": self.web_search,
             "enabled_capabilities": list(self.enabled_capabilities),
+            "timeline": [
+                {"kind": entry.kind, "text": entry.text} for entry in self.timeline
+            ],
             "messages": [
                 {"phase": message.phase, "text": message.text}
                 for message in self.messages
@@ -167,6 +183,8 @@ def _read_calls(path: Path) -> tuple[dict[str, Any], ...]:
 async def run_scenario(
     scenario: BehaviorScenario,
     run_profile: BehaviorRunProfile,
+    *,
+    progress: Callable[[TimelineEntry], None] | None = None,
 ) -> BehaviorReport:
     """Run a paid, explicitly requested local smoke test and return its evidence."""
     with tempfile.TemporaryDirectory(prefix="ariadne-behaviour-") as temporary:
@@ -209,11 +227,23 @@ async def run_scenario(
             )
         )
         conversation = CodexConversation(profile, client=client)
+        timeline: list[TimelineEntry] = []
         messages: list[RecordedMessage] = []
         try:
             async for event in conversation.stream_turn(scenario.turn_input(workspace)):
                 if isinstance(event, AgentMessageCompleted):
                     messages.append(RecordedMessage(event.phase.value, event.text))
+                    entry = TimelineEntry(event.phase.value, event.text)
+                elif isinstance(event, (WorkStarted, ActivityUpdated)):
+                    text = (
+                        event.activity if isinstance(event, WorkStarted) else event.text
+                    )
+                    entry = TimelineEntry("activity", text)
+                else:
+                    continue
+                timeline.append(entry)
+                if progress is not None:
+                    progress(entry)
         finally:
             await conversation.close()
 
@@ -226,6 +256,7 @@ async def run_scenario(
             reasoning_effort=profile.effort.value,
             web_search=profile.web_search,
             enabled_capabilities=profile.enabled_tools,
+            timeline=tuple(timeline),
             messages=tuple(messages),
             capability_calls=_read_calls(calls),
             commits=tuple(commits_text.splitlines()) if commits_text else (),
@@ -243,9 +274,14 @@ def render_report(report: BehaviorReport) -> str:
         "Capabilities: "
         + ", ".join(f"`{name}`" for name in report.enabled_capabilities),
         "",
-        "## Messages",
+        "## Timeline",
         "",
     ]
+    if report.timeline:
+        lines.extend(f"- **{entry.kind}:** {entry.text}" for entry in report.timeline)
+    else:
+        lines.append("- none")
+    lines.extend(["", "## Messages", ""])
     if report.messages:
         for message in report.messages:
             lines.extend((f"### {message.phase}", "", message.text, ""))

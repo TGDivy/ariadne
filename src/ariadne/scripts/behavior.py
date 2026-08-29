@@ -5,11 +5,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from pathlib import Path
 
 from ariadne.behavior import SCENARIOS, get_scenario
-from ariadne.behavior.runner import BehaviorRunProfile, render_report, run_scenario
+from ariadne.behavior.runner import (
+    BehaviorRunProfile,
+    TimelineEntry,
+    render_report,
+    run_scenario,
+)
 from ariadne.config import load_settings
 from ariadne.profile import MAIL_PROFILE
 
@@ -40,6 +46,21 @@ def _render_scenario(identifier: str) -> str:
         "```",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _show_progress(entry: TimelineEntry) -> None:
+    text = entry.text.replace("\n", " ").strip()
+    print(f"[{entry.kind}] {text}", file=sys.stderr, flush=True)
+
+
+def _show_mcp_boundaries() -> None:
+    logger = logging.getLogger("ariadne.codex.conversation")
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("[runtime] %(message)s"))
+    handler.setLevel(logging.INFO)
+    handler.addFilter(lambda record: "MCP call" in record.getMessage())
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
 
 
 def main() -> None:
@@ -87,7 +108,8 @@ def main() -> None:
         f"Running {scenario.identifier!r} with local Codex; this may incur usage.",
         file=sys.stderr,
     )
-    report = asyncio.run(run_scenario(scenario, run_profile))
+    _show_mcp_boundaries()
+    report = asyncio.run(run_scenario(scenario, run_profile, progress=_show_progress))
     rendered = (
         json.dumps(report.payload(), ensure_ascii=False, indent=2) + "\n"
         if args.json
