@@ -20,8 +20,8 @@ from ariadne.mcp.calendar import (
     list_calendars,
 )
 from ariadne.mcp.errors import DIAGNOSTIC_PREFIX
-from ariadne.mcp.mail import read_mail, search_mail, triage_current_mail
-from ariadne.mcp.runtime import runtime_status
+from ariadne.mcp.mail import read_mail, record_current_mail_decision, search_mail
+from ariadne.mcp.runtime import inspect_ariadne_runtime
 from ariadne.mcp.telegram import ask_telegram_question, send_telegram_message
 from ariadne.telegram import outbound
 from ariadne.telegram.questions import TelegramQuestion, TelegramQuestionStore
@@ -83,18 +83,18 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
     tools = await mcp.list_tools()
 
     assert [tool.name for tool in tools] == [
-        "runtime_status",
+        "inspect_ariadne_runtime",
         "send_telegram_message",
         "ask_telegram_question",
-        "prepare_files",
+        "request_telegram_file_delivery",
         "search_mail",
         "read_mail",
         "read_mail_thread",
-        "triage_current_mail",
+        "record_current_mail_decision",
         "list_calendars",
-        "search_calendar",
+        "search_calendar_events",
         "read_calendar_event",
-        "calendar_free_busy",
+        "check_calendar_availability",
         "create_calendar_event",
         "update_calendar_event",
         "delete_calendar_event",
@@ -105,6 +105,10 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "create_knowledge",
         "update_knowledge",
         "archive_knowledge",
+        "schedule_wakeup",
+        "list_wakeups",
+        "update_wakeup",
+        "cancel_wakeup",
     ]
 
 
@@ -113,7 +117,7 @@ def test_a_normal_turn_has_no_mail_authority(monkeypatch) -> None:
     monkeypatch.delenv("ARIADNE_MAIL_STATE", raising=False)
 
     with pytest.raises(ToolError, match="unavailable"):
-        triage_current_mail("notifications", "important", "keep_in_inbox")
+        record_current_mail_decision("notifications", "important", "keep_in_inbox")
 
 
 def test_mail_reading_requires_toml_derived_credentials(monkeypatch) -> None:
@@ -289,7 +293,7 @@ def test_a_mail_turn_can_record_but_not_execute_its_decision(
     monkeypatch.setenv("ARIADNE_MAIL_JOB_ID", job_id)
     monkeypatch.setenv("ARIADNE_MAIL_STATE", str(path))
 
-    result = triage_current_mail(
+    result = record_current_mail_decision(
         "career", "important", "flag", "Thanks — I am interested."
     )
 
@@ -301,13 +305,13 @@ def test_a_mail_turn_can_record_but_not_execute_its_decision(
     assert job.action is None
 
 
-def test_runtime_status_never_returns_environment_values(
+def test_inspect_ariadne_runtime_never_returns_environment_values(
     tmp_path: Path, monkeypatch
 ) -> None:
     monkeypatch.setenv("ARIADNE_PROFILE", "telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "must-not-appear")
 
-    payload = runtime_status()
+    payload = inspect_ariadne_runtime()
 
     assert payload["profile"] == "telegram"
     assert "vault" not in payload
@@ -317,30 +321,32 @@ def test_runtime_status_never_returns_environment_values(
     assert "must-not-appear" not in json.dumps(payload)
 
 
-def test_runtime_status_requires_explicit_context(
+def test_inspect_ariadne_runtime_requires_explicit_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("ARIADNE_PROFILE", raising=False)
 
     with pytest.raises(ToolError, match="missing ARIADNE_PROFILE"):
-        runtime_status()
+        inspect_ariadne_runtime()
 
 
-def test_runtime_status_rejects_an_unknown_profile(
+def test_inspect_ariadne_runtime_rejects_an_unknown_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ARIADNE_PROFILE", "unknown")
 
     with pytest.raises(ToolError, match="not recognized"):
-        runtime_status()
+        inspect_ariadne_runtime()
 
 
-def test_runtime_status_reports_the_current_profiles_capabilities(monkeypatch) -> None:
+def test_inspect_ariadne_runtime_reports_the_current_profiles_capabilities(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("ARIADNE_PROFILE", "mail")
 
-    payload = runtime_status()
+    payload = inspect_ariadne_runtime()
 
-    assert "triage_current_mail" in payload["capabilities"]
+    assert "record_current_mail_decision" in payload["capabilities"]
     assert payload["capabilities"][-6:] == [
         "search_knowledge",
         "browse_knowledge",

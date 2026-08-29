@@ -25,6 +25,7 @@ from .codex.resolver import resolve_profile
 from .config import Settings, config_path, load_settings, settings_payload
 from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
+from .revisit.runtime import RevisitLoop
 from .telegram.bot import AriadneBot
 from .telemetry import configure_telemetry
 
@@ -121,28 +122,45 @@ def main() -> None:
             if mail_settings is not None
             else None
         )
+        revisit_loop = RevisitLoop(
+            settings.revisit_settings,
+            settings.vault,
+            settings.revisit_turn_settings,
+            human=settings.human_name,
+            personality=settings.personality,
+            mcp_environment=settings.mcp_environment,
+            telemetry=telemetry,
+        )
     except ValueError as error:
         telemetry.shutdown()
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
     mail_task: asyncio.Task[None] | None = None
+    revisit_task: asyncio.Task[None] | None = None
 
     async def start_services(application: AriadneApplication) -> None:
-        nonlocal mail_task
+        nonlocal mail_task, revisit_task
         ariadne.bind_bot(application.bot)
         await ariadne.recover_questions()
         await publish_commands(application)
         if mail_loop is not None:
             mail_task = asyncio.create_task(mail_loop.run_forever())
             LOGGER.info("Started iCloud Mail source")
+        revisit_task = asyncio.create_task(revisit_loop.run_forever())
+        LOGGER.info("Started one-off revisit source")
 
     async def close_services(_: object) -> None:
         if mail_loop is not None:
             mail_loop.stop()
+        revisit_loop.stop()
         if mail_task is not None:
             mail_task.cancel()
             with suppress(asyncio.CancelledError):
                 await mail_task
+        if revisit_task is not None:
+            revisit_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await revisit_task
         try:
             await conversation.close()
         except Exception:

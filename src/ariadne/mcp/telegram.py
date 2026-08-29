@@ -134,7 +134,7 @@ async def ask_telegram_question(
         raise ToolError("The Telegram question could not be completed.") from error
 
 
-async def prepare_files(paths: list[str]) -> dict[str, Any]:
+async def request_telegram_file_delivery(paths: list[str]) -> dict[str, Any]:
     """Stage files under the user's home directory for explicit Telegram approval.
 
     This tool does not upload files. It sends an explicit Telegram approval card
@@ -170,4 +170,4 @@ def register_tools(server: FastMCP) -> None:
     """Register Telegram tools."""
     server.tool(send_telegram_message)
     server.tool(ask_telegram_question)
-    server.tool(prepare_files)
+    server.tool(request_telegram_file_delivery)

@@ -19,7 +19,7 @@ from ariadne.behavior.runner import (
     run_scenario,
 )
 from ariadne.config import load_settings
-from ariadne.profile import MAIL_PROFILE
+from ariadne.profile import MAIL_PROFILE, profile_for_attention
 
 
 def _render_scenario(identifier: str) -> str:
@@ -33,7 +33,7 @@ def _render_scenario(identifier: str) -> str:
         f"# {scenario.title}",
         "",
         f"ID: `{scenario.identifier}`",
-        "Profile: `mail`",
+        f"Profile: `{scenario.profile_name}`",
         "",
         scenario.description,
         "",
@@ -99,12 +99,21 @@ def main() -> None:
         return
 
     scenario = get_scenario(args.scenario)
+    declaration = (
+        profile_for_attention(scenario.revisit.attention)
+        if scenario.revisit is not None
+        else MAIL_PROFILE
+    )
     if args.config is not None:
         settings = load_settings(args.config)
         run_profile = BehaviorRunProfile(
             human_name=settings.human_name,
             personality=settings.personality,
-            settings=settings.turn_settings("mail"),
+            settings=(
+                settings.revisit_turn_settings(scenario.revisit.attention)
+                if scenario.revisit is not None
+                else settings.mail_turn_settings
+            ),
         )
     else:
         if args.personality is not None and not args.personality.is_file():
@@ -112,7 +121,7 @@ def main() -> None:
         run_profile = BehaviorRunProfile(
             human_name=args.human,
             personality=args.personality,
-            settings=MAIL_PROFILE.settings,
+            settings=declaration.settings,
         )
     turn_settings = run_profile.settings
     if args.model is not None:

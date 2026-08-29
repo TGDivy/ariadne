@@ -16,7 +16,9 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from ariadne.calendar import CalendarStatus, InvitationResponse, UpdateScope
-from ariadne.mcp.calendar import calendar_free_busy as real_calendar_free_busy
+from ariadne.mcp.calendar import (
+    check_calendar_availability as real_check_calendar_availability,
+)
 from ariadne.mcp.calendar import create_calendar_event as real_create_calendar_event
 from ariadne.mcp.calendar import delete_calendar_event as real_delete_calendar_event
 from ariadne.mcp.calendar import list_calendars as real_list_calendars
@@ -24,7 +26,7 @@ from ariadne.mcp.calendar import read_calendar_event as real_read_calendar_event
 from ariadne.mcp.calendar import (
     respond_to_calendar_invitation as real_respond_to_calendar_invitation,
 )
-from ariadne.mcp.calendar import search_calendar as real_search_calendar
+from ariadne.mcp.calendar import search_calendar_events as real_search_calendar_events
 from ariadne.mcp.calendar import update_calendar_event as real_update_calendar_event
 
 from .recording import record_call
@@ -131,8 +133,8 @@ def list_calendars() -> dict[str, Any]:
 
 
 @_serialized
-@wraps(real_search_calendar)
-def search_calendar(
+@wraps(real_search_calendar_events)
+def search_calendar_events(
     start: str,
     end: str,
     query: str | None = None,
@@ -146,7 +148,7 @@ def search_calendar(
         "calendar_ids": calendar_ids,
         "limit": limit,
     }
-    record_call("search_calendar", arguments)
+    record_call("search_calendar_events", arguments)
     _, payload = _state()
     timezone = _timezone(payload)
     selected = set(
@@ -193,12 +195,12 @@ def read_calendar_event(id: str) -> dict[str, Any]:
 
 
 @_serialized
-@wraps(real_calendar_free_busy)
-def calendar_free_busy(
+@wraps(real_check_calendar_availability)
+def check_calendar_availability(
     start: str, end: str, calendar_ids: list[str] | None = None
 ) -> dict[str, Any]:
     record_call(
-        "calendar_free_busy",
+        "check_calendar_availability",
         {"start": start, "end": end, "calendar_ids": calendar_ids},
     )
     _, payload = _state()
@@ -436,9 +438,9 @@ def respond_to_calendar_invitation(
 def register_tools(server: FastMCP, annotations: dict[str, bool]) -> None:
     """Register every disposable Calendar operation."""
     server.tool(list_calendars, annotations=annotations)
-    server.tool(search_calendar, annotations=annotations)
+    server.tool(search_calendar_events, annotations=annotations)
     server.tool(read_calendar_event, annotations=annotations)
-    server.tool(calendar_free_busy, annotations=annotations)
+    server.tool(check_calendar_availability, annotations=annotations)
     server.tool(create_calendar_event, annotations=annotations)
     server.tool(update_calendar_event, annotations=annotations)
     server.tool(delete_calendar_event, annotations=annotations)

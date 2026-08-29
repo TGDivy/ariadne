@@ -28,20 +28,28 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert [scenario.identifier for scenario in SCENARIOS] == [
         "race-confirmation",
         "train-confirmation",
+        "race-evening-revisit",
     ]
     assert len({scenario.identifier for scenario in SCENARIOS}) == len(SCENARIOS)
 
     for scenario in SCENARIOS:
         prompt = scenario.turn_input(tmp_path)
-        assert "Owner-authorized mail task" in prompt
-        assert f"ordered route {scenario.route.id!r}" in prompt
-        assert str(tmp_path / "mail-routes.yaml") in prompt
-        assert "I give you permission to push" not in prompt
-        assert "do not edit the routing configuration" in prompt
+        if scenario.revisit is None:
+            assert scenario.route is not None
+            assert "Owner-authorized mail task" in prompt
+            assert f"ordered route {scenario.route.id!r}" in prompt
+            assert str(tmp_path / "mail-routes.yaml") in prompt
+            assert "I give you permission to push" not in prompt
+            assert "do not edit the routing configuration" in prompt
+        else:
+            assert "Ariadne has awakened you" in prompt
+            assert "Attention selected by your earlier self: focused" in prompt
+            assert "finish silently" in prompt
         assert scenario.review_questions
         assert scenario.knowledge
     assert SCENARIOS[0].calendar == ()
     assert len(SCENARIOS[1].calendar) == 1
+    assert len(SCENARIOS[2].calendar) == 3
 
 
 def test_scenario_knowledge_is_also_valid_generated_orientation(
@@ -86,14 +94,17 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
     fake = {tool.name: tool for tool in await fake_mcp.mcp.list_tools()}
 
     assert tuple(fake) == (
-        "runtime_status",
+        "inspect_ariadne_runtime",
         "send_telegram_message",
-        "prepare_files",
-        "triage_current_mail",
+        "request_telegram_file_delivery",
+        "search_mail",
+        "read_mail",
+        "read_mail_thread",
+        "record_current_mail_decision",
         "list_calendars",
-        "search_calendar",
+        "search_calendar_events",
         "read_calendar_event",
-        "calendar_free_busy",
+        "check_calendar_availability",
         "create_calendar_event",
         "update_calendar_event",
         "delete_calendar_event",
@@ -104,6 +115,10 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "create_knowledge",
         "update_knowledge",
         "archive_knowledge",
+        "schedule_wakeup",
+        "list_wakeups",
+        "update_wakeup",
+        "cancel_wakeup",
     )
     for name, tool in fake.items():
         real = production[name]
@@ -139,12 +154,14 @@ async def test_fake_capabilities_record_calls(
     monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
 
     assert await fake_mcp.send_telegram_message("Race booked 😄") == [1001]
-    result = fake_mcp.triage_current_mail("notifications", "important", "keep_in_inbox")
+    result = fake_mcp.record_current_mail_decision(
+        "notifications", "important", "keep_in_inbox"
+    )
 
     assert result["status"] == "recorded"
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
         "send_telegram_message",
-        "triage_current_mail",
+        "record_current_mail_decision",
     ]
 
 
@@ -199,7 +216,7 @@ async def test_fake_calendar_is_seeded_and_mutable(
     monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
     monkeypatch.setenv(fake_calendar.CALENDAR_ENVIRONMENT, str(calendar))
 
-    found = fake_calendar.search_calendar("2026-08-30", "2026-08-31", "Windsor")
+    found = fake_calendar.search_calendar_events("2026-08-30", "2026-08-31", "Windsor")
     created = fake_calendar.create_calendar_event(
         "Train to Windsor",
         "2026-08-30T07:27:00+01:00",
@@ -212,7 +229,7 @@ async def test_fake_calendar_is_seeded_and_mutable(
     assert found["events"][0]["id"] == "scenario-race-event"
     assert updated["description"] == "Change at Staines."
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
-        "search_calendar",
+        "search_calendar_events",
         "create_calendar_event",
         "update_calendar_event",
     ]

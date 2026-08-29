@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 from ariadne.mail import MailRoute, build_mail_turn_prompt, parse_metadata
 from ariadne.mail.models import MailJob
+from ariadne.revisit import Attention, Revisit
+from ariadne.revisit.runtime import build_revisit_turn_prompt
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,21 +98,67 @@ class ScenarioCalendarEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class ScenarioRevisit:
+    """One synthetic due revisit used to wake a behaviour scenario."""
+
+    note: str
+    attention: Attention
+    scheduled_for: datetime
+    awakened_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class BehaviorScenario:
     """A production-shaped event with explicit points for human review."""
 
     identifier: str
     title: str
     description: str
-    email: bytes
-    route: MailRoute
+    email: bytes | None
+    route: MailRoute | None
     files: tuple[ScenarioFile, ...]
     knowledge: tuple[ScenarioKnowledge, ...]
     calendar: tuple[ScenarioCalendarEvent, ...]
     review_questions: tuple[str, ...]
+    revisit: ScenarioRevisit | None = None
 
-    def turn_input(self, workspace: Path) -> str:
-        """Render the same owner input used by the production mail runtime."""
+    def __post_init__(self) -> None:
+        mail_trigger = self.email is not None and self.route is not None
+        revisit_trigger = self.revisit is not None
+        if mail_trigger == revisit_trigger:
+            raise ValueError("A behaviour scenario needs exactly one trigger.")
+
+    @property
+    def profile_name(self) -> str:
+        return (
+            f"revisit-{self.revisit.attention.value}"
+            if self.revisit is not None
+            else "mail"
+        )
+
+    def turn_input(self, workspace: Path, *, human: str = "Divy") -> str:
+        """Render the same owner activation used by the production runtime."""
+        if self.revisit is not None:
+            scheduled = self.revisit
+            created_at = scheduled.scheduled_for.astimezone(UTC)
+            return build_revisit_turn_prompt(
+                Revisit(
+                    id=f"revisit_{self.identifier}",
+                    due_at=scheduled.scheduled_for,
+                    note=scheduled.note,
+                    attention=scheduled.attention,
+                    status="running",
+                    attempts=1,
+                    error=None,
+                    created_at=created_at,
+                    updated_at=scheduled.awakened_at.astimezone(UTC),
+                    completed_at=None,
+                ),
+                awakened_at=scheduled.awakened_at,
+                human=human,
+            )
+        assert self.email is not None
+        assert self.route is not None
         metadata = parse_metadata(self.email)
         job = MailJob(
             job_id=f"INBOX:1:{self.identifier}",

@@ -24,7 +24,9 @@ from pydantic import (
 )
 
 from .codex.models import CodexTurnSettings, WebSearchSetting
-from .profile import PROFILES
+from .profile import PROFILES, profile_for_attention
+from .revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
+from .revisit import Attention
 from .telegram.questions import (
     QUESTION_STATE_ENVIRONMENT,
     default_question_state_path,
@@ -208,6 +210,26 @@ class CalendarConfig(BaseModel):
         return value.strip() or None if isinstance(value, str) else value
 
 
+class RevisitConfig(BaseModel):
+    """Always-on local settings for one-off future revisits."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    state: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/revisits.sqlite3"
+        ).expanduser()
+    )
+    poll_interval_seconds: PositiveInt = 15
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def expand_state_path(cls, value: object) -> object:
+        if isinstance(value, str):
+            return Path(value).expanduser()
+        return value.expanduser() if isinstance(value, Path) else value
+
+
 class TelemetryConfig(BaseModel):
     """Opt-in OTLP/HTTP export configuration."""
 
@@ -263,6 +285,7 @@ class Settings(BaseModel):
     icloud: ICloudConfig = Field(default_factory=ICloudConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
+    revisits: RevisitConfig = Field(default_factory=RevisitConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
 
@@ -349,12 +372,17 @@ class Settings(BaseModel):
     def mail_turn_settings(self) -> CodexTurnSettings:
         return self.turn_settings("mail")
 
+    def revisit_turn_settings(self, attention: Attention) -> CodexTurnSettings:
+        """Resolve the operator-configurable profile for one explicit level."""
+        return self.turn_settings(profile_for_attention(attention).name)
+
     @property
     def mcp_environment(self) -> dict[str, str]:
         values = {
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_ALLOWED_USER_ID": str(self.allowed_user_id),
             QUESTION_STATE_ENVIRONMENT: str(self.telegram.state.resolve()),
+            REVISIT_STATE_ENVIRONMENT: str(self.revisits.state.resolve()),
         }
         if self.mail.enabled:
             assert self.icloud_credentials is not None
@@ -385,6 +413,13 @@ class Settings(BaseModel):
             state=self.mail.state.resolve(),
         )
 
+    @property
+    def revisit_settings(self) -> RevisitSettings:
+        return RevisitSettings(
+            state=self.revisits.state.resolve(),
+            poll_interval_seconds=self.revisits.poll_interval_seconds,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class MailSettings:
@@ -394,6 +429,14 @@ class MailSettings:
     app_password: SecretStr
     routes: Path
     state: Path
+
+
+@dataclass(frozen=True, slots=True)
+class RevisitSettings:
+    """The complete always-on revisit runtime configuration."""
+
+    state: Path
+    poll_interval_seconds: int
 
 
 def config_path(
@@ -462,6 +505,10 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             "enabled": settings.calendar.enabled,
             "timezone": settings.calendar.timezone,
             "default_calendar": settings.calendar.default_calendar,
+        },
+        "revisits": {
+            "state": str(settings.revisits.state),
+            "poll_interval_seconds": settings.revisits.poll_interval_seconds,
         },
         "telemetry": {
             "enabled": settings.telemetry.enabled,

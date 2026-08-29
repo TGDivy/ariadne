@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from ariadne.codex import CodexTurnSettings
 from ariadne.config import load_settings, settings_payload
+from ariadne.revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
+from ariadne.revisit import Attention
 
 
 def write_config(
@@ -59,6 +61,29 @@ web_search = "live"
         web_search="live",
     )
     assert settings.mail_settings is None
+
+
+def test_revisit_attention_profile_can_be_remapped_without_changing_saved_items(
+    tmp_path: Path,
+) -> None:
+    config = write_config(
+        tmp_path,
+        extra="""\
+
+[profiles.revisit-focused]
+model = "gpt-future-focused"
+effort = "medium"
+web_search = "live"
+""",
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.revisit_turn_settings(Attention.focused) == CodexTurnSettings(
+        model="gpt-future-focused",
+        effort=ReasoningEffort.medium,
+        web_search="live",
+    )
 
 
 def test_ariadne_config_selects_an_alternate_toml(tmp_path: Path) -> None:
@@ -196,6 +221,7 @@ default_calendar = "Personal"
         "TELEGRAM_BOT_TOKEN": "token",
         "TELEGRAM_ALLOWED_USER_ID": "12345",
         "ARIADNE_TELEGRAM_STATE": str(settings.telegram.state.resolve()),
+        REVISIT_STATE_ENVIRONMENT: str(settings.revisits.state.resolve()),
         "ARIADNE_ICLOUD_USERNAME": "person@example.com",
         "ARIADNE_ICLOUD_APP_PASSWORD": "calendar-password",
         "ARIADNE_CALENDAR_TIMEZONE": "Europe/London",
@@ -245,6 +271,9 @@ def test_default_mail_state_expands_the_home_directory(
     assert settings.mail.state == fake_home / ".local/state/ariadne/mail.sqlite3"
     assert (
         settings.telegram.state == fake_home / ".local/state/ariadne/telegram.sqlite3"
+    )
+    assert (
+        settings.revisits.state == fake_home / ".local/state/ariadne/revisits.sqlite3"
     )
     assert settings.mcp_environment["ARIADNE_TELEGRAM_STATE"] == str(
         settings.telegram.state.resolve()

@@ -74,9 +74,9 @@ MAIL_ACTIVITY = {
 }
 CALENDAR_ACTIVITY = {
     "list_calendars": "Checking calendars…",
-    "search_calendar": "Searching the calendar…",
+    "search_calendar_events": "Searching the calendar…",
     "read_calendar_event": "Reading a calendar event…",
-    "calendar_free_busy": "Checking availability…",
+    "check_calendar_availability": "Checking availability…",
     "create_calendar_event": "Creating a calendar event…",
     "update_calendar_event": "Updating a calendar event…",
     "delete_calendar_event": "Deleting a calendar event…",
@@ -90,10 +90,16 @@ KNOWLEDGE_ACTIVITY = {
     "update_knowledge": "Updating memory…",
     "archive_knowledge": "Organising memory…",
 }
+REVISIT_ACTIVITY = {
+    "schedule_wakeup": "Scheduling a future wake-up…",
+    "list_wakeups": "Checking scheduled wake-ups…",
+    "update_wakeup": "Updating a scheduled wake-up…",
+    "cancel_wakeup": "Cancelling a scheduled wake-up…",
+}
 LOCAL_ACTIVITY = {
-    "prepare_files": "Preparing files…",
-    "runtime_status": "Checking Ariadne…",
-    "triage_current_mail": "Triaging mail…",
+    "request_telegram_file_delivery": "Preparing files…",
+    "inspect_ariadne_runtime": "Checking Ariadne…",
+    "record_current_mail_decision": "Triaging mail…",
 }
 
 
@@ -119,6 +125,8 @@ def _activity_message(item: object) -> str | None:
             return CALENDAR_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in KNOWLEDGE_ACTIVITY:
             return KNOWLEDGE_ACTIVITY[item.tool]
+        if item.server == MCP_SERVER_NAME and item.tool in REVISIT_ACTIVITY:
+            return REVISIT_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in LOCAL_ACTIVITY:
             return LOCAL_ACTIVITY[item.tool]
         return "Using Ariadne's local capability…"
