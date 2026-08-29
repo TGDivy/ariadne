@@ -28,9 +28,10 @@ from ariadne.codex.conversation import (
     _sandbox_config_overrides,
 )
 from ariadne.codex.models import CodexTurnSettings
-from ariadne.codex.resolver import resolve_profile
+from ariadne.codex.resolver import resolve_profile, with_knowledge_orientation
 from ariadne.profile import MAIL_PROFILE
 
+from .fake_knowledge import KNOWLEDGE_ENVIRONMENT
 from .fake_mcp import STATE_ENVIRONMENT
 from .models import BehaviorScenario
 
@@ -164,7 +165,19 @@ def _snapshot_patch(before: dict[str, str], after: dict[str, str]) -> str:
     return "".join(chunks)
 
 
-def _fake_mcp_overrides(enabled_tools: tuple[str, ...], calls: Path) -> tuple[str, ...]:
+_KNOWLEDGE_TOOLS = (
+    "search_knowledge",
+    "browse_knowledge",
+    "read_knowledge",
+    "create_knowledge",
+    "update_knowledge",
+    "archive_knowledge",
+)
+
+
+def _fake_mcp_overrides(
+    enabled_tools: tuple[str, ...], calls: Path, knowledge: Path
+) -> tuple[str, ...]:
     return (
         f"mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(sys.executable)}",
         f"mcp_servers.{MCP_SERVER_NAME}.args="
@@ -174,6 +187,8 @@ def _fake_mcp_overrides(enabled_tools: tuple[str, ...], calls: Path) -> tuple[st
         f"mcp_servers.{MCP_SERVER_NAME}.enabled_tools=" + json.dumps(enabled_tools),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{STATE_ENVIRONMENT}="
         + json.dumps(str(calls)),
+        f"mcp_servers.{MCP_SERVER_NAME}.env.{KNOWLEDGE_ENVIRONMENT}="
+        + json.dumps(str(knowledge)),
     )
 
 
@@ -207,8 +222,17 @@ async def run_scenario(
         workspace = root / "thread"
         origin = root / "origin.git"
         calls = root / "capability-calls.jsonl"
+        knowledge = root / "knowledge.json"
         workspace.mkdir()
         _write_scenario(scenario, workspace)
+        knowledge.write_text(
+            json.dumps(
+                {"records": [record.payload() for record in scenario.knowledge]},
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         _run_git("init", "--bare", str(origin), cwd=root)
         _run_git("init", "--initial-branch=main", cwd=workspace)
@@ -223,6 +247,7 @@ async def run_scenario(
 
         declaration = replace(
             MAIL_PROFILE,
+            enabled_tools=MAIL_PROFILE.enabled_tools + _KNOWLEDGE_TOOLS,
             writable_roots=(root,),
             network_domains=(),
         )
@@ -233,10 +258,11 @@ async def run_scenario(
             personality=run_profile.personality,
             settings=run_profile.settings,
         )
+        profile = with_knowledge_orientation(profile, workspace)
         client = AsyncCodex(
             CodexConfig(
                 config_overrides=_sandbox_config_overrides(profile)
-                + _fake_mcp_overrides(profile.enabled_tools, calls),
+                + _fake_mcp_overrides(profile.enabled_tools, calls, knowledge),
                 cwd=str(workspace),
                 env=_redacted_environment(),
             )

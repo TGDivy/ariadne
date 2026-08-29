@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from ariadne.behavior import SCENARIOS, fake_mcp, get_scenario
+from ariadne.behavior import SCENARIOS, fake_knowledge, fake_mcp, get_scenario
 from ariadne.behavior.runner import (
     BehaviorReport,
     RecordedMessage,
@@ -30,6 +30,7 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         assert str(tmp_path / "mail-routes.yaml") in prompt
         assert prompt.endswith("wait.")
         assert scenario.review_questions
+        assert scenario.knowledge
 
 
 def test_scenario_lookup_rejects_unknown_names() -> None:
@@ -65,6 +66,12 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "send_telegram_message",
         "prepare_files",
         "triage_current_mail",
+        "search_knowledge",
+        "browse_knowledge",
+        "read_knowledge",
+        "create_knowledge",
+        "update_knowledge",
+        "archive_knowledge",
     )
     for name, tool in fake.items():
         real = production[name]
@@ -106,6 +113,32 @@ async def test_fake_capabilities_record_calls(
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
         "send_telegram_message",
         "triage_current_mail",
+    ]
+
+
+async def test_fake_knowledge_is_seeded_and_mutable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = tmp_path / "calls.jsonl"
+    knowledge = tmp_path / "knowledge.json"
+    knowledge.write_text(
+        json.dumps({"records": [SCENARIOS[1].knowledge[0].payload()]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
+    monkeypatch.setenv(fake_knowledge.KNOWLEDGE_ENVIRONMENT, str(knowledge))
+
+    found = fake_knowledge.search_knowledge("Windsor")
+    result = found["results"][0]
+    updated = fake_knowledge.update_knowledge(
+        result["id"], body="Transport is arranged."
+    )
+
+    assert found["count"] == 1
+    assert updated["record"]["body"] == "Transport is arranged."
+    assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
+        "search_knowledge",
+        "update_knowledge",
     ]
 
 

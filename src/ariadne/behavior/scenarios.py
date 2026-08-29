@@ -6,7 +6,7 @@ from email.message import EmailMessage
 
 from ariadne.mail import MailRoute
 
-from .models import BehaviorScenario, ScenarioFile
+from .models import BehaviorScenario, ScenarioFile, ScenarioKnowledge
 
 ROUTES = """\
 version: 1
@@ -82,24 +82,32 @@ instructions and the course guide are available on the event website.
 """,
     ),
     route=_route("race-booking", "events@runthrough.co.uk", "notifications"),
-    files=(
-        ScenarioFile("mail-routes.yaml", ROUTES),
-        ScenarioFile(
-            "People/Divy.md",
-            """\
-# Divy
-
-Lives near Southwark in London. Likes M&S for practical breakfast food.
-""",
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="person:divy",
+            title="Divy",
+            summary="Divy's practical personal preferences and standing context.",
+            kind="person",
+            collection="self",
+            tags=("profile",),
+            body=(
+                "Lives near Southwark in London. Likes M&S for practical "
+                "breakfast food."
+            ),
         ),
-        ScenarioFile(
-            "Goals/Running.md",
-            """\
-# Running
-
-Divy is building consistency and has mentioned wanting to complete a half
-marathon comfortably. No race is currently recorded.
-""",
+        ScenarioKnowledge(
+            id="goal:running",
+            title="Running",
+            summary="Build consistency and complete a half marathon comfortably.",
+            kind="goal",
+            collection="health",
+            tags=("running", "health"),
+            body=(
+                "Divy is building consistency and wants to complete a half marathon "
+                "comfortably. No race is currently recorded."
+            ),
+            aliases=("half marathon goal",),
         ),
     ),
     review_questions=(
@@ -146,22 +154,35 @@ selected itinerary, not a booked-train restriction.
 """,
     ),
     route=_route("train-booking", "tickets@info.thetrainline.com", "travel"),
-    files=(
-        ScenarioFile("mail-routes.yaml", ROUTES),
-        ScenarioFile(
-            "Plans/Windsor Trail Run - 2026-08.md",
-            """\
-# Windsor Trail Run — 30 August 2026
-
-- Half marathon starts at 09:20 at Alexandra Gardens, Windsor.
-- Collect the bib from registration before the race.
-- Transport is not arranged yet.
-- Work out breakfast, race fuel, packing, and an optional recovery plan.
-""",
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="plan:windsor-trail-run-2026-08",
+            title="Windsor Trail Run — 30 August 2026",
+            summary=(
+                "Confirmed Windsor half marathon with preparation and transport "
+                "being organised."
+            ),
+            kind="plan",
+            collection="running",
+            tags=("running", "travel"),
+            starts_at="2026-08-30T09:20:00+01:00",
+            body=(
+                "The half marathon starts at 09:20 at Alexandra Gardens, Windsor. "
+                "Collect the bib before the race. Transport is not arranged yet. "
+                "Breakfast, fuel, packing, and recovery remain open."
+            ),
+            aliases=("Windsor half marathon",),
+            related=(("goal:running", "supports"),),
         ),
-        ScenarioFile(
-            "Goals/Running.md",
-            "# Running\n\nComplete the Windsor half marathon comfortably.\n",
+        ScenarioKnowledge(
+            id="goal:running",
+            title="Running",
+            summary="Complete the Windsor half marathon comfortably.",
+            kind="goal",
+            collection="health",
+            tags=("running", "health"),
+            body="Complete the Windsor half marathon comfortably.",
         ),
     ),
     review_questions=(

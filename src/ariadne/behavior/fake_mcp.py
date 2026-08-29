@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -17,28 +15,14 @@ from ariadne.mcp.runtime import runtime_status as real_runtime_status
 from ariadne.mcp.telegram import prepare_files as real_prepare_files
 from ariadne.mcp.telegram import send_telegram_message as real_send_telegram_message
 
-STATE_ENVIRONMENT = "ARIADNE_BEHAVIOR_CALLS"
-
-
-def _record(tool: str, arguments: dict[str, Any]) -> None:
-    try:
-        path = Path(os.environ[STATE_ENVIRONMENT])
-    except KeyError as error:
-        raise ToolError("The behaviour run has no call recording path.") from error
-    with path.open("a", encoding="utf-8") as stream:
-        stream.write(
-            json.dumps(
-                {"tool": tool, "arguments": arguments},
-                ensure_ascii=False,
-                sort_keys=True,
-            )
-            + "\n"
-        )
+from .fake_knowledge import register_tools as register_knowledge_tools
+from .recording import STATE_ENVIRONMENT as STATE_ENVIRONMENT
+from .recording import record_call
 
 
 @wraps(real_runtime_status)
 def runtime_status() -> dict[str, Any]:
-    _record("runtime_status", {})
+    record_call("runtime_status", {})
     return {
         "server": {"name": "ariadne-behaviour", "version": "0.1.0"},
         "scenario": True,
@@ -47,6 +31,12 @@ def runtime_status() -> dict[str, Any]:
             "send_telegram_message",
             "prepare_files",
             "triage_current_mail",
+            "search_knowledge",
+            "browse_knowledge",
+            "read_knowledge",
+            "create_knowledge",
+            "update_knowledge",
+            "archive_knowledge",
         ],
     }
 
@@ -55,13 +45,13 @@ def runtime_status() -> dict[str, Any]:
 async def send_telegram_message(text: str) -> list[int]:
     if not text.strip():
         raise ToolError("A message needs something to say.")
-    _record("send_telegram_message", {"text": text})
+    record_call("send_telegram_message", {"text": text})
     return [1001]
 
 
 @wraps(real_prepare_files)
 async def prepare_files(paths: list[str]) -> dict[str, Any]:
-    _record("prepare_files", {"paths": paths})
+    record_call("prepare_files", {"paths": paths})
     return {
         "approval_id": "scenario-approval",
         "expires_in_seconds": 900,
@@ -77,7 +67,7 @@ def triage_current_mail(
     suggested_action: SuggestedAction,
     draft_reply: str | None = None,
 ) -> dict[str, str]:
-    _record(
+    record_call(
         "triage_current_mail",
         {
             "classification": classification,
@@ -111,6 +101,7 @@ def create_server() -> FastMCP:
     server.tool(send_telegram_message, annotations=harmless)
     server.tool(prepare_files, annotations=harmless)
     server.tool(triage_current_mail, annotations=harmless)
+    register_knowledge_tools(server, harmless)
     return server
 
 
