@@ -114,10 +114,12 @@ def read_recent_telegram_messages(
     chronological order. Sources say what woke Iris before she sent a message:
     `telegram`, `mail`, or `wakeup`.
 
-    Use this when recent conversation could change an Ariadne-initiated action.
-    Missing human messages mean only that no reply was observed here; they do
-    not establish whether a message was read, ignored, or understood. Older
-    conversation may predate the available history.
+    A scheduled wake-up activation supplies exact `since` and `before` values
+    for its reconciliation window. Use those values unchanged before deciding
+    or acting; do not derive a narrower window from the due time. Missing human
+    messages mean only that no reply was observed here; they do not establish
+    whether a message was read, ignored, or understood. Older conversation may
+    predate the available history.
     """
     try:
         chat_id = int(os.environ["TELEGRAM_ALLOWED_USER_ID"])

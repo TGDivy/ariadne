@@ -33,6 +33,8 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         "resolved-before-wakeup",
         "conflicting-needs",
         "known-person-news",
+        "tentative-ambition",
+        "new-person-day",
     ]
     assert len({scenario.identifier for scenario in SCENARIOS}) == len(SCENARIOS)
 
@@ -62,6 +64,8 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert len(SCENARIOS[3].telegram) == 1
     assert SCENARIOS[4].telegram_prompt is not None
     assert SCENARIOS[5].telegram_prompt is not None
+    assert SCENARIOS[6].telegram_prompt is not None
+    assert SCENARIOS[7].telegram_prompt is not None
 
 
 def test_scenario_knowledge_is_also_valid_generated_orientation(

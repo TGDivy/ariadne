@@ -263,11 +263,13 @@ def test_profile_resolution_applies_live_knowledge_orientation_and_root(
         knowledge_root=knowledge_repository,
     )
 
+    assert enriched.base_instruction_sources[-1] == "ariadne.prompts/knowledge.md"
     assert enriched.developer_instruction_sources[-1] == (
         "generated/knowledge-orientation"
     )
     assert "booking/\n  travel/" in enriched.developer_instructions
     assert "Kinds: booking (1), goal (1), plan (1)" in (enriched.developer_instructions)
+    assert "# Working with private knowledge" in enriched.base_instructions
     assert dict(enriched.mcp_environment_values)[ROOT_ENVIRONMENT] == str(
         knowledge_repository
     )

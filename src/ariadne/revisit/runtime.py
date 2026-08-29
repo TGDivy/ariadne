@@ -93,6 +93,7 @@ class RevisitLoop:
             )
             prompt = build_revisit_turn_prompt(
                 note=revisit.note,
+                created_at=revisit.created_at,
                 due_at=revisit.due_at,
                 awakened_at=awakened_at,
                 attention=revisit.attention.value,

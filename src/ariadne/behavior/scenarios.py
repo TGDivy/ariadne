@@ -328,6 +328,7 @@ RACE_EVENING_REVISIT = BehaviorScenario(
             "Only message Divy if something still matters tonight."
         ),
         attention=Attention.focused,
+        created_at=datetime.fromisoformat("2026-08-29T17:30:00+01:00"),
         scheduled_for=datetime.fromisoformat("2026-08-29T18:00:00+01:00"),
         awakened_at=datetime.fromisoformat("2026-08-29T18:00:12+01:00"),
     ),
@@ -406,6 +407,7 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
             "him if the work is already handled."
         ),
         attention=Attention.focused,
+        created_at=datetime.fromisoformat("2026-08-29T17:30:00+01:00"),
         scheduled_for=datetime.fromisoformat("2026-08-29T18:00:00+01:00"),
         awakened_at=datetime.fromisoformat("2026-08-29T18:00:12+01:00"),
     ),
@@ -530,6 +532,85 @@ KNOWN_PERSON_NEWS = BehaviorScenario(
     ),
 )
 
+TENTATIVE_AMBITION = BehaviorScenario(
+    identifier="tentative-ambition",
+    title="A possible ambition is remembered without becoming a goal",
+    description=(
+        "Divy voices a possible future ambition while explicitly saying he has "
+        "not decided whether to commit to it."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary="Divy's own stable personal context and developing direction.",
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body=(
+                "Divy is training for a half marathon. No full-marathon goal has "
+                "been established. His tentative ambitions belong under wishes "
+                "and dreams until he explicitly makes one an active goal."
+            ),
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris read Divy's profile before interpreting the ambition?",
+        "Did she preserve the possible marathon under Divy's wishes or current "
+        "context rather than create an active goal?",
+        "Did she ask whether Divy wants to make it a real goal?",
+        "Was the response curious and natural rather than administrative?",
+    ),
+    telegram_prompt=(
+        "maybe I want to run a full marathon next year? not sure if that's a real "
+        "goal yet though"
+    ),
+)
+
+NEW_PERSON_DAY = BehaviorScenario(
+    identifier="new-person-day",
+    title="A new person and Divy's lived experience go to different records",
+    description=(
+        "Divy recounts an enjoyable part of his day while also introducing a new "
+        "friend and several facts that belong in her person record."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="people:divy-bramhecha",
+            title="Divy Bramhecha",
+            summary="Divy's own stable personal context.",
+            kind="people",
+            collection="self",
+            tags=("self", "profile"),
+            aliases=("Divy", "me", "myself"),
+            body="Divy values warm friendships and enjoys getting to know people.",
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did Iris search for Maya before creating a new person?",
+        "Did she create a person record containing Maya's relationship to Divy, "
+        "background, and interests?",
+        "Did the journal retain Divy's coffee, feelings, and experience without "
+        "becoming the canonical store for facts about Maya?",
+        "Did the response engage with the lovely human moment rather than narrate "
+        "record keeping?",
+    ),
+    telegram_prompt=(
+        "Had such a lovely coffee with Maya today. She's a new friend from my "
+        "running club, grew up in Leeds and is obsessed with ceramics. I felt so "
+        "comfortable around her, which was really nice."
+    ),
+)
+
 SCENARIOS = (
     RACE_CONFIRMATION,
     TRAIN_CONFIRMATION,
@@ -537,6 +618,8 @@ SCENARIOS = (
     RESOLVED_BEFORE_WAKEUP,
     CONFLICTING_NEEDS,
     KNOWN_PERSON_NEWS,
+    TENTATIVE_AMBITION,
+    NEW_PERSON_DAY,
 )
 _BY_IDENTIFIER = {scenario.identifier: scenario for scenario in SCENARIOS}
 

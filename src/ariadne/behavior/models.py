@@ -112,6 +112,7 @@ class ScenarioRevisit:
 
     note: str
     attention: Attention
+    created_at: datetime
     scheduled_for: datetime
     awakened_at: datetime
 
@@ -187,6 +188,7 @@ class BehaviorScenario:
             scheduled = self.revisit
             return build_revisit_turn_prompt(
                 note=scheduled.note,
+                created_at=scheduled.created_at,
                 due_at=scheduled.scheduled_for,
                 awakened_at=scheduled.awakened_at,
                 attention=scheduled.attention.value,

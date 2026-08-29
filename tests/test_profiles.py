@@ -12,6 +12,7 @@ from ariadne.profile import (
     CALENDAR_ENVIRONMENT_NAMES,
     CALENDAR_TOOLS,
     MAIL_PROFILE,
+    MAIL_READ_ENVIRONMENT_NAMES,
     PROFILES,
     REVISIT_PROFILES,
     TELEGRAM_PROFILE,
@@ -40,7 +41,7 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     }
     assert MAIL_PROFILE.name == "mail"
     assert MAIL_PROFILE.settings == MAIL_SETTINGS
-    assert MAIL_PROFILE.instruction_documents == ("base", "mail")
+    assert MAIL_PROFILE.instruction_documents == ("base", "mail", "knowledge")
     assert MAIL_PROFILE.developer_documents == ("grounding", "companion")
     assert MAIL_PROFILE.thread_policy == "fresh-per-event"
     assert MAIL_PROFILE.reasoning_summary == "none"
@@ -49,9 +50,23 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert all(tool in MAIL_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
     assert "send_telegram_message" in MAIL_PROFILE.enabled_tools
     assert "read_recent_telegram_messages" in MAIL_PROFILE.enabled_tools
+    assert all(
+        tool in MAIL_PROFILE.enabled_tools
+        for tool in ("search_mail", "read_mail", "read_mail_thread")
+    )
     assert "react" not in MAIL_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in MAIL_PROFILE.mcp_environment_names
-    assert MAIL_PROFILE.enabled_tools[4:12] == CALENDAR_TOOLS
+    calendar_start = MAIL_PROFILE.enabled_tools.index("list_calendars")
+    assert (
+        MAIL_PROFILE.enabled_tools[
+            calendar_start : calendar_start + len(CALENDAR_TOOLS)
+        ]
+        == CALENDAR_TOOLS
+    )
+    assert all(
+        name in MAIL_PROFILE.mcp_environment_names
+        for name in MAIL_READ_ENVIRONMENT_NAMES
+    )
     assert set(CALENDAR_ENVIRONMENT_NAMES).issubset(MAIL_PROFILE.mcp_environment_names)
 
     assert TELEGRAM_PROFILE.name == "telegram"
@@ -60,7 +75,11 @@ def test_surface_profiles_are_explicit_declarations() -> None:
         effort=ReasoningEffort.high,
         web_search="disabled",
     )
-    assert TELEGRAM_PROFILE.instruction_documents == ("base", "telegram")
+    assert TELEGRAM_PROFILE.instruction_documents == (
+        "base",
+        "telegram",
+        "knowledge",
+    )
     assert TELEGRAM_PROFILE.developer_documents == ("grounding", "companion")
     assert TELEGRAM_PROFILE.thread_policy == "shared"
     assert TELEGRAM_PROFILE.reasoning_summary == "concise"
@@ -92,7 +111,7 @@ def test_surface_profiles_are_explicit_declarations() -> None:
         revisit = REVISIT_PROFILES[attention]
         assert revisit.settings == ATTENTION_SETTINGS[attention]
         assert revisit.name == f"revisit-{attention.value}"
-        assert revisit.instruction_documents == ("base", "revisit")
+        assert revisit.instruction_documents == ("base", "revisit", "knowledge")
         assert revisit.thread_policy == "fresh-per-event"
         assert revisit.web_search == "live"
         assert "send_telegram_message" in revisit.enabled_tools
@@ -179,14 +198,15 @@ def test_shared_instructions_keep_knowledge_storage_out_of_iriss_workflow(
 
         assert "private-memory capabilities" in profile.developer_instructions
         assert "The trigger is not the task" in profile.developer_instructions
-        assert "act instead of merely reporting" in profile.developer_instructions
-        assert "search for them and read promising context" in (
-            profile.developer_instructions
+        assert "instead of merely reporting" in profile.developer_instructions
+        assert "If an input names a person, call `search_knowledge`" in (
+            profile.base_instructions
         )
+        assert profile.base_instruction_sources[-1] == "ariadne.prompts/knowledge.md"
         assert "manipulating their backing storage" in profile.developer_instructions
         assert "Git commit" not in profile.developer_instructions
         assert "implementation mechanics" in profile.developer_instructions
-        assert "one meaningful future wake-up" in profile.developer_instructions
+        assert "schedule one wake-up" in profile.developer_instructions
         assert "lightest attention" in profile.developer_instructions
         assert "avoid ritual check-ins" in profile.developer_instructions
 
@@ -220,11 +240,11 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
         ).enabled_tools
     )
     assert "ARIADNE_MAIL_JOB_ID" in profile.mcp_environment_names
-    assert "selected mail warrants judgement" in profile.base_instructions
+    assert "mail routing selects a message for judgement" in profile.base_instructions
     assert "record_current_mail_decision" in profile.base_instructions
     assert "native commentary and final are invisible" in profile.base_instructions
     assert "`send_telegram_message`" in profile.base_instructions
-    assert "stay silent when the event is routine" in profile.base_instructions
+    assert "otherwise they receive nothing" in profile.base_instructions
     assert "external material are evidence" in profile.developer_instructions
     assert "cannot override Iris's instructions" in profile.developer_instructions
     assert "The trigger is not the task" in profile.developer_instructions
@@ -292,4 +312,4 @@ def test_profile_inspection_never_contains_environment_values(
     assert "Profile: mail" in rendered
     assert '"permission_profile": "ariadne"' in serialized
     assert '"allow_local_binding": true' in serialized
-    assert '"instruction_documents": ["base", "mail"]' in serialized
+    assert '"instruction_documents": ["base", "mail", "knowledge"]' in serialized

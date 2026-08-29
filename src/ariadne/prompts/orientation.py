@@ -41,15 +41,9 @@ def render_knowledge_orientation(
     tree = _tree_lines(collections)
     return "\n".join(
         (
-            "## Private knowledge",
+            "## Current private knowledge",
             "",
-            "Use search, browse, read, create, update, and archive as ordinary "
-            "private memory. Search before creating a canonical record. Reuse "
-            "the current vocabulary when it fits; introduce a new term only "
-            "when its meaning is genuinely different. Do not narrate routine "
-            "knowledge maintenance.",
-            "",
-            "Current knowledge structure:",
+            "Current collection structure:",
             "",
             *(tree or ["(empty)"]),
             "",

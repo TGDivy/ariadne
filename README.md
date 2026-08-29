@@ -379,11 +379,12 @@ Every model-facing prompt source is collected under `src/ariadne/prompts`:
 
 - `base.md` replaces Codex's built-in coding-agent base instructions.
 - `telegram.md`, `mail.md`, and `revisit.md` add only surface-specific delivery
-  and trigger behavior.
+  and trigger behavior; `knowledge.md` defines mandatory retrieval and durable
+  update situations shared by every surface.
 - `grounding.md` distinguishes direct messages, Ariadne activations, and
   external evidence.
-- `companion.md` is the shared developer layer for initiative, memory,
-  follow-through, communication, and future wake-ups.
+- `companion.md` is the shared developer layer for initiative, follow-through,
+  background interruption, communication, and future wake-ups.
 - `activations.py` builds typed user-level inputs for Telegram replies, mail,
   and scheduled wake-ups. `assembly.py` composes instruction layers and
   generated knowledge orientation. `inspection.py` renders the exact result.

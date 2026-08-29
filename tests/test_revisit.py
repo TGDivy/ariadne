@@ -284,7 +284,9 @@ async def test_runtime_wakes_once_and_discards_native_output(tmp_path: Path) -> 
     assert "you asked me to schedule" in prompt
     assert "Attention you selected: focused" in prompt
     assert scheduled.note in prompt
-    assert "deserves Divy's attention" in prompt
+    assert "background-interruption conditions for Divy" in prompt
+    assert f"since: {scheduled.created_at.astimezone(UTC).isoformat()}" in prompt
+    assert "before: 1970-01-01T00:50:00+00:00" in prompt
     assert "<earlier_iris_note>" in prompt
 
 
@@ -340,11 +342,14 @@ def test_activation_prompt_uses_the_configured_human_name(tmp_path: Path) -> Non
 
     prompt = build_revisit_turn_prompt(
         note=revisit.note,
+        created_at=revisit.created_at,
         due_at=revisit.due_at,
         awakened_at=instant(3_000),
         attention=revisit.attention.value,
         human="Example User",
     )
 
-    assert "deserves Example User's attention" in prompt
+    assert "background-interruption conditions for Example User" in prompt
     assert "Divy" not in prompt
+    assert f"since: {revisit.created_at.astimezone(UTC).isoformat()}" in prompt
+    assert "before: 1970-01-01T00:50:00+00:00" in prompt

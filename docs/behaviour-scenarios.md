@@ -85,6 +85,10 @@ two ordinary conversational moments:
   the need for rest into one permanent rule;
 - `known-person-news`: retrieve Lily's context, share the human moment, and
   update durable knowledge without narrating it.
+- `tentative-ambition`: retain a possible ambition under Divy's wishes without
+  silently promoting it into an active goal;
+- `new-person-day`: create a useful new person while keeping facts about her in
+  the person record and Divy's lived experience in the journal.
 
 These first runs should make current capability gaps visible. The scenario uses
 the same six semantic knowledge operations and generated orientation as the

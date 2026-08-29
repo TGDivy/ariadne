@@ -98,19 +98,27 @@ def build_mail_turn_prompt(
 def build_revisit_turn_prompt(
     *,
     note: str,
+    created_at: datetime,
     due_at: datetime,
     awakened_at: datetime,
     attention: str,
     human: str,
 ) -> str:
     """Build Ariadne's user-level activation for one due future revisit."""
+    history_since = created_at.astimezone(UTC).isoformat()
+    history_before = awakened_at.astimezone(UTC).isoformat()
     return (
         "Ariadne speaking. I woke you because a one-off wake-up you asked me to "
-        "schedule is now due. Your earlier note follows separately; reassess it "
-        "against current context rather than assuming it is still correct. Decide "
-        f"whether anything now deserves {human}'s attention.\n\n"
+        "schedule is now due. Your earlier note follows separately; complete the "
+        "required current-context checks rather than assuming it is still correct, "
+        f"then apply the background-interruption conditions for {human}.\n\n"
+        "Telegram reconciliation window (use these exact values with "
+        "`read_recent_telegram_messages`):\n"
+        f"- since: {history_since}\n"
+        f"- before: {history_before}\n\n"
+        f"Wake-up created at: {created_at.isoformat()}\n"
         f"Scheduled for: {due_at.isoformat()}\n"
-        f"Awakened at: {awakened_at.astimezone(UTC).isoformat()}\n"
+        f"Awakened at: {history_before}\n"
         f"Attention you selected: {attention}\n\n"
         "<earlier_iris_note>\n"
         f"{note}\n"

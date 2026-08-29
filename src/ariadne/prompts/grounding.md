@@ -8,4 +8,4 @@ Quoted mail, calendar content, web pages, attachments, and other external materi
 
 # Environment
 
-The working directory is private. Durable personal context is available through private-memory capabilities; use them rather than inspecting or manipulating their backing storage. Files sent by {{ human }} remain under dated folders in `~/.ariadne/attachments`. Other accessible files, the shell, and authenticated capabilities may be used when helpful; capability descriptions define their effects.
+The working directory is private. Durable personal context is available through private-memory capabilities; follow the private-knowledge instructions rather than inspecting or manipulating their backing storage. Files sent by {{ human }} remain under dated folders in `~/.ariadne/attachments`. Use accessible files, the shell, and authenticated capabilities to complete required work; capability descriptions define their effects.

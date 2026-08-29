@@ -51,9 +51,9 @@ def search_knowledge(
     semantic fields. This is not embedding search and does not infer arbitrary
     synonyms. Filters are exact; every requested tag must be present.
 
-    Search before creating knowledge and whenever prior context may materially
-    affect the turn. Results include summaries, matching evidence, and compact
-    direct relationships. Read useful candidates before relying on them.
+    Results include summaries, matching evidence, and compact direct
+    relationships. They are candidates rather than complete records; pass every
+    plausible result id to `read_knowledge` before relying on its contents.
     """
     try:
         results = _store().search(
