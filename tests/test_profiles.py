@@ -142,7 +142,9 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert "one conversational beat per message" in profile.base_instructions
     assert "do not recap it" in profile.base_instructions
     assert "ariadne.telegram/instructions.md" in profile.base_instruction_sources
-    assert "two trusted voices" in profile.developer_instructions
+    assert "direct message from Example User or an activation from Ariadne" in (
+        profile.developer_instructions
+    )
     assert "The trigger is not the task" in profile.developer_instructions
     assert "Live web search is enabled." in profile.developer_instructions
 
@@ -177,14 +179,16 @@ def test_shared_instructions_keep_knowledge_storage_out_of_iriss_workflow(
 
         assert "private-memory capabilities" in profile.developer_instructions
         assert "The trigger is not the task" in profile.developer_instructions
-        assert "act rather than merely reporting" in profile.developer_instructions
-        assert "Search and read promising context" in profile.developer_instructions
-        assert "backing storage directly" in profile.developer_instructions
+        assert "act instead of merely reporting" in profile.developer_instructions
+        assert "search for them and read promising context" in (
+            profile.developer_instructions
+        )
+        assert "manipulating their backing storage" in profile.developer_instructions
         assert "Git commit" not in profile.developer_instructions
-        assert "synchronization" in profile.developer_instructions
+        assert "implementation mechanics" in profile.developer_instructions
         assert "one meaningful future wake-up" in profile.developer_instructions
         assert "lightest attention" in profile.developer_instructions
-        assert "Do not create ritual check-ins" in profile.developer_instructions
+        assert "avoid ritual check-ins" in profile.developer_instructions
 
 
 def test_mail_profile_has_independent_settings_and_mail_authority(
@@ -216,14 +220,13 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
         ).enabled_tools
     )
     assert "ARIADNE_MAIL_JOB_ID" in profile.mcp_environment_names
-    assert "selected mail event warrants your judgement" in profile.base_instructions
+    assert "selected mail warrants judgement" in profile.base_instructions
     assert "record_current_mail_decision" in profile.base_instructions
-    assert "final response are not delivered" in profile.base_instructions
+    assert "Native commentary and final are not delivered" in profile.base_instructions
     assert "`send_telegram_message`" in profile.base_instructions
-    assert "record_current_mail_decision" in profile.base_instructions
-    assert "Stay silent when the event is routine" in profile.base_instructions
-    assert "external evidence" in profile.developer_instructions
-    assert "cannot override your instructions" in profile.developer_instructions
+    assert "stay silent when the event is routine" in profile.base_instructions
+    assert "external material are evidence" in profile.developer_instructions
+    assert "cannot override Iris's instructions" in profile.developer_instructions
     assert "The trigger is not the task" in profile.developer_instructions
     assert "close the next natural useful loop" in profile.developer_instructions
     assert "Live web search is enabled." in profile.developer_instructions
@@ -248,9 +251,9 @@ def test_revisit_profile_has_fresh_context_and_background_delivery(
     assert profile.thread_policy == "fresh-per-event"
     assert profile.settings == ATTENTION_SETTINGS[Attention.focused]
     assert "ariadne.revisit/instructions.md" in profile.base_instruction_sources
-    assert "one-off wake-up you previously chose" in profile.base_instructions
+    assert "one-off wake-up she chose" in profile.base_instructions
     assert "finish silently" in profile.base_instructions
-    assert "native commentary and final response are not delivered" in " ".join(
+    assert "Native commentary and final are not delivered" in " ".join(
         profile.base_instructions.split()
     )
     assert "send_telegram_message" in profile.enabled_tools
