@@ -200,6 +200,16 @@ callback identifiers. The state database defaults to
 an absolute path, and is created mode `0600`. On restart, orphaned cards are
 cancelled and disabled.
 
+The same private SQLite database stores permanent messages observed in the
+configured chat. Authenticated human messages, settled native commentary/final
+bubbles, successful mail or wake-up notifications, and genuine question cards
+are retained across restarts. Temporary activity/reasoning previews and other
+runtime UI are excluded. `read_recent_telegram_messages` requires a
+timezone-aware lower bound, optionally accepts an exclusive upper bound,
+speaker/source filters and a literal case-insensitive substring, and returns
+the newest bounded matches in chronological order. The store is local history
+from deployment onward, not a Telegram archive backfill.
+
 ## Delivery contract
 
 Rich Messages are required for live responses, proactive messages, and question
@@ -251,10 +261,14 @@ Run these cases in order:
 10. Trigger a mail event worth notifying about. It must use
     `send_telegram_message`; the tool must not be available in an ordinary
     Telegram-triggered turn.
+11. Schedule a wake-up about an open task, then resolve it in Telegram before
+    the wake-up runs. The fresh turn should be able to read the newer message
+    and avoid a redundant notification. Restart Ariadne between the message and
+    wake-up to verify persistence.
 
 Automated coverage for these state transitions lives in `tests/test_bot.py`,
-`tests/test_telegram_rich.py`, `tests/test_telegram_questions.py`, and
-`tests/test_mcp_server.py`.
+`tests/test_telegram_rich.py`, `tests/test_telegram_questions.py`,
+`tests/test_telegram_history.py`, and `tests/test_mcp_server.py`.
 
 ## References
 

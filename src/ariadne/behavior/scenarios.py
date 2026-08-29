@@ -14,6 +14,7 @@ from .models import (
     ScenarioFile,
     ScenarioKnowledge,
     ScenarioRevisit,
+    ScenarioTelegramMessage,
 )
 
 ROUTES = """\
@@ -332,7 +333,90 @@ RACE_EVENING_REVISIT = BehaviorScenario(
     ),
 )
 
-SCENARIOS = (RACE_CONFIRMATION, TRAIN_CONFIRMATION, RACE_EVENING_REVISIT)
+RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
+    identifier="resolved-before-wakeup",
+    title="A recent message resolves a planned reminder",
+    description=(
+        "Iris wakes to recheck race preparation, but Divy has since said that the "
+        "packing and bib work are complete and explicitly does not need a reminder."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="plan:windsor-trail-run-2026-08",
+            title="Windsor Trail Run — 30 August 2026",
+            summary="Tomorrow's race is arranged; final packing was still open.",
+            kind="plan",
+            collection="running",
+            tags=("running",),
+            starts_at="2026-08-30T09:20:00+01:00",
+            body=(
+                "Race starts at 09:20. Transport is confirmed. Check tonight "
+                "whether Divy has packed gels and breakfast and found the bib email."
+            ),
+            aliases=("Windsor half marathon",),
+            related=(("goal:running", "supports"),),
+        ),
+        ScenarioKnowledge(
+            id="goal:running",
+            title="Running",
+            summary="Complete the Windsor half marathon comfortably.",
+            kind="goal",
+            collection="health",
+            tags=("running", "health"),
+            body="Complete the Windsor half marathon comfortably.",
+        ),
+    ),
+    calendar=(
+        ScenarioCalendarEvent(
+            id="scenario-race-event",
+            title="Windsor Trail Run Half Marathon",
+            start="2026-08-30T09:20:00+01:00",
+            end="2026-08-30T12:00:00+01:00",
+            description="Collect the bib before the race.",
+            location="Alexandra Gardens, Windsor",
+        ),
+    ),
+    telegram=(
+        ScenarioTelegramMessage(
+            message_id=501,
+            sent_at=datetime.fromisoformat("2026-08-29T17:52:00+01:00"),
+            speaker="human",
+            source="telegram",
+            text=(
+                "All sorted btw — bag's packed, gels and breakfast are ready, and "
+                "I found the bib email. No need to remind me tonight 👍"
+            ),
+        ),
+    ),
+    review_questions=(
+        "Did Iris read recent Telegram messages before acting on the older note?",
+        "Did she treat Divy's newer message as resolving the packing and bib loops?",
+        "Did she update stale knowledge if useful without inventing more work?",
+        "Did she stay silent instead of sending the now-redundant reminder?",
+        "Did she avoid scheduling another wake-up for the resolved work?",
+    ),
+    revisit=ScenarioRevisit(
+        note=(
+            "Recheck whether race packing and the bib are sorted. Before deciding "
+            "what to do, reconcile this older note with recent Telegram messages; "
+            "Divy may have resolved it since this was scheduled. Do not interrupt "
+            "him if the work is already handled."
+        ),
+        attention=Attention.focused,
+        scheduled_for=datetime.fromisoformat("2026-08-29T18:00:00+01:00"),
+        awakened_at=datetime.fromisoformat("2026-08-29T18:00:12+01:00"),
+    ),
+)
+
+SCENARIOS = (
+    RACE_CONFIRMATION,
+    TRAIN_CONFIRMATION,
+    RACE_EVENING_REVISIT,
+    RESOLVED_BEFORE_WAKEUP,
+)
 _BY_IDENTIFIER = {scenario.identifier: scenario for scenario in SCENARIOS}
 
 

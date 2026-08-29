@@ -10,6 +10,12 @@ from ariadne.mail import MailRoute, build_mail_turn_prompt, parse_metadata
 from ariadne.mail.models import MailJob
 from ariadne.revisit import Attention, Revisit
 from ariadne.revisit.runtime import build_revisit_turn_prompt
+from ariadne.telegram.history import (
+    TelegramContentType,
+    TelegramHistoryMessage,
+    TelegramMessageSource,
+    TelegramSpeaker,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +114,31 @@ class ScenarioRevisit:
 
 
 @dataclass(frozen=True, slots=True)
+class ScenarioTelegramMessage:
+    """One permanent Telegram message visible to a behaviour scenario."""
+
+    message_id: int
+    sent_at: datetime
+    speaker: TelegramSpeaker
+    source: TelegramMessageSource
+    text: str
+    content_type: TelegramContentType = "text"
+    reply_to_message_id: int | None = None
+
+    def stored(self, chat_id: int) -> TelegramHistoryMessage:
+        return TelegramHistoryMessage(
+            chat_id=chat_id,
+            message_id=self.message_id,
+            sent_at=self.sent_at,
+            speaker=self.speaker,
+            source=self.source,
+            content_type=self.content_type,
+            text=self.text,
+            reply_to_message_id=self.reply_to_message_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class BehaviorScenario:
     """A production-shaped event with explicit points for human review."""
 
@@ -120,6 +151,7 @@ class BehaviorScenario:
     knowledge: tuple[ScenarioKnowledge, ...]
     calendar: tuple[ScenarioCalendarEvent, ...]
     review_questions: tuple[str, ...]
+    telegram: tuple[ScenarioTelegramMessage, ...] = ()
     revisit: ScenarioRevisit | None = None
 
     def __post_init__(self) -> None:

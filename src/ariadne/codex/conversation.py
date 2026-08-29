@@ -97,6 +97,7 @@ REVISIT_ACTIVITY = {
     "cancel_wakeup": "Cancelling a scheduled wake-up…",
 }
 LOCAL_ACTIVITY = {
+    "read_recent_telegram_messages": "Reading recent messages…",
     "request_telegram_file_delivery": "Preparing files…",
     "inspect_ariadne_runtime": "Checking Ariadne…",
     "record_current_mail_decision": "Triaging mail…",

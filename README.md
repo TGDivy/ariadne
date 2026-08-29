@@ -121,6 +121,14 @@ Using Telegram's Reply action includes the immediate replied-to message's full
 text or caption as labelled context. Replies to old media include its caption,
 but do not re-download the old file or image.
 
+Permanent messages visible in the private chat are retained in the existing
+Telegram state database. Fresh mail and wake-up turns can deliberately use
+`read_recent_telegram_messages` to reconcile newer conversation before acting.
+It supports bounded time, speaker, source, and literal text filters. Temporary
+thinking/activity edits, hidden reasoning, settings UI, and tool activity are
+never part of this history; mail, Calendar, knowledge, and wake-up state remain
+authoritative in their own stores.
+
 The live-chat state diagrams, supported rich content, delivery contract, and
 manual test cases are in [`docs/telegram-live-chat.md`](docs/telegram-live-chat.md).
 
@@ -393,10 +401,11 @@ contains, what was kept, and what was dropped.
 ## Local capabilities
 
 Ariadne exposes clearly named local MCP capabilities to Codex: semantic private
-knowledge, `inspect_ariadne_runtime`, `ask_telegram_question`, and
-`request_telegram_file_delivery`, plus mail, Calendar, and future wake-up
-operations. Background profiles such as mail can also send proactive Telegram
-notifications; ordinary Telegram turns speak through native Codex phases.
+knowledge, `inspect_ariadne_runtime`, `read_recent_telegram_messages`,
+`ask_telegram_question`, and `request_telegram_file_delivery`, plus mail,
+Calendar, and future wake-up operations. Background profiles such as mail can
+also send proactive Telegram notifications; ordinary Telegram turns speak
+through native Codex phases.
 Requested files are not sent immediately: Ariadne sends a short-lived Telegram
 approval card that lists the exact files and has Approve and Reject buttons.
 

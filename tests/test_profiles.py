@@ -48,9 +48,10 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert MAIL_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
     assert all(tool in MAIL_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
     assert "send_telegram_message" in MAIL_PROFILE.enabled_tools
+    assert "read_recent_telegram_messages" in MAIL_PROFILE.enabled_tools
     assert "react" not in MAIL_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in MAIL_PROFILE.mcp_environment_names
-    assert MAIL_PROFILE.enabled_tools[4:12] == CALENDAR_TOOLS
+    assert MAIL_PROFILE.enabled_tools[5:13] == CALENDAR_TOOLS
     assert set(CALENDAR_ENVIRONMENT_NAMES).issubset(MAIL_PROFILE.mcp_environment_names)
 
     assert TELEGRAM_PROFILE.name == "telegram"
@@ -65,15 +66,16 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert TELEGRAM_PROFILE.reasoning_summary == "concise"
     assert "record_current_mail_decision" not in TELEGRAM_PROFILE.enabled_tools
     assert "send_telegram_message" not in TELEGRAM_PROFILE.enabled_tools
+    assert "read_recent_telegram_messages" in TELEGRAM_PROFILE.enabled_tools
     assert "react" not in TELEGRAM_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in TELEGRAM_PROFILE.mcp_environment_names
     assert "ARIADNE_TELEGRAM_STATE" in TELEGRAM_PROFILE.mcp_environment_names
-    assert TELEGRAM_PROFILE.enabled_tools[3:6] == (
+    assert TELEGRAM_PROFILE.enabled_tools[4:7] == (
         "search_mail",
         "read_mail",
         "read_mail_thread",
     )
-    assert TELEGRAM_PROFILE.enabled_tools[6:14] == (
+    assert TELEGRAM_PROFILE.enabled_tools[7:15] == (
         "list_calendars",
         "search_calendar_events",
         "read_calendar_event",
@@ -94,6 +96,7 @@ def test_surface_profiles_are_explicit_declarations() -> None:
         assert revisit.thread_policy == "fresh-per-event"
         assert revisit.web_search == "live"
         assert "send_telegram_message" in revisit.enabled_tools
+        assert "read_recent_telegram_messages" in revisit.enabled_tools
         assert "record_current_mail_decision" not in revisit.enabled_tools
         assert all(tool in revisit.enabled_tools for tool in REVISIT_TOOLS)
 
@@ -120,6 +123,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert profile.allow_local_binding is True
     assert profile.enabled_tools == (
         "inspect_ariadne_runtime",
+        "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
         "search_mail",
@@ -269,6 +273,7 @@ def test_revisit_profile_has_fresh_context_and_background_delivery(
         profile.base_instructions.split()
     )
     assert "send_telegram_message" in profile.enabled_tools
+    assert "read_recent_telegram_messages" in profile.enabled_tools
     assert "record_current_mail_decision" not in profile.enabled_tools
     assert dict(profile.mcp_environment_values)["ARIADNE_REVISIT_STATE"] == str(
         tmp_path / "revisits.sqlite3"

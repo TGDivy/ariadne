@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock
@@ -36,6 +36,7 @@ from ariadne.telegram.bot import (
     turn_text,
 )
 from ariadne.telegram.bot import AriadneBot as TelegramBot
+from ariadne.telegram.history import TelegramMessageStore
 from ariadne.telegram.live import FAILURE_MESSAGE, _LiveBubble
 from ariadne.telegram.questions import TelegramQuestionStore
 from ariadne.telegram.rich import RICH_MESSAGE_LIMIT, RichBotAPI, RichButton
@@ -290,6 +291,11 @@ def unthrottled_live_edits(monkeypatch) -> None:
     monkeypatch.setattr(telegram_live, "LIVE_EDIT_INTERVAL_SECONDS", 0.0)
 
 
+@pytest.fixture
+def history_store(tmp_path: Path) -> TelegramMessageStore:
+    return TelegramMessageStore(tmp_path / "telegram.sqlite3")
+
+
 @pytest.fixture(autouse=True)
 def isolated_question_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -307,6 +313,7 @@ async def test_unauthorized_message_is_ignored(message: FakeMessage, caplog) -> 
 
     assert conversation.prompts == []
     assert message.replies == []
+    assert bot._history.read(7, since=datetime.min.replace(tzinfo=UTC)).total == 0
     assert "Ignoring message from unauthorized Telegram user id=8" in caplog.text
 
 
@@ -430,12 +437,24 @@ async def test_reasoning_summaries_are_replaced_by_separate_native_messages(
     assert second_edits[-1] == "Correct it before the meeting."
     assert "Choosing the next action" not in second_edits[-1]
 
+    history = bot._history.read(7, since=datetime.min.replace(tzinfo=UTC))
+    assert [(item.speaker, item.text) for item in history.messages] == [
+        ("human", "Audit the board pack"),
+        ("iris", "The stated growth rate does not reconcile."),
+        ("iris", "Correct it before the meeting."),
+    ]
+    assert all("Thinking" not in item.text for item in history.messages)
+    assert all("growth claim" not in item.text for item in history.messages)
+    assert all("next action" not in item.text for item in history.messages)
+
 
 async def test_live_activity_coexists_with_body_and_resolves_in_the_same_message(
-    message: FakeMessage, unthrottled_live_edits: None
+    message: FakeMessage,
+    unthrottled_live_edits: None,
+    history_store: TelegramMessageStore,
 ) -> None:
     rich = FakeRichAPI()
-    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich), history_store)
     await live.start()
 
     await live.show_message("## Finding\n\nThe first result is useful.")
@@ -471,10 +490,12 @@ async def test_live_activity_coexists_with_body_and_resolves_in_the_same_message
 
 
 async def test_live_preview_keeps_partial_advanced_block_behind_status(
-    message: FakeMessage, unthrottled_live_edits: None
+    message: FakeMessage,
+    unthrottled_live_edits: None,
+    history_store: TelegramMessageStore,
 ) -> None:
     rich = FakeRichAPI()
-    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich), history_store)
     await live.start()
 
     await live.show_message(
@@ -488,11 +509,13 @@ async def test_live_preview_keeps_partial_advanced_block_behind_status(
 
 
 async def test_live_edit_throttle_publishes_the_latest_real_state(
-    message: FakeMessage, monkeypatch: pytest.MonkeyPatch
+    message: FakeMessage,
+    monkeypatch: pytest.MonkeyPatch,
+    history_store: TelegramMessageStore,
 ) -> None:
     monkeypatch.setattr(telegram_live, "LIVE_EDIT_INTERVAL_SECONDS", 0.01)
     rich = FakeRichAPI()
-    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich), history_store)
     await live.start()
 
     await live.show_message("A useful partial answer.")
@@ -506,10 +529,12 @@ async def test_live_edit_throttle_publishes_the_latest_real_state(
 
 
 async def test_stopping_drops_an_unsafe_tail_without_raw_markup(
-    message: FakeMessage, unthrottled_live_edits: None
+    message: FakeMessage,
+    unthrottled_live_edits: None,
+    history_store: TelegramMessageStore,
 ) -> None:
     rich = FakeRichAPI()
-    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich), history_store)
     await live.start()
     partial = "Useful result.\n\n<details><summary>Logs</summary>unfinished"
 
@@ -517,12 +542,18 @@ async def test_stopping_drops_an_unsafe_tail_without_raw_markup(
 
     assert rich.edits[-1][0] == f"Useful result.\n\n_{STOPPED_MESSAGE}_"
     assert "<details>" not in rich.edits[-1][0]
+    assert history_store.read(7, since=datetime.min.replace(tzinfo=UTC)).messages == ()
 
 
 async def test_rich_message_rejection_is_not_replaced_with_classic_text(
     message: FakeMessage,
+    history_store: TelegramMessageStore,
 ) -> None:
-    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, RejectingRichAPI()))
+    live = _LiveBubble(
+        cast(Message, message),
+        cast(RichBotAPI, RejectingRichAPI()),
+        history_store,
+    )
 
     with pytest.raises(BadRequest, match="Rich Messages unavailable"):
         await live.start()
@@ -532,9 +563,10 @@ async def test_rich_message_rejection_is_not_replaced_with_classic_text(
 
 async def test_stopping_wins_over_a_racing_rich_completion(
     message: FakeMessage,
+    history_store: TelegramMessageStore,
 ) -> None:
     rich = FakeRichAPI()
-    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich), history_store)
     await live.start()
 
     await live.stopping()
@@ -546,9 +578,10 @@ async def test_stopping_wins_over_a_racing_rich_completion(
 
 async def test_stopping_preserves_rich_partial_output_beyond_one_message(
     message: FakeMessage,
+    history_store: TelegramMessageStore,
 ) -> None:
     rich = FakeRichAPI()
-    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich))
+    live = _LiveBubble(cast(Message, message), cast(RichBotAPI, rich), history_store)
     await live.start()
     partial = "A" * RICH_MESSAGE_LIMIT + "\n\n" + "B" * 100
 
@@ -1082,6 +1115,10 @@ async def test_document_is_kept_after_the_turn_it_started(tmp_path) -> None:
         turn_text(document_message(None, [(attachment, None)]))
     ]
     assert attachment.exists()
+    history = bot._history.read(7, since=datetime.min.replace(tzinfo=UTC))
+    assert history.messages[0].content_type == "document"
+    assert history.messages[0].text == "[Document: notes.txt]"
+    assert str(attachment) not in history.messages[0].text
 
 
 async def test_a_media_group_becomes_one_turn(tmp_path, monkeypatch) -> None:

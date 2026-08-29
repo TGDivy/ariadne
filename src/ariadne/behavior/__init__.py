@@ -6,6 +6,7 @@ from .models import (
     ScenarioFile,
     ScenarioKnowledge,
     ScenarioRevisit,
+    ScenarioTelegramMessage,
 )
 from .scenarios import SCENARIOS, get_scenario
 
@@ -16,5 +17,6 @@ __all__ = [
     "ScenarioFile",
     "ScenarioKnowledge",
     "ScenarioRevisit",
+    "ScenarioTelegramMessage",
     "get_scenario",
 ]

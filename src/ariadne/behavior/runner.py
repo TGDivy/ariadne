@@ -35,6 +35,7 @@ from ariadne.knowledge import KnowledgeMetadata, KnowledgeRelation
 from ariadne.knowledge.documents import render_document
 from ariadne.knowledge.paths import slug
 from ariadne.profile import MAIL_PROFILE, profile_for_attention
+from ariadne.telegram.history import TelegramMessageStore
 
 from .fake_calendar import CALENDAR_ENVIRONMENT
 from .fake_knowledge import KNOWLEDGE_ENVIRONMENT
@@ -207,6 +208,7 @@ def _fake_mcp_overrides(
     calls: Path,
     knowledge: Path,
     calendar: Path,
+    telegram: Path,
 ) -> tuple[str, ...]:
     return (
         f"mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(sys.executable)}",
@@ -223,6 +225,10 @@ def _fake_mcp_overrides(
         + json.dumps(str(knowledge)),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{CALENDAR_ENVIRONMENT}="
         + json.dumps(str(calendar)),
+        f"mcp_servers.{MCP_SERVER_NAME}.env.TELEGRAM_ALLOWED_USER_ID="
+        + json.dumps("7"),
+        f"mcp_servers.{MCP_SERVER_NAME}.env.ARIADNE_TELEGRAM_STATE="
+        + json.dumps(str(telegram)),
     )
 
 
@@ -263,6 +269,7 @@ async def run_scenario(
         calls = root / "capability-calls.jsonl"
         knowledge = root / "knowledge.json"
         calendar = root / "calendar.json"
+        telegram = root / "telegram.sqlite3"
         workspace.mkdir()
         _write_scenario(scenario, workspace)
         knowledge.write_text(
@@ -292,6 +299,9 @@ async def run_scenario(
             ),
             encoding="utf-8",
         )
+        telegram_store = TelegramMessageStore(telegram)
+        for item in scenario.telegram:
+            telegram_store.record(item.stored(chat_id=7))
 
         _run_git("init", "--bare", str(origin), cwd=root)
         _run_git("init", "--initial-branch=main", cwd=workspace)
@@ -326,7 +336,12 @@ async def run_scenario(
             CodexConfig(
                 config_overrides=_sandbox_config_overrides(profile)
                 + _fake_mcp_overrides(
-                    profile.name, profile.enabled_tools, calls, knowledge, calendar
+                    profile.name,
+                    profile.enabled_tools,
+                    calls,
+                    knowledge,
+                    calendar,
+                    telegram,
                 ),
                 cwd=str(workspace),
                 env=_redacted_environment(),

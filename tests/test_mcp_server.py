@@ -1,5 +1,7 @@
 import asyncio
 import json
+import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,8 +24,13 @@ from ariadne.mcp.calendar import (
 from ariadne.mcp.errors import DIAGNOSTIC_PREFIX
 from ariadne.mcp.mail import read_mail, record_current_mail_decision, search_mail
 from ariadne.mcp.runtime import inspect_ariadne_runtime
-from ariadne.mcp.telegram import ask_telegram_question, send_telegram_message
+from ariadne.mcp.telegram import (
+    ask_telegram_question,
+    read_recent_telegram_messages,
+    send_telegram_message,
+)
 from ariadne.telegram import outbound
+from ariadne.telegram.history import TelegramHistoryMessage, TelegramMessageStore
 from ariadne.telegram.questions import TelegramQuestion, TelegramQuestionStore
 
 
@@ -61,9 +68,11 @@ class FakeBot:
 
 
 @pytest.fixture
-def telegram(monkeypatch) -> FakeBot:
+def telegram(monkeypatch, tmp_path: Path) -> FakeBot:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "7")
+    monkeypatch.setenv("ARIADNE_PROFILE", "mail")
+    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(tmp_path / "telegram.sqlite3"))
     bot = FakeBot("token-for-test")
     monkeypatch.setattr(telegram_tools, "Bot", lambda token: bot)
     monkeypatch.setattr(outbound, "Bot", lambda token: bot)
@@ -85,6 +94,7 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
     assert [tool.name for tool in tools] == [
         "inspect_ariadne_runtime",
         "send_telegram_message",
+        "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
         "search_mail",
@@ -357,7 +367,9 @@ def test_inspect_ariadne_runtime_reports_the_current_profiles_capabilities(
     ]
 
 
-async def test_a_message_from_iris_is_sent_as_rich_markdown(telegram: FakeBot) -> None:
+async def test_a_message_from_iris_is_sent_as_rich_markdown(
+    telegram: FakeBot, tmp_path: Path
+) -> None:
     message_ids = await send_telegram_message("The **latest** one is from June.")
 
     assert message_ids == [101]
@@ -370,6 +382,102 @@ async def test_a_message_from_iris_is_sent_as_rich_markdown(telegram: FakeBot) -
             },
         )
     ]
+    history = TelegramMessageStore(tmp_path / "telegram.sqlite3").read(
+        7, since=datetime.min.replace(tzinfo=UTC)
+    )
+    assert [(item.speaker, item.source, item.text) for item in history.messages] == [
+        ("iris", "mail", "The **latest** one is from June.")
+    ]
+
+
+async def test_revisit_delivery_is_identified_as_a_wakeup(
+    telegram: FakeBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARIADNE_PROFILE", "revisit-light")
+
+    await send_telegram_message("Still worth packing your gels.")
+
+    history = TelegramMessageStore(tmp_path / "telegram.sqlite3").read(
+        7, since=datetime.min.replace(tzinfo=UTC)
+    )
+    assert history.messages[0].source == "wakeup"
+
+
+def test_recent_telegram_messages_exposes_bounded_filtered_history(
+    telegram: FakeBot, tmp_path: Path
+) -> None:
+    del telegram
+    state = TelegramMessageStore(tmp_path / "telegram.sqlite3")
+    start = datetime(2026, 8, 29, 16, tzinfo=UTC)
+    state.record(
+        TelegramHistoryMessage(
+            chat_id=7,
+            message_id=1,
+            sent_at=start,
+            speaker="human",
+            source="telegram",
+            content_type="text",
+            text="I have packed everything and sorted the bib",
+        )
+    )
+    state.record(
+        TelegramHistoryMessage(
+            chat_id=7,
+            message_id=2,
+            sent_at=start + timedelta(minutes=1),
+            speaker="iris",
+            source="mail",
+            content_type="text",
+            text="Train booked.",
+            reply_to_message_id=1,
+        )
+    )
+
+    result = read_recent_telegram_messages(
+        start.isoformat(),
+        before=(start + timedelta(hours=1)).isoformat(),
+        speakers=["human"],
+        sources=["telegram"],
+        query="PACKED EVERYTHING",
+        limit=1,
+    )
+
+    assert result == {
+        "messages": [
+            {
+                "message_id": 1,
+                "sent_at": start.isoformat(),
+                "speaker": "human",
+                "source": "telegram",
+                "content_type": "text",
+                "text": "I have packed everything and sorted the bib",
+                "reply_to_message_id": None,
+            }
+        ],
+        "total": 1,
+        "truncated": False,
+        "earliest_available_at": start.isoformat(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("since", "before", "error"),
+    [
+        ("2026-08-29T10:00:00", None, "timezone offset"),
+        ("not-a-time", None, "valid ISO 8601"),
+        (
+            "2026-08-29T11:00:00+00:00",
+            "2026-08-29T10:00:00+00:00",
+            "later than since",
+        ),
+    ],
+)
+def test_recent_telegram_messages_rejects_ambiguous_time_bounds(
+    telegram: FakeBot, since: str, before: str | None, error: str
+) -> None:
+    del telegram
+    with pytest.raises(ToolError, match=error):
+        read_recent_telegram_messages(since, before)
 
 
 async def test_a_message_beyond_the_classic_limit_stays_one_rich_message(
@@ -423,6 +531,29 @@ async def test_missing_rich_endpoint_has_no_classic_transport_fallback(
     assert telegram.sent == []
 
 
+async def test_delivery_history_failure_reports_that_message_was_already_sent(
+    telegram: FakeBot, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FailingHistory:
+        def __init__(self, _path: Path) -> None:
+            pass
+
+        def initialize(self) -> None:
+            pass
+
+        def record(self, _message: TelegramHistoryMessage) -> None:
+            raise sqlite3.OperationalError("disk became read-only")
+
+    monkeypatch.setattr(telegram_tools, "TelegramMessageStore", FailingHistory)
+
+    with pytest.raises(
+        ToolError, match=r"delivered message ID\(s\) 101.*Do not resend"
+    ):
+        await send_telegram_message("Already sent once")
+
+    assert telegram.api_calls[0][0] == "sendRichMessage"
+
+
 async def test_a_typed_answer_resumes_the_waiting_question_tool(
     telegram: FakeBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -448,6 +579,12 @@ async def test_a_typed_answer_resumes_the_waiting_question_tool(
     }
     assert question.message_id == 101
     assert telegram.api_calls[0][0] == "sendRichMessage"
+    history = TelegramMessageStore(state).read(
+        7, since=datetime.min.replace(tzinfo=UTC)
+    )
+    assert [(item.speaker, item.text) for item in history.messages] == [
+        ("iris", "Which environment should I use?")
+    ]
 
 
 async def test_a_button_answer_resumes_the_waiting_question_tool(

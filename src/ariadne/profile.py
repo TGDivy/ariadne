@@ -59,6 +59,7 @@ TELEGRAM_PROFILE = TurnProfile(
     developer_documents=("grounding", "ariadne"),
     enabled_tools=(
         "inspect_ariadne_runtime",
+        "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
         "search_mail",
@@ -98,6 +99,7 @@ MAIL_PROFILE = TurnProfile(
     enabled_tools=(
         "inspect_ariadne_runtime",
         "send_telegram_message",
+        "read_recent_telegram_messages",
         "request_telegram_file_delivery",
         "record_current_mail_decision",
         *CALENDAR_TOOLS,
@@ -115,6 +117,7 @@ MAIL_PROFILE = TurnProfile(
         "ARIADNE_PROFILE",
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
+        "ARIADNE_TELEGRAM_STATE",
         "ARIADNE_MAIL_JOB_ID",
         "ARIADNE_MAIL_STATE",
         *CALENDAR_ENVIRONMENT_NAMES,
@@ -136,6 +139,7 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
         enabled_tools=(
             "inspect_ariadne_runtime",
             "send_telegram_message",
+            "read_recent_telegram_messages",
             "search_mail",
             "read_mail",
             "read_mail_thread",
@@ -154,6 +158,7 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
             "ARIADNE_PROFILE",
             "TELEGRAM_BOT_TOKEN",
             "TELEGRAM_ALLOWED_USER_ID",
+            "ARIADNE_TELEGRAM_STATE",
             *MAIL_READ_ENVIRONMENT_NAMES,
             *CALENDAR_ENVIRONMENT_NAMES,
             REVISIT_STATE_ENVIRONMENT,
