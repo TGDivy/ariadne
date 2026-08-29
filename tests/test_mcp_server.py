@@ -10,21 +10,19 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from telegram.error import BadRequest, EndPointNotFound
 
-from ariadne import mcp_server
 from ariadne.mail import MailState
-from ariadne.mcp_errors import DIAGNOSTIC_PREFIX
-from ariadne.mcp_server import (
-    ask_telegram_question,
+from ariadne.mcp import calendar as calendar_tools
+from ariadne.mcp import mcp
+from ariadne.mcp import telegram as telegram_tools
+from ariadne.mcp.calendar import (
     create_calendar_event,
     delete_calendar_event,
     list_calendars,
-    mcp,
-    read_mail,
-    runtime_status,
-    search_mail,
-    send_telegram_message,
-    triage_current_mail,
 )
+from ariadne.mcp.errors import DIAGNOSTIC_PREFIX
+from ariadne.mcp.mail import read_mail, search_mail, triage_current_mail
+from ariadne.mcp.runtime import runtime_status
+from ariadne.mcp.telegram import ask_telegram_question, send_telegram_message
 from ariadne.telegram import outbound
 from ariadne.telegram.questions import TelegramQuestion, TelegramQuestionStore
 
@@ -67,7 +65,7 @@ def telegram(monkeypatch) -> FakeBot:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
     monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "7")
     bot = FakeBot("token-for-test")
-    monkeypatch.setattr(mcp_server, "Bot", lambda token: bot)
+    monkeypatch.setattr(telegram_tools, "Bot", lambda token: bot)
     monkeypatch.setattr(outbound, "Bot", lambda token: bot)
     return bot
 
@@ -92,6 +90,7 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "search_mail",
         "read_mail",
         "read_mail_thread",
+        "triage_current_mail",
         "list_calendars",
         "search_calendar",
         "read_calendar_event",
@@ -100,7 +99,6 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "update_calendar_event",
         "delete_calendar_event",
         "respond_to_calendar_invitation",
-        "triage_current_mail",
     ]
 
 
@@ -168,7 +166,7 @@ def test_calendar_mutations_use_only_configured_account_and_calendar(
     monkeypatch.setenv("ARIADNE_ICLOUD_APP_PASSWORD", "app-password")
     monkeypatch.setenv("ARIADNE_CALENDAR_TIMEZONE", "Europe/London")
     monkeypatch.setenv("ARIADNE_CALENDAR_DEFAULT", "Personal")
-    monkeypatch.setattr(mcp_server, "ICloudCalendar", FakeCalendar)
+    monkeypatch.setattr(calendar_tools, "ICloudCalendar", FakeCalendar)
 
     created = create_calendar_event(
         "Review", "2026-09-01T09:00:00", "2026-09-01T10:00:00"
@@ -212,7 +210,7 @@ async def test_calendar_write_failure_exposes_redacted_provider_diagnostic(
     monkeypatch.setenv("ARIADNE_ICLOUD_USERNAME", "person@example.com")
     monkeypatch.setenv("ARIADNE_ICLOUD_APP_PASSWORD", "calendar-password")
     monkeypatch.setenv("ARIADNE_CALENDAR_TIMEZONE", "Europe/London")
-    monkeypatch.setattr(mcp_server, "ICloudCalendar", FailingCalendar)
+    monkeypatch.setattr(calendar_tools, "ICloudCalendar", FailingCalendar)
 
     async with Client(mcp) as client:
         result = await client.call_tool_mcp(
@@ -303,15 +301,44 @@ def test_runtime_status_never_returns_environment_values(
     vault = tmp_path / "vault"
     vault.mkdir()
     monkeypatch.setenv("ARIADNE_VAULT", str(vault))
+    monkeypatch.setenv("ARIADNE_PROFILE", "telegram")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "must-not-appear")
 
     payload = runtime_status()
 
     assert payload["vault"] == str(vault)
+    assert payload["git"] == {
+        "root": str(vault),
+        "available": False,
+        "reason": "not_a_repository",
+    }
     assert "must-not-appear" not in json.dumps(payload)
 
 
+@pytest.mark.parametrize("missing", ["ARIADNE_VAULT", "ARIADNE_PROFILE"])
+def test_runtime_status_requires_explicit_context(
+    missing: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARIADNE_VAULT", str(tmp_path))
+    monkeypatch.setenv("ARIADNE_PROFILE", "telegram")
+    monkeypatch.delenv(missing)
+
+    with pytest.raises(ToolError, match=f"missing {missing}"):
+        runtime_status()
+
+
+def test_runtime_status_rejects_an_unknown_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ARIADNE_VAULT", str(tmp_path))
+    monkeypatch.setenv("ARIADNE_PROFILE", "unknown")
+
+    with pytest.raises(ToolError, match="not recognized"):
+        runtime_status()
+
+
 def test_runtime_status_reports_the_current_profiles_capabilities(monkeypatch) -> None:
+    monkeypatch.setenv("ARIADNE_VAULT", str(Path.cwd()))
     monkeypatch.setenv("ARIADNE_PROFILE", "mail")
 
     payload = runtime_status()
@@ -353,7 +380,17 @@ async def test_an_empty_message_is_refused(telegram: FakeBot) -> None:
     assert telegram.api_calls == []
 
 
-async def test_rich_delivery_rejection_is_reported(
+async def test_telegram_delivery_requires_an_explicit_destination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("TELEGRAM_ALLOWED_USER_ID", raising=False)
+
+    with pytest.raises(ToolError, match="not reachable"):
+        await send_telegram_message("Hello")
+
+
+async def test_rich_delivery_rejection_has_no_classic_transport_fallback(
     telegram: FakeBot,
 ) -> None:
     telegram.reject_rich = True
@@ -364,7 +401,7 @@ async def test_rich_delivery_rejection_is_reported(
     assert telegram.sent == []
 
 
-async def test_missing_rich_endpoint_is_reported(
+async def test_missing_rich_endpoint_has_no_classic_transport_fallback(
     telegram: FakeBot,
 ) -> None:
     telegram.missing_rich_endpoint = True

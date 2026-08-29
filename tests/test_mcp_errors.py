@@ -6,7 +6,7 @@ from caldav.lib.error import AuthorizationError
 from fastmcp import Client, FastMCP
 from fastmcp.tools import ToolResult
 
-from ariadne.mcp_errors import (
+from ariadne.mcp.errors import (
     DIAGNOSTIC_PREFIX,
     SafeToolErrorMiddleware,
     format_tool_failure,

@@ -1,4 +1,4 @@
-"""Safe, actionable diagnostics for failed MCP tool calls."""
+"""Safe, actionable diagnostics for MCP tool failures."""
 
 from __future__ import annotations
 

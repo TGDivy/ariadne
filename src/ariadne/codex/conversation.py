@@ -234,7 +234,7 @@ def _mcp_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
     """Return the local Ariadne MCP server configuration for Codex."""
     overrides = [
         f"mcp_servers.ariadne.command={json.dumps(sys.executable)}",
-        "mcp_servers.ariadne.args=" + json.dumps(["-m", "ariadne.mcp_server"]),
+        "mcp_servers.ariadne.args=" + json.dumps(["-m", "ariadne.mcp"]),
         "mcp_servers.ariadne.enabled=true",
         f"mcp_servers.ariadne.tool_timeout_sec={MCP_TOOL_TIMEOUT_SECONDS}",
         "mcp_servers.ariadne.enabled_tools=" + json.dumps(profile.enabled_tools),
