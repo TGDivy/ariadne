@@ -20,6 +20,11 @@ from ..codex import (
     WorkStarted,
     WorkSummaryUpdated,
 )
+from .history import (
+    TelegramHistoryMessage,
+    TelegramMessageStore,
+    telegram_message_time,
+)
 from .rich import (
     RICH_MESSAGE_LIMIT,
     RichBotAPI,
@@ -49,9 +54,15 @@ class _LiveBubble:
     _stopping_button = RichButton("Stopping…", "disabled", style="danger")
     _stopped_button = RichButton("Stopped", "disabled", style="danger")
 
-    def __init__(self, source: Message, rich_api: RichBotAPI) -> None:
+    def __init__(
+        self,
+        source: Message,
+        rich_api: RichBotAPI,
+        history: TelegramMessageStore,
+    ) -> None:
         self._source = source
         self._rich_api = rich_api
+        self._history = history
         self._message: Message | None = None
         self._markdown = ""
         self._body = ""
@@ -157,7 +168,9 @@ class _LiveBubble:
                 content += f"\n\n_{STOPPED_MESSAGE}_"
         if not content:
             content = STOPPED_MESSAGE
-        await self._finalize(content, buttons=(self._stopped_button,))
+        await self._finalize(
+            content, buttons=(self._stopped_button,), record_history=False
+        )
 
     async def fail(self) -> None:
         self._phase = "terminal"
@@ -225,17 +238,41 @@ class _LiveBubble:
         if task is not None and task is not asyncio.current_task():
             task.cancel()
 
-    async def _finalize(self, markdown: str, *, buttons: Sequence[RichButton]) -> None:
+    async def _finalize(
+        self,
+        markdown: str,
+        *,
+        buttons: Sequence[RichButton],
+        record_history: bool = True,
+    ) -> None:
         chunks = split_rich_markdown(markdown)
         if not chunks:
             raise ValueError("A final Telegram response cannot be empty.")
         await self._edit(chunks[0], buttons=buttons, required=True)
+        assert self._message is not None
+        if record_history:
+            self._record(self._message, chunks[0])
         for chunk in chunks[1:]:
-            await self._rich_api.send(
+            message = await self._rich_api.send(
                 chat_id=self._source.chat_id,
                 markdown=chunk,
                 message_thread_id=getattr(self._source, "message_thread_id", None),
             )
+            if record_history:
+                self._record(message, chunk)
+
+    def _record(self, message: Message, markdown: str) -> None:
+        self._history.record(
+            TelegramHistoryMessage(
+                chat_id=self._source.chat_id,
+                message_id=message.message_id,
+                sent_at=telegram_message_time(message),
+                speaker="iris",
+                source="telegram",
+                content_type="text",
+                text=markdown,
+            )
+        )
 
     async def _edit(
         self,
@@ -273,9 +310,15 @@ class _LiveBubble:
 class LiveTurn:
     """Render explicit Codex work and speech phases into Telegram bubbles."""
 
-    def __init__(self, source: Message, rich_api: RichBotAPI) -> None:
+    def __init__(
+        self,
+        source: Message,
+        rich_api: RichBotAPI,
+        history: TelegramMessageStore,
+    ) -> None:
         self._source = source
         self._rich_api = rich_api
+        self._history = history
         self._bubble: _LiveBubble | None = None
         self._active_message: tuple[str, MessagePhase] | None = None
         self._partial_message = ""
@@ -369,7 +412,7 @@ class LiveTurn:
     async def _open_bubble(self) -> _LiveBubble:
         if self._bubble is not None:
             return self._bubble
-        bubble = _LiveBubble(self._source, self._rich_api)
+        bubble = _LiveBubble(self._source, self._rich_api, self._history)
         self._bubble = bubble
         await bubble.start()
         return bubble

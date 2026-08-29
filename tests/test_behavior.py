@@ -22,6 +22,7 @@ from ariadne.behavior.runner import (
 from ariadne.knowledge.validation import validate_repository
 from ariadne.mcp import mcp as production_mcp
 from ariadne.mcp import server as production_server
+from ariadne.telegram.history import TelegramMessageStore
 
 
 def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
@@ -29,6 +30,7 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         "race-confirmation",
         "train-confirmation",
         "race-evening-revisit",
+        "resolved-before-wakeup",
     ]
     assert len({scenario.identifier for scenario in SCENARIOS}) == len(SCENARIOS)
 
@@ -50,6 +52,8 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert SCENARIOS[0].calendar == ()
     assert len(SCENARIOS[1].calendar) == 1
     assert len(SCENARIOS[2].calendar) == 3
+    assert len(SCENARIOS[3].calendar) == 1
+    assert len(SCENARIOS[3].telegram) == 1
 
 
 def test_scenario_knowledge_is_also_valid_generated_orientation(
@@ -96,6 +100,7 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
     assert tuple(fake) == (
         "inspect_ariadne_runtime",
         "send_telegram_message",
+        "read_recent_telegram_messages",
         "request_telegram_file_delivery",
         "search_mail",
         "read_mail",
@@ -163,6 +168,28 @@ async def test_fake_capabilities_record_calls(
         "send_telegram_message",
         "record_current_mail_decision",
     ]
+
+
+def test_fake_recent_telegram_history_is_seeded_and_readable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = tmp_path / "calls.jsonl"
+    state = tmp_path / "telegram.sqlite3"
+    scenario = SCENARIOS[3]
+    store = TelegramMessageStore(state)
+    for item in scenario.telegram:
+        store.record(item.stored(chat_id=7))
+    monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "7")
+    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(state))
+
+    found = fake_mcp.read_recent_telegram_messages(
+        "2026-08-29T17:00:00+01:00", speakers=["human"]
+    )
+
+    assert found["total"] == 1
+    assert found["messages"] == [scenario.telegram[0].stored(7).public_payload()]
+    assert json.loads(calls.read_text())["tool"] == "read_recent_telegram_messages"
 
 
 async def test_fake_knowledge_is_seeded_and_mutable(

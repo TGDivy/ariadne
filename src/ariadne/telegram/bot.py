@@ -27,6 +27,12 @@ from telegram.ext import ContextTypes
 
 from ..codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
 from .file_delivery import FileDelivery, FileDeliveryError
+from .history import (
+    TelegramContentType,
+    TelegramHistoryMessage,
+    TelegramMessageStore,
+    telegram_message_time,
+)
 from .live import (
     STOPPED_MESSAGE,
     STOPPING_MESSAGE,
@@ -172,6 +178,15 @@ class _Album:
     timer: asyncio.Task[None] | None = None
 
 
+def _album_history_text(album: _Album, caption: str | None) -> str:
+    """Describe visible media without retaining model-only local paths."""
+    markers = [
+        "[Photo]" if item.is_image else f"[Document: {item.path.name}]"
+        for item in album.items
+    ]
+    return "\n\n".join([part for part in (caption, *markers) if part])
+
+
 @dataclass(slots=True)
 class _PendingMessage:
     """One accepted Telegram input waiting to steer or start a Codex turn."""
@@ -203,9 +218,10 @@ class AriadneBot:
         self._live_response: LiveTurn | None = None
         self._bot: Bot | None = None
         self._rich_api: RichBotAPI | None = None
-        self._questions = TelegramQuestionStore(
-            question_state or default_question_state_path()
-        )
+        state_path = question_state or default_question_state_path()
+        self._questions = TelegramQuestionStore(state_path)
+        self._history = TelegramMessageStore(state_path)
+        self._history.initialize()
         self._file_delivery = FileDelivery()
         self._albums: dict[str, _Album] = {}
         self._pending_messages: deque[_PendingMessage] = deque()
@@ -801,12 +817,13 @@ class AriadneBot:
         user_id: int | None,
         text: str,
         image_paths: tuple[Path, ...] = (),
+        *,
+        history_text: str | None = None,
+        content_type: TelegramContentType = "text",
+        record_history: bool = True,
     ) -> None:
         """Send one user message through Codex and stream its answer back."""
         if not self._is_allowed(user_id):
-            return
-
-        if self._busy and await self._accept_question_answer(message, text):
             return
 
         reply_to = (
@@ -814,6 +831,23 @@ class AriadneBot:
             if message.reply_to_message is not None
             else None
         )
+        if record_history:
+            self._history.record(
+                TelegramHistoryMessage(
+                    chat_id=message.chat_id,
+                    message_id=message.message_id,
+                    sent_at=telegram_message_time(message),
+                    speaker="human",
+                    source="telegram",
+                    content_type=content_type,
+                    text=history_text or text,
+                    reply_to_message_id=reply_to,
+                )
+            )
+
+        if self._busy and await self._accept_question_answer(message, text):
+            return
+
         LOGGER.info(
             "Telegram message received message_id=%s reply_to=%s images=%d",
             message.message_id,
@@ -848,7 +882,7 @@ class AriadneBot:
         )
         if self._rich_api is None:
             raise RuntimeError("Telegram Rich Messages are not initialized.")
-        live = LiveTurn(message, self._rich_api)
+        live = LiveTurn(message, self._rich_api, self._history)
         self._live_response = live
         try:
             await live.start()
@@ -946,6 +980,8 @@ class AriadneBot:
             album.user_id,
             text,
             image_paths=images,
+            history_text=_album_history_text(album, caption),
+            content_type="document" if documents else "photo",
         )
 
     async def _accept_followup(
@@ -1036,6 +1072,7 @@ class AriadneBot:
                     pending.user_id,
                     pending.text,
                     pending.image_paths,
+                    record_history=False,
                 )
                 continue
             if wait_for_turn:

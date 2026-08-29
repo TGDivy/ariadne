@@ -23,11 +23,15 @@ from ariadne.mcp.revisit import schedule_wakeup as real_schedule_wakeup
 from ariadne.mcp.revisit import update_wakeup as real_update_wakeup
 from ariadne.mcp.runtime import inspect_ariadne_runtime as real_inspect_ariadne_runtime
 from ariadne.mcp.telegram import (
+    read_recent_telegram_messages as real_read_recent_telegram_messages,
+)
+from ariadne.mcp.telegram import (
     request_telegram_file_delivery as real_request_telegram_file_delivery,
 )
 from ariadne.mcp.telegram import send_telegram_message as real_send_telegram_message
 from ariadne.profile import PROFILES
 from ariadne.revisit import Attention
+from ariadne.telegram.history import TelegramMessageSource, TelegramSpeaker
 
 from .fake_calendar import register_tools as register_calendar_tools
 from .fake_knowledge import register_tools as register_knowledge_tools
@@ -55,6 +59,36 @@ async def send_telegram_message(text: str) -> list[int]:
         raise ToolError("A message needs something to say.")
     record_call("send_telegram_message", {"text": text})
     return [1001]
+
+
+@wraps(real_read_recent_telegram_messages)
+def read_recent_telegram_messages(
+    since: str,
+    before: str | None = None,
+    speakers: list[TelegramSpeaker] | None = None,
+    sources: list[TelegramMessageSource] | None = None,
+    query: str | None = None,
+    limit: int = 50,
+) -> dict[str, object]:
+    record_call(
+        "read_recent_telegram_messages",
+        {
+            "since": since,
+            "before": before,
+            "speakers": speakers,
+            "sources": sources,
+            "query": query,
+            "limit": limit,
+        },
+    )
+    return real_read_recent_telegram_messages(
+        since,
+        before,
+        speakers,
+        sources,
+        query,
+        limit,
+    )
 
 
 @wraps(real_request_telegram_file_delivery)
@@ -198,6 +232,7 @@ def create_server() -> FastMCP:
     }
     server.tool(inspect_ariadne_runtime, annotations=harmless)
     server.tool(send_telegram_message, annotations=harmless)
+    server.tool(read_recent_telegram_messages, annotations=harmless)
     server.tool(request_telegram_file_delivery, annotations=harmless)
     server.tool(search_mail, annotations=harmless)
     server.tool(read_mail, annotations=harmless)

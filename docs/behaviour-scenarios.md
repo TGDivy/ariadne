@@ -77,6 +77,8 @@ The initial stories cover the Windsor event from arrival to a later revisit:
   flexible return, and notice the tight arrival window;
 - `race-evening-revisit`: wake once, reassess what has changed, finish useful
   preparation, and message only if something still matters.
+- `resolved-before-wakeup`: reconcile an older wake-up note with Divy's newer
+  Telegram message and avoid a reminder for work he already completed.
 
 These first runs should make current capability gaps visible. The scenario uses
 the same six semantic knowledge operations and generated orientation as the

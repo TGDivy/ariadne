@@ -5,6 +5,7 @@ import logging
 import os
 import sqlite3
 from contextlib import suppress
+from datetime import datetime
 from typing import Any
 
 from fastmcp import FastMCP
@@ -13,7 +14,17 @@ from telegram import Bot
 from telegram.error import TelegramError
 
 from ..telegram.file_delivery import FileDelivery, FileDeliveryError
-from ..telegram.outbound import send_rich_text
+from ..telegram.history import (
+    TelegramHistoryMessage,
+    TelegramMessageSource,
+    TelegramMessageStore,
+    TelegramSpeaker,
+    telegram_message_time,
+)
+from ..telegram.outbound import (
+    TelegramDeliveredWithoutHistoryError,
+    send_rich_text,
+)
 from ..telegram.questions import (
     QUESTION_TIMEOUT_SECONDS,
     ActiveQuestionError,
@@ -26,6 +37,16 @@ from ..telegram.questions import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _timestamp(value: str, name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ToolError(f"{name} must be a valid ISO 8601 timestamp.") from error
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ToolError(f"{name} must include a timezone offset.")
+    return parsed
+
+
 def _telegram_chat() -> tuple[str, int]:
     """Return the credentials for the one private chat Ariadne speaks in."""
     try:
@@ -34,6 +55,18 @@ def _telegram_chat() -> tuple[str, int]:
         )
     except (KeyError, ValueError) as error:
         raise ToolError("Telegram is not reachable from this runtime.") from error
+
+
+def _message_source() -> TelegramMessageSource:
+    try:
+        profile = os.environ["ARIADNE_PROFILE"]
+    except KeyError as error:
+        raise ToolError("Telegram message source is unavailable.") from error
+    if profile == "mail":
+        return "mail"
+    if profile.startswith("revisit-"):
+        return "wakeup"
+    raise ToolError("Proactive Telegram messages require a background turn.")
 
 
 async def send_telegram_message(text: str) -> list[int]:
@@ -48,9 +81,71 @@ async def send_telegram_message(text: str) -> list[int]:
 
     token, chat_id = _telegram_chat()
     try:
-        return await send_rich_text(token, chat_id, text)
-    except TelegramError as error:
+        return await send_rich_text(
+            token,
+            chat_id,
+            text,
+            history=TelegramMessageStore(question_state_path()),
+            source=_message_source(),
+        )
+    except TelegramDeliveredWithoutHistoryError as error:
+        delivered = ", ".join(str(identifier) for identifier in error.message_ids)
+        raise ToolError(
+            f"Telegram delivered message ID(s) {delivered}, but permanent history "
+            "could not be updated. Do not resend the message."
+        ) from error
+    except (OSError, sqlite3.Error, TelegramError, ValueError) as error:
         raise ToolError("Telegram could not deliver that message.") from error
+
+
+def read_recent_telegram_messages(
+    since: str,
+    before: str | None = None,
+    speakers: list[TelegramSpeaker] | None = None,
+    sources: list[TelegramMessageSource] | None = None,
+    query: str | None = None,
+    limit: int = 50,
+) -> dict[str, object]:
+    """Read permanent messages observed in the private Telegram conversation.
+
+    `since` and `before` are ISO 8601 timestamps with timezone offsets. Optional
+    `query` is a literal case-insensitive substring match, not fuzzy or semantic
+    search. Results retain the newest matches when limited, then return them in
+    chronological order. Sources say what woke Iris before she sent a message:
+    `telegram`, `mail`, or `wakeup`.
+
+    Use this when recent conversation could change a fresh or proactive turn.
+    Missing human messages mean only that no reply was observed here; they do
+    not establish whether a message was read, ignored, or understood. History
+    begins when this Ariadne capability was deployed and is not a Telegram
+    archive backfill.
+    """
+    try:
+        chat_id = int(os.environ["TELEGRAM_ALLOWED_USER_ID"])
+    except (KeyError, ValueError) as error:
+        raise ToolError("Telegram history is not configured for this turn.") from error
+    try:
+        page = TelegramMessageStore(question_state_path()).read(
+            chat_id,
+            since=_timestamp(since, "since"),
+            before=_timestamp(before, "before") if before is not None else None,
+            speakers=speakers or (),
+            sources=sources or (),
+            query=query,
+            limit=limit,
+        )
+    except (OSError, ValueError, sqlite3.Error) as error:
+        raise ToolError(str(error)) from error
+    return {
+        "messages": [message.public_payload() for message in page.messages],
+        "total": page.total,
+        "truncated": page.truncated,
+        "earliest_available_at": (
+            page.earliest_available_at.isoformat()
+            if page.earliest_available_at is not None
+            else None
+        ),
+    }
 
 
 async def ask_telegram_question(
@@ -70,7 +165,9 @@ async def ask_telegram_question(
         raise ToolError(str(error)) from error
     token, chat_id = _telegram_chat()
     store = TelegramQuestionStore(question_state_path())
+    history = TelegramMessageStore(question_state_path())
     try:
+        history.initialize()
         question = store.create(
             chat_id,
             prompt,
@@ -85,6 +182,28 @@ async def ask_telegram_question(
             card = TelegramQuestionCard(bot)
             try:
                 message = await card.send(question)
+                try:
+                    history.record(
+                        TelegramHistoryMessage(
+                            chat_id=chat_id,
+                            message_id=message.message_id,
+                            sent_at=telegram_message_time(message),
+                            speaker="iris",
+                            source="telegram",
+                            content_type="text",
+                            text=prompt,
+                        )
+                    )
+                except (OSError, sqlite3.Error, ValueError) as error:
+                    cancelled = store.cancel(question.question_id)
+                    if cancelled is not None:
+                        with suppress(TelegramError):
+                            await card.settle(cancelled)
+                    raise ToolError(
+                        f"Telegram delivered question message ID {message.message_id}, "
+                        "but permanent history could not be updated. Do not ask it "
+                        "again automatically."
+                    ) from error
                 attached = store.attach_message(
                     question.question_id, message.message_id
                 )
@@ -169,5 +288,14 @@ async def request_telegram_file_delivery(paths: list[str]) -> dict[str, Any]:
 def register_tools(server: FastMCP) -> None:
     """Register Telegram tools."""
     server.tool(send_telegram_message)
+    server.tool(
+        read_recent_telegram_messages,
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    )
     server.tool(ask_telegram_question)
     server.tool(request_telegram_file_delivery)
