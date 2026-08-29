@@ -23,7 +23,6 @@ from ariadne.codex import (
     WorkStarted,
     WorkSummaryUpdated,
 )
-from ariadne.prompt import THREAD_PUSH_PERMISSION
 from ariadne.telegram import bot as telegram_bot
 from ariadne.telegram import live as telegram_live
 from ariadne.telegram.bot import (
@@ -576,7 +575,6 @@ async def test_telegram_reply_includes_the_replied_message_text() -> None:
         "The cache hit rate was 96%.\n"
         "</quoted_message>\n\n"
         "What does this mean?"
-        f"\n\n{THREAD_PUSH_PERMISSION}"
     ]
 
 
@@ -588,6 +586,10 @@ def test_telegram_reply_uses_the_replied_message_caption() -> None:
 
     assert "The first dashboard after setup" in prompt
     assert "Telegram reply context:" in prompt
+
+
+def test_plain_telegram_input_has_no_storage_instruction_suffix() -> None:
+    assert turn_text("How was your day?") == "How was your day?"
 
 
 async def test_streamed_text_is_shown_as_formatted_message_edits(

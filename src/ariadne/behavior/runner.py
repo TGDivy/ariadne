@@ -28,7 +28,7 @@ from ariadne.codex.conversation import (
     _sandbox_config_overrides,
 )
 from ariadne.codex.models import CodexTurnSettings
-from ariadne.codex.resolver import resolve_profile, with_knowledge_orientation
+from ariadne.codex.resolver import resolve_profile
 from ariadne.profile import MAIL_PROFILE
 
 from .fake_knowledge import KNOWLEDGE_ENVIRONMENT
@@ -37,7 +37,6 @@ from .models import BehaviorScenario
 
 _REDACTED_ENVIRONMENT = (
     "ARIADNE_CONFIG",
-    "ARIADNE_VAULT",
     "ARIADNE_PROFILE",
     "ARIADNE_MAIL_USERNAME",
     "ARIADNE_MAIL_APP_PASSWORD",
@@ -165,16 +164,6 @@ def _snapshot_patch(before: dict[str, str], after: dict[str, str]) -> str:
     return "".join(chunks)
 
 
-_KNOWLEDGE_TOOLS = (
-    "search_knowledge",
-    "browse_knowledge",
-    "read_knowledge",
-    "create_knowledge",
-    "update_knowledge",
-    "archive_knowledge",
-)
-
-
 def _fake_mcp_overrides(
     enabled_tools: tuple[str, ...], calls: Path, knowledge: Path
 ) -> tuple[str, ...]:
@@ -247,7 +236,6 @@ async def run_scenario(
 
         declaration = replace(
             MAIL_PROFILE,
-            enabled_tools=MAIL_PROFILE.enabled_tools + _KNOWLEDGE_TOOLS,
             writable_roots=(root,),
             network_domains=(),
         )
@@ -257,8 +245,8 @@ async def run_scenario(
             human=run_profile.human_name,
             personality=run_profile.personality,
             settings=run_profile.settings,
+            knowledge_root=workspace,
         )
-        profile = with_knowledge_orientation(profile, workspace)
         client = AsyncCodex(
             CodexConfig(
                 config_overrides=_sandbox_config_overrides(profile)

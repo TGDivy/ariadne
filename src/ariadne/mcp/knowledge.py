@@ -10,9 +10,9 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from ..knowledge import KnowledgeError, KnowledgeRelation
+from ..knowledge.capability import ROOT_ENVIRONMENT
 from ..knowledge.store import KnowledgeStore
 
-ROOT_ENVIRONMENT = "ARIADNE_KNOWLEDGE_ROOT"
 _STORES: dict[Path, KnowledgeStore] = {}
 
 

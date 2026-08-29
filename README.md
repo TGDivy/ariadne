@@ -7,7 +7,7 @@ Ariadne is the system that runs Iris on your own machine and connects her to you
 over a private Telegram chat. She follows The Thread wherever it leads, not an
 assistant you own.
 
-Current status: **Milestone 2 — The Thread foundation**.
+Current status: **Milestone 2 — semantic knowledge foundation**.
 
 ## Run
 
@@ -28,8 +28,8 @@ Current status: **Milestone 2 — The Thread foundation**.
    ```
 
    `human_name` is the name Iris calls you by; it is substituted into her
-   instructions. `vault` must point to that local Git clone.
-   It is Codex's working directory. Iris can read anywhere, write anywhere
+   instructions. `vault` must point to the canonical private-knowledge clone.
+   It remains Codex's working directory. Iris can read anywhere, write anywhere
    under your home directory, and reach only the domains in `NETWORK_DOMAINS`
    in `src/ariadne/profile.py`. The Telegram Codex model, reasoning
    effort, and web-research setting are also applied explicitly from this
@@ -56,9 +56,11 @@ Current status: **Milestone 2 — The Thread foundation**.
    secrets redacted. Set `ARIADNE_CONFIG` for all commands, or pass `--config`
    to the command you are running, to use a non-default path.
 
-Nothing from the vault is injected into the prompt. The Thread is Iris's working
-directory and she reads it herself. Send `/new` to start a fresh Codex
-conversation while retaining the vault.
+A shallow map and the current knowledge vocabulary are generated into the
+prompt; record bodies are retrieved on demand through semantic search, browse,
+and read operations. Iris creates and updates knowledge through those operations
+while Ariadne owns validation and Git synchronization. Send `/new` to start a
+fresh Codex conversation while retaining private knowledge.
 
 Use `/settings` to choose an available model, supported reasoning effort, and
 live web research for the running process. Each change starts a new in-memory
@@ -355,10 +357,11 @@ contains, what was kept, and what was dropped.
 
 ## Local capabilities
 
-Ariadne exposes local MCP capabilities to Codex: runtime status, asking one
-blocking choice question, and preparing files from the configured user's home
-directory. Background profiles such as mail can also send proactive Telegram
-notifications; ordinary Telegram turns speak through native Codex phases.
+Ariadne exposes local MCP capabilities to Codex: semantic private knowledge,
+runtime status, asking one blocking choice question, and preparing files from
+the configured user's home directory. Background profiles such as mail can also
+send proactive Telegram notifications; ordinary Telegram turns speak through
+native Codex phases.
 Prepared files are not sent immediately: Ariadne sends a short-lived Telegram
 approval card that lists the exact files and has Approve and Reject buttons.
 

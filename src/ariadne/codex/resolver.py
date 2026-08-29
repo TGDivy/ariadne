@@ -8,6 +8,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from ..instructions import fill, render
+from ..knowledge.capability import ROOT_ENVIRONMENT as KNOWLEDGE_ROOT_ENVIRONMENT
 from ..knowledge.orientation import render_orientation
 from ..knowledge.store import KnowledgeStore
 from .models import CodexTurnSettings, ResolvedTurnProfile, TurnProfile
@@ -74,6 +75,7 @@ def resolve_profile(
     personality: Path | None = None,
     settings: CodexTurnSettings | None = None,
     mcp_environment: Mapping[str, str] | None = None,
+    knowledge_root: Path | None = None,
 ) -> ResolvedTurnProfile:
     """Render one exported declaration into the exact turn configuration."""
     repository = _repository_root()
@@ -99,7 +101,6 @@ def resolve_profile(
         )
 
     values = {
-        "ARIADNE_VAULT": str(vault),
         "ARIADNE_PROFILE": profile.name,
     }
     values.update(
@@ -108,7 +109,7 @@ def resolve_profile(
         if name in profile.mcp_environment_names
     )
 
-    return ResolvedTurnProfile(
+    resolved = ResolvedTurnProfile(
         profile=profile,
         settings=settings or profile.settings,
         cwd=vault,
@@ -118,15 +119,19 @@ def resolve_profile(
         developer_instructions_core=developer_instructions,
         _mcp_environment_values=tuple(values.items()),
     )
+    if knowledge_root is not None:
+        resolved = with_knowledge_orientation(resolved, knowledge_root)
+    return resolved
 
 
 def with_knowledge_orientation(
     profile: ResolvedTurnProfile, knowledge_root: Path
 ) -> ResolvedTurnProfile:
     """Attach current private-knowledge vocabulary to a resolved profile."""
-    # TODO(knowledge-cutover): Apply this while assembling every production turn,
-    # then remove this TODO once the live Thread is canonical knowledge.
-    orientation = render_orientation(**KnowledgeStore(knowledge_root).orientation())
+    root = knowledge_root.resolve()
+    orientation = render_orientation(**KnowledgeStore(root).orientation())
+    environment = dict(profile.mcp_environment_values)
+    environment[KNOWLEDGE_ROOT_ENVIRONMENT] = str(root)
     return replace(
         profile,
         developer_instruction_sources=(
@@ -136,4 +141,5 @@ def with_knowledge_orientation(
         developer_instructions_core=(
             f"{profile.developer_instructions_core}\n\n{orientation}"
         ),
+        _mcp_environment_values=tuple(environment.items()),
     )

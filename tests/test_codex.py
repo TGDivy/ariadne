@@ -105,7 +105,7 @@ def test_mcp_config_forwards_its_required_environment(
         )
     )
 
-    assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
+    assert not any("ARIADNE_VAULT" in value for value in overrides)
     assert 'mcp_servers.ariadne.env.ARIADNE_PROFILE="telegram"' in overrides
     assert 'mcp_servers.ariadne.args=["-m", "ariadne.mcp"]' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
@@ -635,6 +635,12 @@ def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
             "respond_to_calendar_invitation",
             "Responding to a calendar invitation…",
         ),
+        ("search_knowledge", "Searching memory…"),
+        ("browse_knowledge", "Browsing memory…"),
+        ("read_knowledge", "Reading memory…"),
+        ("create_knowledge", "Remembering…"),
+        ("update_knowledge", "Updating memory…"),
+        ("archive_knowledge", "Organising memory…"),
     ],
 )
 async def test_codex_conversation_reports_specific_service_activity(
