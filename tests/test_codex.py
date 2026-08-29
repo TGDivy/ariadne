@@ -45,6 +45,7 @@ from ariadne.codex import (
     ActivityUpdated,
     AgentMessageCompleted,
     AgentMessageUpdated,
+    CapabilityCallCompleted,
     CodexConversation,
     CodexTurnSettings,
     TurnInterrupted,
@@ -564,6 +565,15 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     activities = [event.text for event in events if isinstance(event, ActivityUpdated)]
 
     assert activities == ["Preparing files…"]
+    assert (
+        CapabilityCallCompleted(
+            server="ariadne",
+            tool="prepare_files",
+            status="completed",
+            error=None,
+        )
+        in events
+    )
     assert "private" not in activities[0]
     assert (
         "Codex MCP call started source=telegram server=ariadne "

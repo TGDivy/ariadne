@@ -18,6 +18,7 @@ from openai_codex import AsyncCodex, CodexConfig
 from ariadne.codex import (
     ActivityUpdated,
     AgentMessageCompleted,
+    CapabilityCallCompleted,
     CodexConversation,
     WorkStarted,
 )
@@ -84,6 +85,7 @@ class BehaviorReport:
     enabled_capabilities: tuple[str, ...]
     timeline: tuple[TimelineEntry, ...]
     messages: tuple[RecordedMessage, ...]
+    capability_attempts: tuple[dict[str, str | None], ...]
     capability_calls: tuple[dict[str, Any], ...]
     commits: tuple[str, ...]
     workspace_patch: str
@@ -103,6 +105,7 @@ class BehaviorReport:
                 {"phase": message.phase, "text": message.text}
                 for message in self.messages
             ],
+            "capability_attempts": list(self.capability_attempts),
             "capability_calls": list(self.capability_calls),
             "commits": list(self.commits),
             "workspace_patch": self.workspace_patch,
@@ -241,6 +244,7 @@ async def run_scenario(
         conversation = CodexConversation(profile, client=client)
         timeline: list[TimelineEntry] = []
         messages: list[RecordedMessage] = []
+        capability_attempts: list[dict[str, str | None]] = []
         try:
             async for event in conversation.stream_turn(scenario.turn_input(workspace)):
                 if isinstance(event, AgentMessageCompleted):
@@ -251,6 +255,20 @@ async def run_scenario(
                         event.activity if isinstance(event, WorkStarted) else event.text
                     )
                     entry = TimelineEntry("activity", text)
+                elif isinstance(event, CapabilityCallCompleted):
+                    capability_attempts.append(
+                        {
+                            "server": event.server,
+                            "tool": event.tool,
+                            "status": event.status,
+                            "error": event.error,
+                        }
+                    )
+                    suffix = f": {event.error}" if event.error is not None else ""
+                    entry = TimelineEntry(
+                        "capability",
+                        f"{event.tool} {event.status}{suffix}",
+                    )
                 else:
                     continue
                 timeline.append(entry)
@@ -270,6 +288,7 @@ async def run_scenario(
             enabled_capabilities=profile.enabled_tools,
             timeline=tuple(timeline),
             messages=tuple(messages),
+            capability_attempts=tuple(capability_attempts),
             capability_calls=_read_calls(calls),
             commits=tuple(commits_text.splitlines()) if commits_text else (),
             workspace_patch=_snapshot_patch(before, _snapshot(workspace)),
@@ -299,7 +318,16 @@ def render_report(report: BehaviorReport) -> str:
             lines.extend((f"### {message.phase}", "", message.text, ""))
     else:
         lines.extend(("(none)", ""))
-    lines.extend(("## Capability calls", ""))
+    lines.extend(("## Capability attempts", ""))
+    if report.capability_attempts:
+        lines.extend(
+            f"- `{attempt['tool']}`: {attempt['status']}"
+            + (f" — {attempt['error']}" if attempt["error"] else "")
+            for attempt in report.capability_attempts
+        )
+    else:
+        lines.append("- none")
+    lines.extend(("", "## Recorded capability calls", ""))
     if report.capability_calls:
         lines.extend(
             f"- `{call['tool']}`: `{json.dumps(call['arguments'], ensure_ascii=False)}`"

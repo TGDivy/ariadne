@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
 import sys
 from pathlib import Path
 
@@ -53,16 +52,6 @@ def _show_progress(entry: TimelineEntry) -> None:
     print(f"[{entry.kind}] {text}", file=sys.stderr, flush=True)
 
 
-def _show_mcp_boundaries() -> None:
-    logger = logging.getLogger("ariadne.codex.conversation")
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(logging.Formatter("[runtime] %(message)s"))
-    handler.setLevel(logging.INFO)
-    handler.addFilter(lambda record: "MCP call" in record.getMessage())
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -108,7 +97,6 @@ def main() -> None:
         f"Running {scenario.identifier!r} with local Codex; this may incur usage.",
         file=sys.stderr,
     )
-    _show_mcp_boundaries()
     report = asyncio.run(run_scenario(scenario, run_profile, progress=_show_progress))
     rendered = (
         json.dumps(report.payload(), ensure_ascii=False, indent=2) + "\n"

@@ -30,6 +30,16 @@ class ActivityUpdated:
 
 
 @dataclass(frozen=True, slots=True)
+class CapabilityCallCompleted:
+    """One MCP capability finished, without exposing arguments or results."""
+
+    server: str
+    tool: str
+    status: str
+    error: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class AgentMessageStarted:
     """Codex started one model-visible speech item."""
 
@@ -59,6 +69,7 @@ type ConversationEvent = (
     WorkStarted
     | WorkSummaryUpdated
     | ActivityUpdated
+    | CapabilityCallCompleted
     | AgentMessageStarted
     | AgentMessageUpdated
     | AgentMessageCompleted

@@ -113,6 +113,14 @@ def test_report_is_plain_reviewable_evidence() -> None:
         enabled_capabilities=("send_telegram_message",),
         timeline=(TimelineEntry("activity", "Reading context…"),),
         messages=(RecordedMessage("final_answer", "Done."),),
+        capability_attempts=(
+            {
+                "server": "ariadne",
+                "tool": "send_telegram_message",
+                "status": "completed",
+                "error": None,
+            },
+        ),
         capability_calls=(
             {"tool": "send_telegram_message", "arguments": {"text": "Hi"}},
         ),
@@ -127,5 +135,6 @@ def test_report_is_plain_reviewable_evidence() -> None:
     assert "**activity:** Reading context…" in rendered
     assert "### final_answer\n\nDone." in rendered
     assert "`send_telegram_message`" in rendered
+    assert "`send_telegram_message`: completed" in rendered
     assert "abc123 Update plan" in rendered
     assert "Was it useful?" in rendered
