@@ -106,6 +106,7 @@ def test_mcp_config_forwards_its_required_environment(
 
     assert f'mcp_servers.ariadne.env.ARIADNE_VAULT="{tmp_path}"' in overrides
     assert 'mcp_servers.ariadne.env.ARIADNE_PROFILE="telegram"' in overrides
+    assert 'mcp_servers.ariadne.args=["-m", "ariadne.mcp"]' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
     assert "mcp_servers.ariadne.tool_timeout_sec=960" in overrides
     assert (
