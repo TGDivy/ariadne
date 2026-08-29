@@ -31,11 +31,11 @@ from ariadne.mail import (
     load_routes,
     move_messages,
     parse_metadata,
-    render_message,
     restore_folder_to_inbox,
 )
 from ariadne.mail.runtime import _enter_idle
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
+from ariadne.prompts.mail_evidence import render_mail_evidence
 from ariadne.scripts.mail_route_lint import render_report
 from ariadne.telemetry import Telemetry
 
@@ -1049,7 +1049,7 @@ def test_calendar_attachments_are_interpreted_for_the_mail_turn() -> None:
     )
     raw = value.as_bytes()
 
-    rendered = render_message(raw, parse_metadata(raw))
+    rendered = render_mail_evidence(raw, parse_metadata(raw))
 
     assert "invite.ics (text/calendar)" in rendered
     assert "SUMMARY:Interview" in rendered
@@ -1074,7 +1074,7 @@ def test_pdf_attachments_are_opened_for_the_mail_turn() -> None:
     )
     raw = value.as_bytes()
 
-    rendered = render_message(raw, parse_metadata(raw))
+    rendered = render_mail_evidence(raw, parse_metadata(raw))
 
     assert "role.pdf (application/pdf)" in rendered
     assert "PDF role.pdf:" in rendered

@@ -13,6 +13,7 @@ from openai_codex.generated.v2_all import ReasoningEffort
 from ariadne.config import RevisitSettings
 from ariadne.mcp import revisit as revisit_tools
 from ariadne.profile import REVISIT_PROFILES
+from ariadne.prompts.activations import build_revisit_turn_prompt
 from ariadne.revisit import (
     ATTENTION_SETTINGS,
     STATE_ENVIRONMENT,
@@ -21,7 +22,7 @@ from ariadne.revisit import (
     RevisitState,
     parse_due_at,
 )
-from ariadne.revisit.runtime import RevisitLoop, build_revisit_turn_prompt
+from ariadne.revisit.runtime import RevisitLoop
 
 
 def instant(value: float) -> datetime:
@@ -338,7 +339,11 @@ def test_activation_prompt_uses_the_configured_human_name(tmp_path: Path) -> Non
     )
 
     prompt = build_revisit_turn_prompt(
-        revisit, awakened_at=instant(3_000), human="Example User"
+        note=revisit.note,
+        due_at=revisit.due_at,
+        awakened_at=instant(3_000),
+        attention=revisit.attention.value,
+        human="Example User",
     )
 
     assert "deserves Example User's attention" in prompt

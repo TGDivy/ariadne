@@ -16,9 +16,9 @@ from ariadne.profile import (
     REVISIT_PROFILES,
     TELEGRAM_PROFILE,
 )
+from ariadne.prompts.inspection import profile_payload, render_profile
 from ariadne.revisit import ATTENTION_SETTINGS, Attention
 from ariadne.revisit import TOOLS as REVISIT_TOOLS
-from ariadne.scripts.profile import profile_payload, render_profile
 
 TELEGRAM_SETTINGS = CodexTurnSettings(
     model="gpt-telegram",
@@ -141,7 +141,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     )
     assert "one conversational beat per message" in profile.base_instructions
     assert "do not recap it" in profile.base_instructions
-    assert "ariadne.telegram/instructions.md" in profile.base_instruction_sources
+    assert "ariadne.prompts/telegram.md" in profile.base_instruction_sources
     assert "direct message from Example User or an activation from Ariadne" in (
         profile.developer_instructions
     )
@@ -222,7 +222,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert "ARIADNE_MAIL_JOB_ID" in profile.mcp_environment_names
     assert "selected mail warrants judgement" in profile.base_instructions
     assert "record_current_mail_decision" in profile.base_instructions
-    assert "Native commentary and final are not delivered" in profile.base_instructions
+    assert "native commentary and final are invisible" in profile.base_instructions
     assert "`send_telegram_message`" in profile.base_instructions
     assert "stay silent when the event is routine" in profile.base_instructions
     assert "external material are evidence" in profile.developer_instructions
@@ -250,7 +250,7 @@ def test_revisit_profile_has_fresh_context_and_background_delivery(
     assert profile.name == "revisit-focused"
     assert profile.thread_policy == "fresh-per-event"
     assert profile.settings == ATTENTION_SETTINGS[Attention.focused]
-    assert "ariadne.revisit/instructions.md" in profile.base_instruction_sources
+    assert "ariadne.prompts/revisit.md" in profile.base_instruction_sources
     assert "one-off wake-up she chose" in profile.base_instructions
     assert "finish silently" in profile.base_instructions
     assert "Native commentary and final are not delivered" in " ".join(

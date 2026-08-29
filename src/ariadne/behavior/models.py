@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
-from ariadne.mail import MailRoute, build_mail_turn_prompt, parse_metadata
-from ariadne.mail.models import MailJob
-from ariadne.revisit import Attention, Revisit
-from ariadne.revisit.runtime import build_revisit_turn_prompt
+from ariadne.mail import MailRoute, parse_metadata
+from ariadne.prompts.activations import (
+    build_mail_turn_prompt,
+    build_revisit_turn_prompt,
+)
+from ariadne.prompts.mail_evidence import render_mail_evidence
+from ariadne.revisit import Attention
 from ariadne.telegram.history import (
     TelegramContentType,
     TelegramHistoryMessage,
@@ -182,47 +185,20 @@ class BehaviorScenario:
             return self.telegram_prompt
         if self.revisit is not None:
             scheduled = self.revisit
-            created_at = scheduled.scheduled_for.astimezone(UTC)
             return build_revisit_turn_prompt(
-                Revisit(
-                    id=f"revisit_{self.identifier}",
-                    due_at=scheduled.scheduled_for,
-                    note=scheduled.note,
-                    attention=scheduled.attention,
-                    status="running",
-                    attempts=1,
-                    error=None,
-                    created_at=created_at,
-                    updated_at=scheduled.awakened_at.astimezone(UTC),
-                    completed_at=None,
-                ),
+                note=scheduled.note,
+                due_at=scheduled.scheduled_for,
                 awakened_at=scheduled.awakened_at,
+                attention=scheduled.attention.value,
                 human=human,
             )
         assert self.email is not None
         assert self.route is not None
         metadata = parse_metadata(self.email)
-        job = MailJob(
-            job_id=f"INBOX:1:{self.identifier}",
-            mailbox="INBOX",
-            uidvalidity=1,
-            uid=1,
-            message_id=metadata.message_id,
-            status="running",
-            attempts=1,
-            route_id=self.route.id,
-            action=None,
-            destination=None,
-            classification=None,
-            importance=None,
-            suggested_action=None,
-            draft_reply=None,
-        )
         return build_mail_turn_prompt(
-            job,
-            metadata,
-            self.email,
-            route=self.route,
+            render_mail_evidence(self.email, metadata),
+            route_id=self.route.id,
+            route_classification=self.route.classification,
             move_after_iris=None,
             unmatched_keep_in_inbox=True,
         )

@@ -131,18 +131,9 @@ class ResolvedTurnProfile:
 
     @property
     def developer_instructions(self) -> str:
-        if self.web_search == "live":
-            current_information = """\
-## Current information
+        from ..prompts import render_web_search_instructions
 
-Live web search is enabled. Use it when current information matters, and include
-the actual source links in your final answer when you do."""
-        else:
-            current_information = """\
-## Current information
-
-Live web search is disabled. Do not claim to have searched, researched,
-checked, or verified current information on the web."""
+        current_information = render_web_search_instructions(self.web_search == "live")
         return f"{self.developer_instructions_core}\n\n{current_information}"
 
     @property

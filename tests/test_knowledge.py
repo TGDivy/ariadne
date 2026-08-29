@@ -18,13 +18,13 @@ from ariadne.knowledge import (
 )
 from ariadne.knowledge.capability import ROOT_ENVIRONMENT
 from ariadne.knowledge.documents import StoredKnowledge, parse_document, render_document
-from ariadne.knowledge.orientation import render_orientation
 from ariadne.knowledge.search import KnowledgeIndex
 from ariadne.knowledge.store import KnowledgeStore
 from ariadne.knowledge.validation import validate_repository
 from ariadne.mcp import knowledge as knowledge_tools
 from ariadne.mcp.server import create_server
 from ariadne.profile import MAIL_PROFILE
+from ariadne.prompts.orientation import render_knowledge_orientation
 from ariadne.scripts.knowledge import main as validate_knowledge_main
 
 NOW = datetime(2026, 8, 29, 10, tzinfo=UTC)
@@ -247,7 +247,7 @@ def test_browse_and_orientation_expose_a_two_level_human_map(
         "plan/running",
     ]
 
-    rendered = render_orientation(**orientation)
+    rendered = render_knowledge_orientation(**orientation)
     assert "booking/\n  travel/" in rendered
     assert "Kinds: booking (1), goal (1), plan (1)" in rendered
     assert "Relationships: supports (2)" in rendered

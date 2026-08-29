@@ -13,6 +13,7 @@ from ..codex import CodexConversation, CodexTurnSettings
 from ..codex.resolver import resolve_profile
 from ..config import RevisitSettings
 from ..profile import profile_for_attention
+from ..prompts.activations import build_revisit_turn_prompt
 from ..telemetry import Telemetry
 from .models import Attention, Revisit
 from .state import RevisitState
@@ -21,24 +22,6 @@ LOGGER = logging.getLogger(__name__)
 
 ConversationFactory = Callable[[Revisit], CodexConversation]
 SettingsResolver = Callable[[Attention], CodexTurnSettings]
-
-
-def build_revisit_turn_prompt(
-    revisit: Revisit, *, awakened_at: datetime, human: str
-) -> str:
-    """Build Ariadne's user-level activation for a due future revisit."""
-    return (
-        "Ariadne speaking. I woke you because a one-off wake-up you asked me to "
-        "schedule is now due. Your earlier note follows separately; reassess it "
-        "against current context rather than assuming it is still correct. Decide "
-        f"whether anything now deserves {human}'s attention.\n\n"
-        f"Scheduled for: {revisit.due_at.isoformat()}\n"
-        f"Awakened at: {awakened_at.astimezone(UTC).isoformat()}\n"
-        f"Attention you selected: {revisit.attention.value}\n\n"
-        "<earlier_iris_note>\n"
-        f"{revisit.note}\n"
-        "</earlier_iris_note>"
-    )
 
 
 class RevisitLoop:
@@ -109,7 +92,11 @@ class RevisitLoop:
                 conversation.profile.effort.value,
             )
             prompt = build_revisit_turn_prompt(
-                revisit, awakened_at=awakened_at, human=self.human
+                note=revisit.note,
+                due_at=revisit.due_at,
+                awakened_at=awakened_at,
+                attention=revisit.attention.value,
+                human=self.human,
             )
             async for _event in conversation.stream_turn(prompt):
                 pass

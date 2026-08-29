@@ -1,6 +1,6 @@
 import pytest
 
-from ariadne.instructions import fill, render
+from ariadne.prompts import fill, render
 
 
 def test_filling_refuses_to_leave_a_placeholder_unresolved() -> None:
