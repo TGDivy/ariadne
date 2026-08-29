@@ -8,7 +8,6 @@ import os
 import subprocess
 import sys
 import tempfile
-from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -29,8 +28,7 @@ from ariadne.codex.conversation import (
     _sandbox_config_overrides,
 )
 from ariadne.codex.models import CodexTurnSettings
-from ariadne.codex.resolver import resolve_profile
-from ariadne.knowledge.orientation import render_orientation
+from ariadne.codex.resolver import resolve_profile, with_knowledge_orientation
 from ariadne.profile import MAIL_PROFILE
 
 from .fake_knowledge import KNOWLEDGE_ENVIRONMENT
@@ -260,28 +258,7 @@ async def run_scenario(
             personality=run_profile.personality,
             settings=run_profile.settings,
         )
-        orientation = render_orientation(
-            kinds=Counter(record.kind for record in scenario.knowledge),
-            collections=(
-                f"{record.kind}/{record.collection}" for record in scenario.knowledge
-            ),
-            tags=Counter(tag for record in scenario.knowledge for tag in record.tags),
-            relationships=Counter(
-                relation
-                for record in scenario.knowledge
-                for _, relation in record.related
-            ),
-        )
-        profile = replace(
-            profile,
-            developer_instruction_sources=(
-                *profile.developer_instruction_sources,
-                "generated/knowledge-orientation",
-            ),
-            developer_instructions_core=(
-                f"{profile.developer_instructions_core}\n\n{orientation}"
-            ),
-        )
+        profile = with_knowledge_orientation(profile, workspace)
         client = AsyncCodex(
             CodexConfig(
                 config_overrides=_sandbox_config_overrides(profile)

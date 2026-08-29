@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from importlib.resources import files
 from pathlib import Path
 
 from ..instructions import fill, render
+from ..knowledge.orientation import render_orientation
+from ..knowledge.store import KnowledgeStore
 from .models import CodexTurnSettings, ResolvedTurnProfile, TurnProfile
 
 
@@ -114,4 +117,23 @@ def resolve_profile(
         base_instructions=base_instructions,
         developer_instructions_core=developer_instructions,
         _mcp_environment_values=tuple(values.items()),
+    )
+
+
+def with_knowledge_orientation(
+    profile: ResolvedTurnProfile, knowledge_root: Path
+) -> ResolvedTurnProfile:
+    """Attach current private-knowledge vocabulary to a resolved profile."""
+    # TODO(knowledge-cutover): Apply this while assembling every production turn,
+    # then remove this TODO once the live Thread is canonical knowledge.
+    orientation = render_orientation(**KnowledgeStore(knowledge_root).orientation())
+    return replace(
+        profile,
+        developer_instruction_sources=(
+            *profile.developer_instruction_sources,
+            "generated/knowledge-orientation",
+        ),
+        developer_instructions_core=(
+            f"{profile.developer_instructions_core}\n\n{orientation}"
+        ),
     )

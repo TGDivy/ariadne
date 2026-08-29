@@ -6,7 +6,14 @@ import re
 from datetime import date, datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 Identifier = Annotated[
     str,
@@ -120,6 +127,14 @@ class KnowledgeMetadata(BaseModel):
         if value is not None and value.tzinfo is None:
             raise ValueError("Internal timestamps must include a timezone.")
         return value
+
+    @model_validator(mode="after")
+    def require_ordered_timestamps(self) -> KnowledgeMetadata:
+        if self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot be before created_at.")
+        if self.archived_at is not None and self.archived_at < self.created_at:
+            raise ValueError("archived_at cannot be before created_at.")
+        return self
 
 
 class KnowledgeRelationshipSummary(BaseModel):

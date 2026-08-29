@@ -7,7 +7,6 @@ import os
 import re
 import subprocess
 import tempfile
-import unicodedata
 from collections import Counter
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
@@ -27,16 +26,12 @@ from .models import (
     KnowledgeSyncError,
     KnowledgeValidationError,
 )
+from .orientation import KnowledgeOrientation
+from .paths import slug
 from .search import KnowledgeIndex
+from .validation import validate_records
 
 _SLUG_CHARACTER = re.compile(r"[^a-z0-9]+")
-_KEBAB_FILE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
-
-
-def _slug(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-    slug = _SLUG_CHARACTER.sub("-", normalized.casefold()).strip("-")
-    return slug[:80].rstrip("-") or "record"
 
 
 class KnowledgeStore:
@@ -79,48 +74,10 @@ class KnowledgeStore:
         if self._index is not None and self._indexed_head == head:
             return self._index
         records = tuple(parse_document(path) for path in markdown_paths(self.root))
-        self._validate_collection(records)
+        validate_records(self.root, records)
         self._index = KnowledgeIndex(records)
         self._indexed_head = head
         return self._index
-
-    def _validate_collection(self, records: Sequence[StoredKnowledge]) -> None:
-        by_id: dict[str, StoredKnowledge] = {}
-        names: dict[str, str] = {}
-        for record in records:
-            metadata = record.metadata
-            relative = record.path.relative_to(self.root)
-            expected_parent = Path(metadata.kind) / Path(metadata.collection)
-            if relative.parent != expected_parent:
-                raise KnowledgeValidationError(
-                    f"Knowledge record {metadata.id!r} must live under "
-                    f"{expected_parent.as_posix()}/."
-                )
-            if _KEBAB_FILE.fullmatch(relative.name) is None:
-                raise KnowledgeValidationError(
-                    f"Knowledge filename {relative.name!r} must be lowercase "
-                    "kebab-case."
-                )
-            if metadata.id in by_id:
-                raise KnowledgeValidationError(
-                    f"Knowledge id {metadata.id!r} is used by more than one record."
-                )
-            by_id[metadata.id] = record
-            for name in (metadata.id, *metadata.aliases):
-                folded = name.casefold()
-                owner = names.get(folded)
-                if owner is not None and owner != metadata.id:
-                    raise KnowledgeValidationError(
-                        f"Knowledge name {name!r} is ambiguous between records."
-                    )
-                names[folded] = metadata.id
-        for record in records:
-            for relation in record.metadata.related:
-                if relation.record not in by_id:
-                    raise KnowledgeValidationError(
-                        f"Knowledge relation from {record.metadata.id!r} points to "
-                        f"missing record {relation.record!r}."
-                    )
 
     @contextmanager
     def _mutation_lock(self) -> Iterator[None]:
@@ -232,7 +189,7 @@ class KnowledgeStore:
     def _available_identifier(
         self, kind: str, title: str, occupied_names: set[str]
     ) -> str:
-        base = f"{kind}:{_slug(title)}"
+        base = f"{kind}:{slug(title)}"
         candidate = base
         suffix = 2
         while candidate.casefold() in occupied_names:
@@ -244,7 +201,7 @@ class KnowledgeStore:
         self, kind: str, collection: str, title: str, *, exclude: Path | None = None
     ) -> Path:
         directory = self.root / kind / Path(collection)
-        base = _slug(title)
+        base = slug(title)
         candidate = directory / f"{base}.md"
         suffix = 2
         while candidate.exists() and candidate != exclude:
@@ -585,7 +542,7 @@ class KnowledgeStore:
 
         return build(selected, depth)
 
-    def orientation(self) -> dict[str, object]:
+    def orientation(self) -> KnowledgeOrientation:
         """Return compact vocabulary and a two-level tree for generated prompts."""
         index = self._load_index()
         active = [

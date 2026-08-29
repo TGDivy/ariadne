@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import pytest
 from fastmcp import Client
 
+from ariadne.codex.resolver import resolve_profile, with_knowledge_orientation
 from ariadne.knowledge import (
     KnowledgeConflict,
     KnowledgeMetadata,
@@ -18,8 +20,11 @@ from ariadne.knowledge.documents import StoredKnowledge, parse_document, render_
 from ariadne.knowledge.orientation import render_orientation
 from ariadne.knowledge.search import KnowledgeIndex
 from ariadne.knowledge.store import KnowledgeStore
+from ariadne.knowledge.validation import validate_repository
 from ariadne.mcp import knowledge as knowledge_tools
 from ariadne.mcp.server import create_server
+from ariadne.profile import MAIL_PROFILE
+from ariadne.scripts.knowledge import main as validate_knowledge_main
 
 NOW = datetime(2026, 8, 29, 10, tzinfo=UTC)
 
@@ -247,6 +252,76 @@ def test_browse_and_orientation_expose_a_two_level_human_map(
     assert "Relationships: supports (2)" in rendered
 
 
+def test_shared_orientation_function_enriches_a_resolved_profile(
+    knowledge_repository: Path,
+) -> None:
+    profile = resolve_profile(
+        MAIL_PROFILE,
+        vault=knowledge_repository,
+        human="Divy",
+    )
+
+    enriched = with_knowledge_orientation(profile, knowledge_repository)
+
+    assert enriched.developer_instruction_sources[-1] == (
+        "generated/knowledge-orientation"
+    )
+    assert "booking/\n  travel/" in enriched.developer_instructions
+    assert "Kinds: booking (1), goal (1), plan (1)" in (enriched.developer_instructions)
+
+
+def test_whole_repository_validation_checks_records_and_relationships(
+    knowledge_repository: Path,
+) -> None:
+    report = validate_repository(knowledge_repository)
+
+    assert report.records == 3
+    assert report.relationships == 2
+    assert report.archived == 0
+
+
+def test_whole_repository_validation_rejects_a_broken_relationship(
+    knowledge_repository: Path,
+) -> None:
+    path = knowledge_repository / "goal/health/running.md"
+    record = parse_document(path)
+    broken = record.metadata.model_copy(
+        update={
+            "related": (
+                KnowledgeRelation(record="person:missing", relation="involves"),
+            )
+        }
+    )
+    path.write_bytes(render_document(broken, record.body))
+
+    with pytest.raises(KnowledgeValidationError, match="missing record"):
+        validate_repository(knowledge_repository)
+
+
+def test_whole_repository_validation_rejects_a_stale_title_filename(
+    knowledge_repository: Path,
+) -> None:
+    original = knowledge_repository / "plan/running/windsor-trail-run.md"
+    original.rename(original.with_name("old-title.md"))
+
+    with pytest.raises(KnowledgeValidationError, match="does not match title"):
+        validate_repository(knowledge_repository)
+
+
+def test_validation_command_reports_a_compact_summary(
+    knowledge_repository: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["ariadne-knowledge", str(knowledge_repository)])
+
+    validate_knowledge_main()
+
+    assert capsys.readouterr().out == (
+        "Knowledge is valid: 3 records, 2 relationships, 0 archived.\n"
+    )
+
+
 def test_create_generates_id_path_and_timestamps_then_pushes(
     knowledge_repository: Path,
 ) -> None:
@@ -298,6 +373,24 @@ def test_update_uses_latest_record_updates_time_and_moves_generated_path(
     assert updated.metadata.id == "plan:windsor-2026"
     assert updated.metadata.updated_at > original.metadata.updated_at
     assert git(knowledge_repository, "status", "--porcelain") == ""
+
+
+def test_title_and_collection_moves_preserve_id_and_relationships(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+
+    renamed = store.update("plan:windsor-2026", title="Windsor Race Day")
+    recollected = store.update("plan:windsor-2026", collection="2026/running")
+    booking = store.read(("booking:trainline-windsor",))[0]
+
+    assert renamed.metadata.id == "plan:windsor-2026"
+    assert recollected.metadata.id == "plan:windsor-2026"
+    assert not (knowledge_repository / "plan/running/windsor-trail-run.md").exists()
+    assert (knowledge_repository / "plan/2026/running/windsor-race-day.md").is_file()
+    assert any(
+        relationship.id == "plan:windsor-2026" for relationship in booking.relationships
+    )
 
 
 def test_archive_is_timestamped_and_hidden_without_deleting(

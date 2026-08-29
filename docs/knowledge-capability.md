@@ -73,11 +73,11 @@ Every record lives beneath at least a kind and collection. All folder and file
 segments are lowercase kebab-case:
 
 ```text
-people/friends/lily.md
-people/family/mum.md
-events/running/windsor-trail-run-2026.md
-goals/health/half-marathon.md
-projects/ariadne/overview.md
+person/friends/lily.md
+person/family/mum.md
+event/running/windsor-trail-run-2026.md
+goal/health/half-marathon.md
+project/ariadne/overview.md
 journal/2026/2026-08-29.md
 scratch/ariadne/knowledge-search.md
 ```
@@ -160,11 +160,11 @@ the canonical store:
 ```text
 Current knowledge structure:
 
-people/
+person/
   family/
   friends/
 
-events/
+event/
   running/
   travel/
 
@@ -176,6 +176,35 @@ Relationships: depends-on, involves, supports, supersedes
 Only a shallow tree and current vocabulary belong in every prompt. Iris can
 browse deeper on demand. Static developer instructions explain when and why to
 use knowledge; the search tool description explains its actual algorithm.
+
+The shared `with_knowledge_orientation` assembly function already applies this
+generated section to a resolved turn profile and is used by the behaviour lab.
+A marked cutover TODO identifies where it should become part of every applicable
+production turn after the live records are ready.
+
+## Repository validation
+
+`ariadne-knowledge [ROOT]` performs a read-only whole-repository check suitable
+for local use and automation. It validates every Markdown front matter envelope,
+the `kind/collection/name.md` location, generated lowercase title filename,
+timestamps, unique IDs and aliases, relationship targets, self-links, and
+duplicate edges. A moved record remains valid when its path agrees with its
+semantic fields because all references use its stable ID.
+
+The authoritative GitHub workflow belongs in the private Thread repository, not
+this application repository, and should be added during the manual cutover. It
+needs no model, mail, calendar, or Telegram credentials: it only checks out the
+records, installs the pinned Ariadne validator, and runs:
+
+```text
+ariadne-knowledge .
+```
+
+A local pre-commit hook can run the same command with `pass_filenames: false`.
+Validation intentionally scans the complete collection so cross-record links can
+be proven. At the expected hundreds-to-low-thousands scale this is lightweight;
+CI should remain authoritative and the hook can stay optional if its measured
+startup cost becomes annoying.
 
 ## Git and concurrency
 
@@ -198,6 +227,6 @@ pre-emptively leaking storage concurrency into the model API.
 
 This capability PR does not enable the tools in production profiles, modify the
 live prompts, convert the Thread, or change Codex's working directory. After the
-manual conversion has been reviewed, a separate cutover can inject generated
-orientation, enable all six operations for Telegram and background turns, and
-remove direct Git and folder-editing instructions.
+manual conversion has been reviewed, a separate cutover can activate the shared
+orientation assembly for production, enable all six operations for Telegram and
+background turns, and remove direct Git and folder-editing instructions.

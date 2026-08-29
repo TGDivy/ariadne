@@ -18,6 +18,9 @@ dependencies = [
     "python-telegram-bot>=22.8",
 ]
 
+[project.scripts]
+ariadne-knowledge = "ariadne.scripts.knowledge:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
