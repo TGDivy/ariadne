@@ -24,10 +24,28 @@ NETWORK_DOMAINS = (
     "127.0.0.1",
 )
 
+CALENDAR_TOOLS = (
+    "list_calendars",
+    "search_calendar",
+    "read_calendar_event",
+    "calendar_free_busy",
+    "create_calendar_event",
+    "update_calendar_event",
+    "delete_calendar_event",
+    "respond_to_calendar_invitation",
+)
+
+CALENDAR_ENVIRONMENT_NAMES = (
+    "ARIADNE_ICLOUD_USERNAME",
+    "ARIADNE_ICLOUD_APP_PASSWORD",
+    "ARIADNE_CALENDAR_TIMEZONE",
+    "ARIADNE_CALENDAR_DEFAULT",
+)
+
 TELEGRAM_PROFILE = TurnProfile(
     name="telegram",
     model="gpt-5.6-luna",
-    effort=ReasoningEffort.low,
+    effort=ReasoningEffort.high,
     web_search="disabled",
     instruction_documents=("base", "telegram"),
     developer_documents=("grounding", "ariadne"),
@@ -38,14 +56,7 @@ TELEGRAM_PROFILE = TurnProfile(
         "search_mail",
         "read_mail",
         "read_mail_thread",
-        "list_calendars",
-        "search_calendar",
-        "read_calendar_event",
-        "calendar_free_busy",
-        "create_calendar_event",
-        "update_calendar_event",
-        "delete_calendar_event",
-        "respond_to_calendar_invitation",
+        *CALENDAR_TOOLS,
         *KNOWLEDGE_TOOLS,
     ),
     thread_policy="shared",
@@ -63,19 +74,16 @@ TELEGRAM_PROFILE = TurnProfile(
         "ARIADNE_TELEGRAM_STATE",
         "ARIADNE_MAIL_USERNAME",
         "ARIADNE_MAIL_APP_PASSWORD",
-        "ARIADNE_ICLOUD_USERNAME",
-        "ARIADNE_ICLOUD_APP_PASSWORD",
-        "ARIADNE_CALENDAR_TIMEZONE",
-        "ARIADNE_CALENDAR_DEFAULT",
+        *CALENDAR_ENVIRONMENT_NAMES,
         KNOWLEDGE_ROOT_ENVIRONMENT,
     ),
 )
 
 MAIL_PROFILE = TurnProfile(
     name="mail",
-    model="gpt-5.6-luna",
+    model="gpt-5.6-terra",
     effort=ReasoningEffort.medium,
-    web_search="disabled",
+    web_search="live",
     instruction_documents=("base", "mail"),
     developer_documents=("grounding", "ariadne"),
     enabled_tools=(
@@ -83,6 +91,7 @@ MAIL_PROFILE = TurnProfile(
         "send_telegram_message",
         "prepare_files",
         "triage_current_mail",
+        *CALENDAR_TOOLS,
         *KNOWLEDGE_TOOLS,
     ),
     thread_policy="fresh-per-event",
@@ -98,6 +107,7 @@ MAIL_PROFILE = TurnProfile(
         "TELEGRAM_ALLOWED_USER_ID",
         "ARIADNE_MAIL_JOB_ID",
         "ARIADNE_MAIL_STATE",
+        *CALENDAR_ENVIRONMENT_NAMES,
         KNOWLEDGE_ROOT_ENVIRONMENT,
     ),
 )

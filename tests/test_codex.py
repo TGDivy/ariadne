@@ -416,6 +416,14 @@ async def test_codex_conversation_emits_the_cumulative_turn_usage_delta_once(
     _ = [event async for event in conversation.stream_turn("First question")]
     _ = [event async for event in conversation.stream_turn("Second question")]
 
+    assert conversation.last_turn_token_usage == TokenUsageBreakdown(
+        inputTokens=20,
+        cachedInputTokens=10,
+        outputTokens=5,
+        reasoningOutputTokens=2,
+        totalTokens=25,
+    )
+
     values = {
         metric.name: tuple(
             point.value for point in metric.data.data_points if hasattr(point, "value")

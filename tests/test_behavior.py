@@ -4,14 +4,22 @@ from unittest.mock import Mock
 
 import pytest
 
-from ariadne.behavior import SCENARIOS, fake_knowledge, fake_mcp, get_scenario
+from ariadne.behavior import (
+    SCENARIOS,
+    fake_calendar,
+    fake_knowledge,
+    fake_mcp,
+    get_scenario,
+)
 from ariadne.behavior.runner import (
     BehaviorReport,
     RecordedMessage,
     TimelineEntry,
     _redacted_environment,
+    _write_scenario,
     render_report,
 )
+from ariadne.knowledge.validation import validate_repository
 from ariadne.mcp import mcp as production_mcp
 from ariadne.mcp import server as production_server
 
@@ -32,6 +40,21 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         assert "do not edit the routing configuration" in prompt
         assert scenario.review_questions
         assert scenario.knowledge
+    assert SCENARIOS[0].calendar == ()
+    assert len(SCENARIOS[1].calendar) == 1
+
+
+def test_scenario_knowledge_is_also_valid_generated_orientation(
+    tmp_path: Path,
+) -> None:
+    for scenario in SCENARIOS:
+        workspace = tmp_path / scenario.identifier
+        workspace.mkdir()
+        _write_scenario(scenario, workspace)
+
+        report = validate_repository(workspace)
+
+        assert report.records == len(scenario.knowledge)
 
 
 def test_scenario_lookup_rejects_unknown_names() -> None:
@@ -67,6 +90,14 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "send_telegram_message",
         "prepare_files",
         "triage_current_mail",
+        "list_calendars",
+        "search_calendar",
+        "read_calendar_event",
+        "calendar_free_busy",
+        "create_calendar_event",
+        "update_calendar_event",
+        "delete_calendar_event",
+        "respond_to_calendar_invitation",
         "search_knowledge",
         "browse_knowledge",
         "read_knowledge",
@@ -143,12 +174,65 @@ async def test_fake_knowledge_is_seeded_and_mutable(
     ]
 
 
+async def test_fake_calendar_is_seeded_and_mutable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = tmp_path / "calls.jsonl"
+    calendar = tmp_path / "calendar.json"
+    calendar.write_text(
+        json.dumps(
+            {
+                "timezone": "Europe/London",
+                "calendars": [
+                    {
+                        "id": "scenario-calendar",
+                        "name": "Personal",
+                        "supports_events": True,
+                        "is_default": True,
+                    }
+                ],
+                "events": [event.payload() for event in SCENARIOS[1].calendar],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
+    monkeypatch.setenv(fake_calendar.CALENDAR_ENVIRONMENT, str(calendar))
+
+    found = fake_calendar.search_calendar("2026-08-30", "2026-08-31", "Windsor")
+    created = fake_calendar.create_calendar_event(
+        "Train to Windsor",
+        "2026-08-30T07:27:00+01:00",
+        "2026-08-30T08:44:00+01:00",
+    )
+    updated = fake_calendar.update_calendar_event(
+        created["id"], description="Change at Staines."
+    )
+
+    assert found["events"][0]["id"] == "scenario-race-event"
+    assert updated["description"] == "Change at Staines."
+    assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
+        "search_calendar",
+        "create_calendar_event",
+        "update_calendar_event",
+    ]
+
+
 def test_report_is_plain_reviewable_evidence() -> None:
     report = BehaviorReport(
         scenario="race-confirmation",
         model="gpt-test",
         reasoning_effort="medium",
         web_search="disabled",
+        duration_seconds=12.34,
+        token_usage={
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 50,
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "reasoning_output_tokens": 10,
+            "total_tokens": 120,
+        },
         enabled_capabilities=("send_telegram_message",),
         timeline=(TimelineEntry("activity", "Reading context…"),),
         messages=(RecordedMessage("final_answer", "Done."),),
@@ -163,6 +247,15 @@ def test_report_is_plain_reviewable_evidence() -> None:
         capability_calls=(
             {"tool": "send_telegram_message", "arguments": {"text": "Hi"}},
         ),
+        calendar_events=(
+            {
+                "title": "Windsor Trail Run",
+                "start": "2026-08-30T09:20:00+01:00",
+                "end": "2026-08-30T12:00:00+01:00",
+                "location": "Alexandra Gardens",
+                "busy": True,
+            },
+        ),
         commits=("abc123 Update plan",),
         workspace_patch="--- a/plan.md\n+++ b/plan.md\n",
         review_questions=("Was it useful?",),
@@ -171,9 +264,13 @@ def test_report_is_plain_reviewable_evidence() -> None:
     rendered = render_report(report)
 
     assert "# Behaviour run: race-confirmation" in rendered
+    assert "Duration: `12.3s`" in rendered
+    assert "reasoning output tokens `10`" in rendered
     assert "**activity:** Reading context…" in rendered
     assert "### final_answer\n\nDone." in rendered
     assert "`send_telegram_message`" in rendered
     assert "`send_telegram_message`: completed" in rendered
+    assert "## Calendar after turn" in rendered
+    assert "**Windsor Trail Run**" in rendered
     assert "abc123 Update plan" in rendered
     assert "Was it useful?" in rendered

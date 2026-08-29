@@ -8,7 +8,13 @@ from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
 from ariadne.knowledge.capability import ROOT_ENVIRONMENT
 from ariadne.knowledge.capability import TOOLS as KNOWLEDGE_TOOLS
-from ariadne.profile import MAIL_PROFILE, PROFILES, TELEGRAM_PROFILE
+from ariadne.profile import (
+    CALENDAR_ENVIRONMENT_NAMES,
+    CALENDAR_TOOLS,
+    MAIL_PROFILE,
+    PROFILES,
+    TELEGRAM_PROFILE,
+)
 from ariadne.scripts.profile import profile_payload, render_profile
 
 TELEGRAM_SETTINGS = CodexTurnSettings(
@@ -17,9 +23,9 @@ TELEGRAM_SETTINGS = CodexTurnSettings(
     web_search="live",
 )
 MAIL_SETTINGS = CodexTurnSettings(
-    model="gpt-5.6-luna",
+    model="gpt-5.6-terra",
     effort=ReasoningEffort.medium,
-    web_search="disabled",
+    web_search="live",
 )
 
 
@@ -36,8 +42,15 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert "send_telegram_message" in MAIL_PROFILE.enabled_tools
     assert "react" not in MAIL_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in MAIL_PROFILE.mcp_environment_names
+    assert MAIL_PROFILE.enabled_tools[4:12] == CALENDAR_TOOLS
+    assert set(CALENDAR_ENVIRONMENT_NAMES).issubset(MAIL_PROFILE.mcp_environment_names)
 
     assert TELEGRAM_PROFILE.name == "telegram"
+    assert TELEGRAM_PROFILE.settings == CodexTurnSettings(
+        model="gpt-5.6-luna",
+        effort=ReasoningEffort.high,
+        web_search="disabled",
+    )
     assert TELEGRAM_PROFILE.instruction_documents == ("base", "telegram")
     assert TELEGRAM_PROFILE.developer_documents == ("grounding", "ariadne")
     assert TELEGRAM_PROFILE.thread_policy == "shared"
@@ -199,6 +212,11 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert "structure and links" in profile.base_instructions
     assert "anything suspicious or uncertain" in profile.base_instructions
     assert "with `send_telegram_message`" in profile.base_instructions
+    assert "The incoming message is an observation" in profile.base_instructions
+    assert "Search the relevant calendar before writing" in " ".join(
+        profile.base_instructions.split()
+    )
+    assert "Live web search is enabled." in profile.developer_instructions
 
 
 def test_profile_inspection_never_contains_environment_values(

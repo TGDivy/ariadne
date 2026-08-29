@@ -55,6 +55,46 @@ class ScenarioKnowledge:
 
 
 @dataclass(frozen=True, slots=True)
+class ScenarioCalendarEvent:
+    """One event exposed by the disposable Calendar capability."""
+
+    id: str
+    title: str
+    start: str
+    end: str
+    description: str | None = None
+    location: str | None = None
+    busy: bool = True
+    status: str = "confirmed"
+
+    def payload(self) -> dict[str, object]:
+        all_day = "T" not in self.start
+        return {
+            "id": self.id,
+            "series_id": self.id,
+            "calendar_id": "scenario-calendar",
+            "calendar": "Personal",
+            "uid": f"{self.id}@ariadne.test",
+            "etag": f"{self.id}-etag",
+            "title": self.title,
+            "start": self.start,
+            "end": self.end,
+            "all_day": all_day,
+            "timezone": None if all_day else "Europe/London",
+            "description": self.description,
+            "location": self.location,
+            "status": self.status,
+            "busy": self.busy,
+            "recurrence": None,
+            "recurrence_id": None,
+            "is_occurrence": False,
+            "organizer": None,
+            "attendees": [],
+            "alarms": [],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BehaviorScenario:
     """A production-shaped event with explicit points for human review."""
 
@@ -65,6 +105,7 @@ class BehaviorScenario:
     route: MailRoute
     files: tuple[ScenarioFile, ...]
     knowledge: tuple[ScenarioKnowledge, ...]
+    calendar: tuple[ScenarioCalendarEvent, ...]
     review_questions: tuple[str, ...]
 
     def turn_input(self, workspace: Path) -> str:

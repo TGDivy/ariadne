@@ -14,7 +14,9 @@ from ariadne.mcp.mail import triage_current_mail as real_triage_current_mail
 from ariadne.mcp.runtime import runtime_status as real_runtime_status
 from ariadne.mcp.telegram import prepare_files as real_prepare_files
 from ariadne.mcp.telegram import send_telegram_message as real_send_telegram_message
+from ariadne.profile import MAIL_PROFILE
 
+from .fake_calendar import register_tools as register_calendar_tools
 from .fake_knowledge import register_tools as register_knowledge_tools
 from .recording import STATE_ENVIRONMENT as STATE_ENVIRONMENT
 from .recording import record_call
@@ -26,18 +28,7 @@ def runtime_status() -> dict[str, Any]:
     return {
         "server": {"name": "ariadne-behaviour", "version": "0.1.0"},
         "scenario": True,
-        "capabilities": [
-            "runtime_status",
-            "send_telegram_message",
-            "prepare_files",
-            "triage_current_mail",
-            "search_knowledge",
-            "browse_knowledge",
-            "read_knowledge",
-            "create_knowledge",
-            "update_knowledge",
-            "archive_knowledge",
-        ],
+        "capabilities": list(MAIL_PROFILE.enabled_tools),
     }
 
 
@@ -101,6 +92,7 @@ def create_server() -> FastMCP:
     server.tool(send_telegram_message, annotations=harmless)
     server.tool(prepare_files, annotations=harmless)
     server.tool(triage_current_mail, annotations=harmless)
+    register_calendar_tools(server, harmless)
     register_knowledge_tools(server, harmless)
     return server
 

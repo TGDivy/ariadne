@@ -50,7 +50,7 @@ web_search = "live"
     assert settings.human_name == "Example User"
     assert settings.codex_turn_settings == CodexTurnSettings(
         model="gpt-5.6-luna",
-        effort=ReasoningEffort.low,
+        effort=ReasoningEffort.high,
         web_search="disabled",
     )
     assert settings.mail_turn_settings == CodexTurnSettings(
