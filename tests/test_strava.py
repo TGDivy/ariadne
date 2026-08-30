@@ -29,9 +29,7 @@ class Response:
 def test_authorization_url_requests_only_read_and_private_activity_scopes(
     tmp_path: Path,
 ) -> None:
-    client = StravaClient(
-        123, "secret", StravaTokenState(tmp_path / "tokens.sqlite3")
-    )
+    client = StravaClient(123, "secret", StravaTokenState(tmp_path / "tokens.sqlite3"))
 
     url = client.authorization_url("http://127.0.0.1:8765/callback", "nonce")
     query = parse_qs(urlsplit(url).query)
