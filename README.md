@@ -67,6 +67,37 @@ live web research for the running process. Each change starts a new in-memory
 Codex conversation. Use `/stop` to ask Codex to interrupt the active turn; it
 cannot undo work that already completed.
 
+### Private Strava training data
+
+Strava is opt-in and read-only. It exposes activity metrics and aggregate run/ride
+totals to Iris, but deliberately omits route traces, GPS coordinates, and
+free-form activity notes. It is useful for a grounded training conversation, not
+for medical advice or automatic workout notifications.
+
+1. Register a personal application in [Strava API Settings](https://www.strava.com/settings/api). Set its callback domain to `localhost` or `127.0.0.1` and use the callback URL below.
+2. Add the client ID and secret to the private config:
+
+   ```toml
+   [strava]
+   enabled = true
+   client_id = 12345
+   client_secret = "YOUR_STRAVA_CLIENT_SECRET"
+   state = "~/.local/state/ariadne/strava.sqlite3"
+   redirect_uri = "http://127.0.0.1:8765/strava/callback"
+   ```
+
+3. Run the one-time OAuth flow locally, open the displayed URL, and approve the requested `read` and `activity:read_all` scopes:
+
+   ```bash
+   uv run python -m ariadne strava authorize
+   uv run python -m ariadne strava status
+   ```
+
+The refresh token and short-lived access token are stored with mode `0600` in the
+separate state database, never in the repository or MCP results. Ariadne refreshes
+tokens when needed; Strava rotates refresh tokens, so do not copy an old one into
+configuration.
+
 Telegram, mail, and each revisit attention level have independent turn
 profiles. To inspect the exact model, prompts, tools, thread behavior,
 permissions, and forwarded environment variable names that a surface will use,

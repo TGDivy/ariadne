@@ -119,6 +119,10 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "list_wakeups",
         "update_wakeup",
         "cancel_wakeup",
+        "get_strava_athlete",
+        "list_strava_activities",
+        "read_strava_activity",
+        "get_strava_athlete_stats",
     ]
 
 

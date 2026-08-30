@@ -86,6 +86,40 @@ web_search = "live"
     )
 
 
+def test_enabled_strava_exports_credentials_only_to_the_mcp_environment(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "state" / "strava.sqlite3"
+    config = write_config(
+        tmp_path,
+        extra=f'''\
+
+[strava]
+enabled = true
+client_id = 12345
+client_secret = "strava-secret"
+state = "{state}"
+redirect_uri = "http://127.0.0.1:8765/strava/callback"
+''',
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.mcp_environment["ARIADNE_STRAVA_CLIENT_ID"] == "12345"
+    assert settings.mcp_environment["ARIADNE_STRAVA_CLIENT_SECRET"] == "strava-secret"
+    assert settings.mcp_environment["ARIADNE_STRAVA_STATE"] == str(state.resolve())
+    assert "strava-secret" not in json.dumps(settings_payload(settings))
+
+
+def test_enabled_strava_requires_both_app_credentials(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path, extra="\n[strava]\nenabled = true\nclient_id = 123\n"
+    )
+
+    with pytest.raises(ValidationError, match="client_id and client_secret"):
+        load_settings(config, environ={})
+
+
 def test_ariadne_config_selects_an_alternate_toml(tmp_path: Path) -> None:
     config = write_config(tmp_path)
 

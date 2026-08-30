@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openai_codex.generated.v2_all import ReasoningEffort
@@ -230,6 +231,66 @@ class RevisitConfig(BaseModel):
         return value.expanduser() if isinstance(value, Path) else value
 
 
+class StravaConfig(BaseModel):
+    """Opt-in credentials and local state for private, read-only Strava data."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    client_id: PositiveInt | None = None
+    client_secret: SecretStr | None = None
+    state: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/strava.sqlite3"
+        ).expanduser()
+    )
+    redirect_uri: str = "http://127.0.0.1:8765/strava/callback"
+
+    @field_validator("client_secret", mode="before")
+    @classmethod
+    def empty_client_secret_is_absent(cls, value: object) -> object:
+        if isinstance(value, str):
+            return SecretStr(value.strip()) if value.strip() else None
+        return value
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def expand_state_path(cls, value: object) -> object:
+        if isinstance(value, str):
+            return Path(value).expanduser()
+        return value.expanduser() if isinstance(value, Path) else value
+
+    @field_validator("redirect_uri", mode="before")
+    @classmethod
+    def require_local_http_redirect(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        candidate = value.strip()
+        parsed = urlsplit(candidate)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"localhost", "127.0.0.1"}
+            or parsed.port is None
+            or not parsed.path.startswith("/")
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "Strava redirect_uri must be a local http://localhost or "
+                "127.0.0.1 URL with a port and path."
+            )
+        return candidate
+
+    @model_validator(mode="after")
+    def require_complete_enabled_credentials(self) -> StravaConfig:
+        if self.enabled and (self.client_id is None or self.client_secret is None):
+            raise ValueError("Enabled Strava requires client_id and client_secret.")
+        has_credentials = self.client_id is not None or self.client_secret is not None
+        if not self.enabled and has_credentials:
+            raise ValueError("Strava client credentials require enabled = true.")
+        return self
+
+
 class TelemetryConfig(BaseModel):
     """Opt-in OTLP/HTTP export configuration."""
 
@@ -286,6 +347,7 @@ class Settings(BaseModel):
     mail: MailConfig = Field(default_factory=MailConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     revisits: RevisitConfig = Field(default_factory=RevisitConfig)
+    strava: StravaConfig = Field(default_factory=StravaConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
 
@@ -397,6 +459,15 @@ class Settings(BaseModel):
             values["ARIADNE_CALENDAR_TIMEZONE"] = self.calendar.timezone
             if self.calendar.default_calendar is not None:
                 values["ARIADNE_CALENDAR_DEFAULT"] = self.calendar.default_calendar
+        if self.strava.enabled:
+            assert self.strava.client_id is not None
+            assert self.strava.client_secret is not None
+            values["ARIADNE_STRAVA_CLIENT_ID"] = str(self.strava.client_id)
+            values["ARIADNE_STRAVA_CLIENT_SECRET"] = (
+                self.strava.client_secret.get_secret_value()
+            )
+            values["ARIADNE_STRAVA_STATE"] = str(self.strava.state.resolve())
+            values["ARIADNE_STRAVA_REDIRECT_URI"] = self.strava.redirect_uri
         return values
 
     @property
@@ -509,6 +580,13 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "revisits": {
             "state": str(settings.revisits.state),
             "poll_interval_seconds": settings.revisits.poll_interval_seconds,
+        },
+        "strava": {
+            "enabled": settings.strava.enabled,
+            "client_id": settings.strava.client_id,
+            "credentials_configured": settings.strava.client_secret is not None,
+            "state": str(settings.strava.state),
+            "redirect_uri": settings.strava.redirect_uri,
         },
         "telemetry": {
             "enabled": settings.telemetry.enabled,

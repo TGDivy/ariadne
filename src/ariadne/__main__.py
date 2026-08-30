@@ -4,9 +4,12 @@ import argparse
 import asyncio
 import json
 import logging
+import secrets
 from contextlib import suppress
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from pydantic import ValidationError
 from telegram import BotCommand, Update
@@ -26,6 +29,12 @@ from .config import Settings, config_path, load_settings, settings_payload
 from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
 from .revisit.runtime import RevisitLoop
+from .strava import (
+    StravaAuthorizationRequired,
+    StravaClient,
+    StravaError,
+    StravaTokenState,
+)
 from .telegram.bot import AriadneBot
 from .telemetry import configure_telemetry
 
@@ -69,6 +78,88 @@ def _load_configuration(path: Path | None) -> Settings:
         raise SystemExit(2) from error
 
 
+def _strava_client(settings: Settings) -> StravaClient:
+    if not settings.strava.enabled:
+        raise ValueError("Strava is disabled. Set [strava].enabled = true first.")
+    assert settings.strava.client_id is not None
+    assert settings.strava.client_secret is not None
+    return StravaClient(
+        settings.strava.client_id,
+        settings.strava.client_secret.get_secret_value(),
+        StravaTokenState(settings.strava.state.resolve()),
+    )
+
+
+def _strava_status(settings: Settings) -> dict[str, object]:
+    tokens = _strava_client(settings).state.load()
+    return {
+        "configured": True,
+        "connected": tokens is not None,
+        "athlete_id": tokens.athlete_id if tokens is not None else None,
+        "scope": tokens.scope if tokens is not None else None,
+        "expires_at": tokens.expires_at if tokens is not None else None,
+    }
+
+
+def _authorize_strava(settings: Settings) -> None:
+    """Receive one localhost OAuth callback and exchange its short-lived code."""
+    client = _strava_client(settings)
+    redirect = urlsplit(settings.strava.redirect_uri)
+    assert redirect.hostname is not None
+    assert redirect.port is not None
+    expected_state = secrets.token_urlsafe(32)
+    callback: dict[str, str] = {}
+
+    class CallbackHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+            parsed = urlsplit(self.path)
+            query = parse_qs(parsed.query)
+            if parsed.path != redirect.path:
+                self.send_error(404)
+                return
+            if query.get("state", [None])[0] != expected_state:
+                self.send_error(400, "The Strava authorization state did not match.")
+                return
+            if "error" in query:
+                callback["error"] = query["error"][0]
+                self.send_error(400, "Strava authorization was not granted.")
+                return
+            code = query.get("code", [None])[0]
+            if code is None:
+                self.send_error(400, "Strava did not return an authorization code.")
+                return
+            callback["code"] = code
+            callback["scope"] = query.get("scope", [""])[0]
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(
+                b"<p>Strava is connected to Ariadne. You can close this tab.</p>"
+            )
+
+        def log_message(self, *_: object) -> None:
+            return None
+
+    server = HTTPServer((redirect.hostname, redirect.port), CallbackHandler)
+    server.timeout = 300
+    try:
+        print("Open this private Strava authorization URL in a browser:")
+        print(client.authorization_url(settings.strava.redirect_uri, expected_state))
+        print("Waiting up to five minutes for the localhost callback…")
+        server.handle_request()
+    finally:
+        server.server_close()
+    if "error" in callback:
+        raise ValueError(f"Strava authorization was not granted: {callback['error']}")
+    code = callback.get("code")
+    if code is None:
+        raise ValueError(
+            "No Strava authorization callback arrived within five minutes."
+        )
+    result = client.exchange_authorization_code(code)
+    print(json.dumps({"connected": True, **result}, indent=2))
+
+
 def main() -> None:
     """Start Ariadne or inspect its typed configuration."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -76,6 +167,8 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command")
     config_parser = subparsers.add_parser("config", help="Validate configuration")
     config_parser.add_argument("action", choices=("check", "show"))
+    strava_parser = subparsers.add_parser("strava", help="Connect or inspect Strava")
+    strava_parser.add_argument("action", choices=("authorize", "status"))
     args = parser.parse_args()
 
     configure_logging()
@@ -85,6 +178,16 @@ def main() -> None:
             print(json.dumps(settings_payload(settings), indent=2))
         else:
             print(f"Configuration is valid: {config_path(args.config)}")
+        return
+    if args.command == "strava":
+        try:
+            if args.action == "authorize":
+                _authorize_strava(settings)
+            else:
+                print(json.dumps(_strava_status(settings), indent=2))
+        except (StravaAuthorizationRequired, StravaError, ValueError) as error:
+            LOGGER.error("Strava setup failed: %s", error)
+            raise SystemExit(2) from error
         return
 
     mail_settings = settings.mail_settings

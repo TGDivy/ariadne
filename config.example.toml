@@ -31,6 +31,14 @@ timezone = "UTC"
 state = "~/.local/state/ariadne/revisits.sqlite3"
 poll_interval_seconds = 15
 
+[strava]
+enabled = false
+# Register a personal app at https://www.strava.com/settings/api, then set these.
+# client_id = 12345
+# client_secret = ""
+state = "~/.local/state/ariadne/strava.sqlite3"
+redirect_uri = "http://127.0.0.1:8765/strava/callback"
+
 [telemetry]
 enabled = false
 service_name = "ariadne"

@@ -96,6 +96,12 @@ REVISIT_ACTIVITY = {
     "update_wakeup": "Updating a scheduled wake-up…",
     "cancel_wakeup": "Cancelling a scheduled wake-up…",
 }
+STRAVA_ACTIVITY = {
+    "get_strava_athlete": "Checking Strava…",
+    "list_strava_activities": "Reading Strava activities…",
+    "read_strava_activity": "Reading a Strava activity…",
+    "get_strava_athlete_stats": "Reading Strava training totals…",
+}
 LOCAL_ACTIVITY = {
     "read_recent_telegram_messages": "Reading recent messages…",
     "request_telegram_file_delivery": "Preparing files…",
@@ -128,6 +134,8 @@ def _activity_message(item: object) -> str | None:
             return KNOWLEDGE_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in REVISIT_ACTIVITY:
             return REVISIT_ACTIVITY[item.tool]
+        if item.server == MCP_SERVER_NAME and item.tool in STRAVA_ACTIVITY:
+            return STRAVA_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in LOCAL_ACTIVITY:
             return LOCAL_ACTIVITY[item.tool]
         return "Using Ariadne's local capability…"
