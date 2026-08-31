@@ -1,9 +1,12 @@
 import json
+import sqlite3
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 
 import pytest
 from fastmcp import Client
@@ -13,6 +16,7 @@ from ariadne.knowledge import (
     KnowledgeConflict,
     KnowledgeMetadata,
     KnowledgeRelation,
+    KnowledgeSearchError,
     KnowledgeSyncError,
     KnowledgeValidationError,
 )
@@ -187,6 +191,47 @@ def test_search_is_or_ranked_prefix_stemmed_and_typo_tolerant(
     assert typo[0].id == "plan:windsor-2026"
     assert prefix[0].id == "booking:trainline-windsor"
     assert plural[0].id == "booking:trainline-windsor"
+
+
+def test_cached_search_index_serves_concurrent_worker_threads(
+    knowledge_repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ROOT_ENVIRONMENT, str(knowledge_repository))
+    knowledge_tools._STORES.clear()
+    assert knowledge_tools.search_knowledge("Windsor")["count"] == 2
+    queries = ("Windsor", "train", "running", "Windosr")
+    barrier = Barrier(len(queries) + 1)
+
+    def search(query: str) -> dict[str, object]:
+        barrier.wait()
+        return knowledge_tools.search_knowledge(query)
+
+    try:
+        with ThreadPoolExecutor(max_workers=len(queries)) as workers:
+            searches = [workers.submit(search, query) for query in queries]
+            barrier.wait()
+            results = [search.result() for search in searches]
+    finally:
+        knowledge_tools._STORES.clear()
+
+    assert all(result["count"] for result in results)
+
+
+def test_sqlite_search_failures_use_the_stable_knowledge_error(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+    store.search("Windsor")
+    assert store._index is not None
+    store._index._database.close()
+
+    with pytest.raises(
+        KnowledgeSearchError,
+        match="Private knowledge search is temporarily unavailable",
+    ) as raised:
+        store.search("Windsor")
+
+    assert isinstance(raised.value.__cause__, sqlite3.Error)
 
 
 def test_search_filters_dates_tags_collections_and_relationships(

@@ -214,5 +214,9 @@ class KnowledgeValidationError(KnowledgeError):
     """Stored or proposed knowledge does not satisfy the record contract."""
 
 
+class KnowledgeSearchError(KnowledgeError):
+    """The derived knowledge search index could not serve a query."""
+
+
 class KnowledgeSyncError(KnowledgeError):
     """The private knowledge repository cannot be synchronized safely."""

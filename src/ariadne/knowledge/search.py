@@ -7,10 +7,12 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from datetime import date
 from difflib import SequenceMatcher
+from threading import Lock
 
 from .documents import StoredKnowledge
 from .models import (
     KnowledgeRelationshipSummary,
+    KnowledgeSearchError,
     KnowledgeSearchResult,
     KnowledgeValidationError,
 )
@@ -119,7 +121,8 @@ class KnowledgeIndex:
                 self._incoming.setdefault(relation.record, []).append(
                     (record.metadata.id, relation.relation)
                 )
-        self._database = sqlite3.connect(":memory:")
+        self._database_lock = Lock()
+        self._database = sqlite3.connect(":memory:", check_same_thread=False)
         try:
             self._database.execute(
                 "CREATE VIRTUAL TABLE records USING fts5("
@@ -278,11 +281,19 @@ class KnowledgeIndex:
         scores: dict[str, float] = {}
         expression = _search_expression(query)
         if expression:
-            rows = self._database.execute(
-                "SELECT id, bm25(records, 0.0, 10.0, 8.0, 6.0, 5.0, 2.0, 1.0) "
-                "FROM records WHERE records MATCH ? ORDER BY 2",
-                (expression,),
-            )
+            try:
+                with self._database_lock:
+                    rows = self._database.execute(
+                        "SELECT id, "
+                        "bm25(records, 0.0, 10.0, 8.0, 6.0, 5.0, 2.0, 1.0) "
+                        "FROM records WHERE records MATCH ? ORDER BY 2",
+                        (expression,),
+                    ).fetchall()
+            except sqlite3.Error as error:
+                raise KnowledgeSearchError(
+                    "Private knowledge search is temporarily unavailable. "
+                    "Retry the search once."
+                ) from error
             scores.update((identifier, float(score)) for identifier, score in rows)
             for identifier, record in self._records.items():
                 matched, _, _ = self._lexical_evidence(record, query)

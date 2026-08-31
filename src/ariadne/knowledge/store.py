@@ -12,6 +12,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from pydantic import ValidationError
@@ -49,6 +50,7 @@ class KnowledgeStore:
             )
         self._index: KnowledgeIndex | None = None
         self._indexed_head: str | None = None
+        self._index_lock = RLock()
 
     def _git(self, *arguments: str) -> str:
         try:
@@ -70,14 +72,20 @@ class KnowledgeStore:
         return self._git("rev-parse", "HEAD")
 
     def _load_index(self) -> KnowledgeIndex:
-        head = self._head()
-        if self._index is not None and self._indexed_head == head:
+        with self._index_lock:
+            head = self._head()
+            if self._index is not None and self._indexed_head == head:
+                return self._index
+            records = tuple(parse_document(path) for path in markdown_paths(self.root))
+            validate_records(self.root, records)
+            self._index = KnowledgeIndex(records)
+            self._indexed_head = head
             return self._index
-        records = tuple(parse_document(path) for path in markdown_paths(self.root))
-        validate_records(self.root, records)
-        self._index = KnowledgeIndex(records)
-        self._indexed_head = head
-        return self._index
+
+    def _invalidate_index(self) -> None:
+        with self._index_lock:
+            self._index = None
+            self._indexed_head = None
 
     @contextmanager
     def _mutation_lock(self) -> Iterator[None]:
@@ -118,8 +126,7 @@ class KnowledgeStore:
             self._git("push", "--quiet")
         elif behind:
             self._git("merge", "--ff-only", "--quiet", upstream)
-        self._index = None
-        self._indexed_head = None
+        self._invalidate_index()
 
     @staticmethod
     def _validate_relationships(
@@ -230,8 +237,7 @@ class KnowledgeStore:
         self._git("add", "--", *relative)
         self._git("commit", "--quiet", "-m", message, "--", *relative)
         self._git("push", "--quiet")
-        self._index = None
-        self._indexed_head = None
+        self._invalidate_index()
 
     def _restore_uncommitted(self, previous: dict[Path, bytes | None]) -> None:
         relative = [str(path.relative_to(self.root)) for path in previous]
