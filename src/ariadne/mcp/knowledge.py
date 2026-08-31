@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from threading import Lock
 from typing import Literal
 
 from fastmcp import FastMCP
@@ -14,6 +15,7 @@ from ..knowledge.capability import ROOT_ENVIRONMENT
 from ..knowledge.store import KnowledgeStore
 
 _STORES: dict[Path, KnowledgeStore] = {}
+_STORES_LOCK = Lock()
 
 
 def _store() -> KnowledgeStore:
@@ -22,11 +24,12 @@ def _store() -> KnowledgeStore:
     except KeyError as error:
         raise ToolError("Private knowledge is not configured for this turn.") from error
     try:
-        store = _STORES.get(root)
-        if store is None:
-            store = KnowledgeStore(root)
-            _STORES[root] = store
-        return store
+        with _STORES_LOCK:
+            store = _STORES.get(root)
+            if store is None:
+                store = KnowledgeStore(root)
+                _STORES[root] = store
+            return store
     except KnowledgeError as error:
         raise ToolError(str(error)) from error
 
