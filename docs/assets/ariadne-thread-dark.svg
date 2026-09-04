@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400" role="img" aria-labelledby="title description">
+  <title id="title">Ariadne's thread</title>
+  <desc id="description">Three dotted threads weave through one another without a beginning or an end.</desc>
+  <path d="M104 295 C188 90 264 354 354 223 C440 98 486 89 572 226 C649 350 714 238 787 149 C862 58 945 145 1095 102" fill="none" stroke="#e6edf3" stroke-width="11" stroke-linecap="round" stroke-dasharray="1 28"/>
+  <path d="M108 102 C200 302 262 77 357 196 C446 307 530 353 614 202 C696 54 756 111 832 266 C901 407 983 252 1098 309" fill="none" stroke="#8db4ff" stroke-width="11" stroke-linecap="round" stroke-dasharray="1 28"/>
+  <path d="M104 210 C196 208 265 276 347 250 C457 216 499 130 595 157 C687 183 731 278 821 250 C933 215 999 133 1096 202" fill="none" stroke="#ff9b7d" stroke-width="11" stroke-linecap="round" stroke-dasharray="1 28"/>
+</svg>

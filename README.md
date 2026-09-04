@@ -10,7 +10,12 @@
 
 **A private, local-first companion system that connects a capable agent to one person through Telegram.**
 
-[How it works](#how-it-works) · [Quick start](#quick-start) · [Documentation](#documentation) · [Design boundaries](docs/architecture.md)
+[How it works](#how-it-works) · [Quick start](#quick-start) · [Guides](#guides)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ariadne-thread-dark.svg">
+  <img alt="Three dotted threads weaving together, representing a conversation with continuity." src="docs/assets/ariadne-thread-light.svg">
+</picture>
 
 </div>
 
@@ -22,24 +27,7 @@ It runs on the owner's machine and connects through a private Telegram conversat
 
 ## How it works
 
-```mermaid
-flowchart LR
-    person([You]) <-->|private conversation| telegram[Telegram]
-    telegram <--> ariadne[Ariadne runtime\non your machine]
-    ariadne <--> iris[Iris\nagent turn]
-
-    iris --> tools{Explicit capability boundary}
-    tools <--> thread[(Private Thread\nknowledge)]
-    tools <--> history[(Telegram history)]
-    tools -. opt-in .-> mail[Mail]
-    tools -. opt-in .-> calendar[Calendar]
-    tools --> revisits[One-off revisits]
-
-    classDef local fill:#E8F5E9,stroke:#2E7D32,color:#1B5E20;
-    class ariadne,thread,history,revisits local;
-```
-
-The dotted paths are optional integrations.
+You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent works through a small, explicit set of capabilities for durable personal context, conversation history, one-off revisits, and—when configured—Mail and Calendar. Your *Thread* remains a separate, owner-controlled Git repository.
 
 ## What is here today
 
@@ -73,17 +61,23 @@ uv run python -m ariadne
 
 The example configuration starts with Mail, Calendar, and telemetry disabled. See the [getting-started guide](docs/getting-started.md) before enabling anything optional.
 
-## Documentation
+## Guides
 
-| Guide | For |
-| --- | --- |
-| [Getting started](docs/getting-started.md) | Prerequisites, private configuration, and a safe first run. |
-| [Architecture and boundaries](docs/architecture.md) | How turns, data, capabilities, and integration authority fit together. |
-| [Operations reference](docs/operations.md) | Optional Mail, Calendar, revisits, telemetry, and maintenance commands. |
-| [Telegram live chat](docs/telegram-live-chat.md) | Rich-message behaviour, state, delivery, and manual testing. |
-| [Knowledge capability](docs/knowledge-capability.md) | The durable knowledge model and its capability contract. |
-| [Behaviour scenarios](docs/behaviour-scenarios.md) | Replayable, isolated judgement checks for companion behaviour. |
-| [Companion direction](docs/companion-direction.md) | Product intent and principles. |
+Start with the guide that matches what you need:
+
+- [Getting started](docs/getting-started.md) — prerequisites, private configuration, and a safe first run.
+- [Architecture and boundaries](docs/architecture.md) — turns, data ownership, capabilities, and integration authority.
+- [Operations reference](docs/operations.md) — optional Mail, Calendar, revisits, telemetry, and maintenance commands.
+
+<details>
+<summary>Reference guides</summary>
+
+- [Telegram live chat](docs/telegram-live-chat.md) — rich-message behaviour, state, delivery, and manual testing.
+- [Knowledge capability](docs/knowledge-capability.md) — the durable knowledge model and its capability contract.
+- [Behaviour scenarios](docs/behaviour-scenarios.md) — replayable, isolated judgement checks for companion behaviour.
+- [Companion direction](docs/companion-direction.md) — product intent and principles.
+
+</details>
 
 ## Development
 
