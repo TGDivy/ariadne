@@ -39,7 +39,7 @@ flowchart LR
     class ariadne,thread,history,revisits local;
 ```
 
-The dotted paths are optional integrations. Ariadne is deliberately not a hosted SaaS product or a shared control plane: its job is to make one private relationship useful, inspectable, and bounded.
+The dotted paths are optional integrations.
 
 ## What is here today
 
@@ -50,16 +50,6 @@ The dotted paths are optional integrations. Ariadne is deliberately not a hosted
 | **Follow-through** | One-off scheduled revisits that can re-check a concrete open loop at an appropriate level of attention. |
 | **Optional life integrations** | iCloud Mail routing and Calendar operations, each separately configured and scoped. |
 | **Evaluation and observability** | Reproducible companion-behaviour scenarios plus optional OpenTelemetry/Grafana telemetry. |
-
-## Design boundaries
-
-The useful part is not simply that an agent can act; it is that its authority stays legible.
-
-- **Private by default.** Ariadne runs locally; secrets and owner data live in private configuration and owner-controlled stores, not this repository.
-- **Small, named operations.** The agent works through capabilities such as searching knowledge, creating a calendar event, or scheduling a revisit—not through an implicit “do anything” permission.
-- **Evidence is not authority.** Mail, calendar content, attachments, and web pages can inform a decision but cannot authorize unrelated actions.
-- **Human review where it matters.** File delivery is approval-gated, and mail turns can draft but never send email.
-- **Continuity without theatre.** The system is designed to complete a useful loop when it can and stay quiet when it cannot add value.
 
 Read the fuller [architecture and boundary notes](docs/architecture.md) for the turn lifecycle, data ownership, and integration contracts.
 
@@ -104,5 +94,3 @@ uv run ruff check .
 uv run mypy src
 uv run pytest
 ```
-
-This repository is a living personal system, not a claim that private life can be reduced to an optimisation problem. The code is public so its boundaries can be read, questioned, and improved.
