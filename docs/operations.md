@@ -12,7 +12,7 @@ uv run ariadne mail --help
 uv run ariadne calendar update --help
 ```
 
-The usual production command is simply `ariadne`; `uv run ariadne` is convenient from a source checkout. Global options precede the command, for example `ariadne --config /private/config.toml --pretty calendar list`. Help and argument validation do not load configuration or contact a provider.
+The usual production service command is `ariadne serve`; `uv run ariadne serve` is convenient from a source checkout. Global options precede the command, for example `ariadne --config /private/config.toml --pretty calendar list`. Help and argument validation do not load configuration or contact a provider.
 
 Successful non-service commands write exactly one bounded JSON document to stdout. Compact one-line JSON is the default; `--pretty` only changes whitespace. A failed non-service command leaves stdout empty and writes one object of this shape to stderr. `serve` is long-running and retains human-readable operational logging instead:
 
