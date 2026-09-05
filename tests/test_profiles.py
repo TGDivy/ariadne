@@ -112,7 +112,7 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
         assert "ariadne calendar list|search|read|availability" in (
             resolved.base_instructions
         )
-        assert "--help" in resolved.base_instructions
+        assert "ariadne --help" in resolved.base_instructions
 
 
 def test_telegram_profile_is_complete_and_uses_dynamic_settings(
