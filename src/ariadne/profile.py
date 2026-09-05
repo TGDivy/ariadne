@@ -21,33 +21,11 @@ NETWORK_DOMAINS = (
     "registry.npmjs.org",
     "cdn.playwright.dev",
     "playwright.azureedge.net",
+    "imap.mail.me.com",
     "caldav.icloud.com",
     "*.icloud.com",
     "localhost",
     "127.0.0.1",
-)
-
-CALENDAR_TOOLS = (
-    "list_calendars",
-    "search_calendar_events",
-    "read_calendar_event",
-    "check_calendar_availability",
-    "create_calendar_event",
-    "update_calendar_event",
-    "delete_calendar_event",
-    "respond_to_calendar_invitation",
-)
-
-CALENDAR_ENVIRONMENT_NAMES = (
-    "ARIADNE_ICLOUD_USERNAME",
-    "ARIADNE_ICLOUD_APP_PASSWORD",
-    "ARIADNE_CALENDAR_TIMEZONE",
-    "ARIADNE_CALENDAR_DEFAULT",
-)
-
-MAIL_READ_ENVIRONMENT_NAMES = (
-    "ARIADNE_MAIL_USERNAME",
-    "ARIADNE_MAIL_APP_PASSWORD",
 )
 
 TELEGRAM_PROFILE = TurnProfile(
@@ -61,10 +39,6 @@ TELEGRAM_PROFILE = TurnProfile(
         "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
-        "search_mail",
-        "read_mail",
-        "read_mail_thread",
-        *CALENDAR_TOOLS,
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
     ),
@@ -81,8 +55,6 @@ TELEGRAM_PROFILE = TurnProfile(
         "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
         "ARIADNE_TELEGRAM_STATE",
-        *MAIL_READ_ENVIRONMENT_NAMES,
-        *CALENDAR_ENVIRONMENT_NAMES,
         REVISIT_STATE_ENVIRONMENT,
         KNOWLEDGE_ROOT_ENVIRONMENT,
     ),
@@ -99,11 +71,7 @@ MAIL_PROFILE = TurnProfile(
         "send_telegram_message",
         "read_recent_telegram_messages",
         "request_telegram_file_delivery",
-        "search_mail",
-        "read_mail",
-        "read_mail_thread",
         "record_current_mail_decision",
-        *CALENDAR_TOOLS,
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
     ),
@@ -121,8 +89,6 @@ MAIL_PROFILE = TurnProfile(
         "ARIADNE_TELEGRAM_STATE",
         "ARIADNE_MAIL_JOB_ID",
         "ARIADNE_MAIL_STATE",
-        *MAIL_READ_ENVIRONMENT_NAMES,
-        *CALENDAR_ENVIRONMENT_NAMES,
         REVISIT_STATE_ENVIRONMENT,
         KNOWLEDGE_ROOT_ENVIRONMENT,
     ),
@@ -141,10 +107,6 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
         enabled_tools=(
             "send_telegram_message",
             "read_recent_telegram_messages",
-            "search_mail",
-            "read_mail",
-            "read_mail_thread",
-            *CALENDAR_TOOLS,
             *REVISIT_TOOLS,
             *KNOWLEDGE_TOOLS,
         ),
@@ -160,8 +122,6 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
             "TELEGRAM_BOT_TOKEN",
             "TELEGRAM_ALLOWED_USER_ID",
             "ARIADNE_TELEGRAM_STATE",
-            *MAIL_READ_ENVIRONMENT_NAMES,
-            *CALENDAR_ENVIRONMENT_NAMES,
             REVISIT_STATE_ENVIRONMENT,
             KNOWLEDGE_ROOT_ENVIRONMENT,
         ),

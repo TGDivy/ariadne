@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.scripts]
+ariadne = "ariadne.cli:main"
 ariadne-knowledge = "ariadne.scripts.knowledge:main"
 
 [build-system]

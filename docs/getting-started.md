@@ -51,11 +51,11 @@ allowed_user_id = 123456789
 ## Check, then run
 
 ```bash
-uv run python -m ariadne config check
-uv run python -m ariadne
+uv run ariadne config check
+uv run ariadne serve
 ```
 
-`config check` validates the resolved configuration without printing secrets. To use a different private configuration, set `ARIADNE_CONFIG` or pass `--config` to the command you are running. `python -m ariadne config show` displays the effective configuration with secrets redacted.
+`config check` validates the resolved configuration without printing secrets. To use a different private configuration, set `ARIADNE_CONFIG` or put `--config PATH` before the command you are running. `ariadne config show` displays the effective configuration with secrets redacted. `python -m ariadne` exposes the same CLI when a console script is inconvenient, but it still needs the explicit `serve` command.
 
 Send `/new` in Telegram to start a fresh Codex conversation while retaining durable knowledge. `/settings` selects a supported model, reasoning effort, and web-research setting for the running Telegram process. `/stop` asks the active turn to interrupt; completed work cannot be undone.
 

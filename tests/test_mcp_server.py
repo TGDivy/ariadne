@@ -7,23 +7,15 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
-from caldav.lib.error import PutError
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from telegram.error import BadRequest, EndPointNotFound
 
 from ariadne.mail import MailState
-from ariadne.mcp import calendar as calendar_tools
 from ariadne.mcp import mcp
 from ariadne.mcp import telegram as telegram_tools
-from ariadne.mcp.calendar import (
-    create_calendar_event,
-    delete_calendar_event,
-    list_calendars,
-)
 from ariadne.mcp.errors import DIAGNOSTIC_PREFIX
-from ariadne.mcp.mail import read_mail, record_current_mail_decision, search_mail
-from ariadne.mcp.runtime import inspect_ariadne_runtime
+from ariadne.mcp.mail import record_current_mail_decision
 from ariadne.mcp.telegram import (
     ask_telegram_question,
     read_recent_telegram_messages,
@@ -92,23 +84,11 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
     tools = await mcp.list_tools()
 
     assert [tool.name for tool in tools] == [
-        "inspect_ariadne_runtime",
         "send_telegram_message",
         "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
-        "search_mail",
-        "read_mail",
-        "read_mail_thread",
         "record_current_mail_decision",
-        "list_calendars",
-        "search_calendar_events",
-        "read_calendar_event",
-        "check_calendar_availability",
-        "create_calendar_event",
-        "update_calendar_event",
-        "delete_calendar_event",
-        "respond_to_calendar_invitation",
         "search_knowledge",
         "browse_knowledge",
         "read_knowledge",
@@ -130,143 +110,10 @@ def test_a_normal_turn_has_no_mail_authority(monkeypatch) -> None:
         record_current_mail_decision("notifications", "important", "keep_in_inbox")
 
 
-def test_mail_reading_requires_toml_derived_credentials(monkeypatch) -> None:
-    monkeypatch.delenv("ARIADNE_MAIL_USERNAME", raising=False)
-    monkeypatch.delenv("ARIADNE_MAIL_APP_PASSWORD", raising=False)
-
-    with pytest.raises(ToolError, match="not configured"):
-        search_mail("Example Sender")
-    with pytest.raises(ToolError, match="not configured"):
-        read_mail("mail:anything")
-
-
-def test_calendar_requires_toml_derived_credentials(monkeypatch) -> None:
-    for name in (
-        "ARIADNE_ICLOUD_USERNAME",
-        "ARIADNE_ICLOUD_APP_PASSWORD",
-        "ARIADNE_CALENDAR_TIMEZONE",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-    with pytest.raises(ToolError, match="not configured"):
-        list_calendars()
-    with pytest.raises(ToolError, match="not configured"):
-        create_calendar_event("Title", "2026-09-01", "2026-09-02")
-
-
-def test_calendar_mutations_use_only_configured_account_and_calendar(
-    monkeypatch,
-) -> None:
-    calls: list[tuple[str, dict[str, Any]]] = []
-
-    class FakeCalendar:
-        def __init__(self, username: str, password: str, **kwargs: object) -> None:
-            assert username == "person@example.com"
-            assert password == "app-password"
-            assert kwargs == {
-                "timezone": "Europe/London",
-                "default_calendar": "Personal",
-            }
-
-        def __enter__(self) -> "FakeCalendar":
-            return self
-
-        def __exit__(self, *_: object) -> None:
-            return None
-
-        def create_event(self, **kwargs: Any) -> dict[str, Any]:
-            calls.append(("create", kwargs))
-            return {"id": "calendar-event:new"}
-
-        def delete_event(self, value: str, **kwargs: Any) -> dict[str, Any]:
-            calls.append(("delete", {"id": value, **kwargs}))
-            return {"status": "deleted"}
-
-    monkeypatch.setenv("ARIADNE_ICLOUD_USERNAME", "person@example.com")
-    monkeypatch.setenv("ARIADNE_ICLOUD_APP_PASSWORD", "app-password")
-    monkeypatch.setenv("ARIADNE_CALENDAR_TIMEZONE", "Europe/London")
-    monkeypatch.setenv("ARIADNE_CALENDAR_DEFAULT", "Personal")
-    monkeypatch.setattr(calendar_tools, "ICloudCalendar", FakeCalendar)
-
-    created = create_calendar_event(
-        "Review", "2026-09-01T09:00:00", "2026-09-01T10:00:00"
-    )
-    deleted = delete_calendar_event("calendar-event:new", scope="series")
-
-    assert created == {"id": "calendar-event:new"}
-    assert deleted == {"status": "deleted"}
-    assert calls[0][0] == "create"
-    assert calls[0][1]["title"] == "Review"
-    assert calls[0][1]["timezone"] is None
-    assert calls[1] == (
-        "delete",
-        {"id": "calendar-event:new", "scope": "series", "expected_etag": None},
-    )
-
-
-async def test_calendar_write_failure_exposes_redacted_provider_diagnostic(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FailingCalendar:
-        def __init__(self, username: str, password: str, **_: object) -> None:
-            assert username == "person@example.com"
-            assert password == "calendar-password"
-
-        def __enter__(self) -> "FailingCalendar":
-            return self
-
-        def __exit__(self, *_: object) -> None:
-            return None
-
-        def create_event(self, **_: object) -> dict[str, Any]:
-            raise PutError(
-                "400 Bad Request\n\n"
-                "<error><message>Invalid iCalendar data</message>"
-                "<password>calendar-password</password>"
-                "<username>person@example.com</username>"
-                "<authorization>Basic dGVzdDpzZWNyZXQ=</authorization></error>"
-            )
-
-    monkeypatch.setenv("ARIADNE_ICLOUD_USERNAME", "person@example.com")
-    monkeypatch.setenv("ARIADNE_ICLOUD_APP_PASSWORD", "calendar-password")
-    monkeypatch.setenv("ARIADNE_CALENDAR_TIMEZONE", "Europe/London")
-    monkeypatch.setattr(calendar_tools, "ICloudCalendar", FailingCalendar)
-
-    async with Client(mcp) as client:
-        result = await client.call_tool_mcp(
-            "create_calendar_event",
-            {
-                "title": "Review",
-                "start": "2026-09-01T09:00:00",
-                "end": "2026-09-01T10:00:00",
-            },
-        )
-
-    assert result.isError is True
-    text = result.content[0].text
-    diagnostic = json.loads(text.split(DIAGNOSTIC_PREFIX, 1)[1])
-    assert "iCloud Calendar could not complete that operation." in text
-    assert diagnostic == {
-        "exception_type": "PutError",
-        "operation": "create_calendar_event",
-        "http_status": 400,
-        "provider_response_body": (
-            "<error><message>Invalid iCalendar data</message>"
-            "<password>[REDACTED]</password>"
-            "<username>[REDACTED]</username>"
-            "<authorization>[REDACTED]</authorization></error>"
-        ),
-    }
-    assert "calendar-password" not in text
-    assert "person@example.com" not in text
-    assert "dGVzdDpzZWNyZXQ=" not in text
-
-
 @pytest.mark.parametrize(
     ("operation", "arguments"),
     [
         ("send_telegram_message", {"text": " "}),
-        ("create_calendar_event", {"title": "Missing dates"}),
         ("tool_that_does_not_exist", {}),
     ],
 )
@@ -313,58 +160,6 @@ def test_a_mail_turn_can_record_but_not_execute_its_decision(
     assert job.suggested_action == "flag"
     assert job.draft_reply == "Thanks — I am interested."
     assert job.action is None
-
-
-def test_inspect_ariadne_runtime_never_returns_environment_values(
-    tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setenv("ARIADNE_PROFILE", "telegram")
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "must-not-appear")
-
-    payload = inspect_ariadne_runtime()
-
-    assert payload["profile"] == "telegram"
-    assert "vault" not in payload
-    assert "git" not in payload
-    assert "cwd" not in payload
-    assert str(tmp_path) not in json.dumps(payload)
-    assert "must-not-appear" not in json.dumps(payload)
-
-
-def test_inspect_ariadne_runtime_requires_explicit_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("ARIADNE_PROFILE", raising=False)
-
-    with pytest.raises(ToolError, match="missing ARIADNE_PROFILE"):
-        inspect_ariadne_runtime()
-
-
-def test_inspect_ariadne_runtime_rejects_an_unknown_profile(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("ARIADNE_PROFILE", "unknown")
-
-    with pytest.raises(ToolError, match="not recognized"):
-        inspect_ariadne_runtime()
-
-
-def test_inspect_ariadne_runtime_reports_the_current_profiles_capabilities(
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("ARIADNE_PROFILE", "mail")
-
-    payload = inspect_ariadne_runtime()
-
-    assert "record_current_mail_decision" in payload["capabilities"]
-    assert payload["capabilities"][-6:] == [
-        "search_knowledge",
-        "browse_knowledge",
-        "read_knowledge",
-        "create_knowledge",
-        "update_knowledge",
-        "archive_knowledge",
-    ]
 
 
 async def test_a_message_from_iris_is_sent_as_rich_markdown(

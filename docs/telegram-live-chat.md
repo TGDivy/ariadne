@@ -224,8 +224,8 @@ Use a private operator config on the machine running Ariadne; never paste the
 bot token into an issue, PR, or chat transcript. Start with:
 
 ```bash
-uv run python -m ariadne config check
-uv run python -m ariadne
+uv run ariadne config check
+uv run ariadne serve
 ```
 
 Run these cases in order:

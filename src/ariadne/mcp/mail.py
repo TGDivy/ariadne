@@ -1,71 +1,12 @@
-"""Mail MCP capabilities."""
-
-import logging
-import os
-from collections.abc import Callable
-from typing import Any
+"""Turn-scoped Mail MCP capability."""
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
-from imapclient import IMAPClient  # type: ignore[import-untyped]
 
-from ..mail import (
-    IMAP_HOST,
-    Importance,
-    MailReader,
-    SuggestedAction,
-)
+from ..mail import Importance, SuggestedAction
 from ..mail import (
     record_current_mail_decision as _record_current_mail_decision,
 )
-
-LOGGER = logging.getLogger(__name__)
-
-
-def _with_reader(operation: Callable[[MailReader], dict[str, Any]]) -> dict[str, Any]:
-    """Connect for one read-only operation using TOML-derived credentials."""
-    try:
-        username = os.environ["ARIADNE_MAIL_USERNAME"]
-        password = os.environ["ARIADNE_MAIL_APP_PASSWORD"]
-    except KeyError as error:
-        raise ToolError("Mail reading is not configured for this turn.") from error
-
-    try:
-        with IMAPClient(IMAP_HOST, port=993, ssl=True) as client:
-            client.login(username, password)
-            return operation(MailReader(client))
-    except ToolError:
-        raise
-    except Exception as error:
-        LOGGER.error("Mail read failed (%s)", type(error).__name__)
-        raise ToolError("Mail could not complete that read.") from error
-
-
-def search_mail(
-    query: str,
-    since: str | None = None,
-    before: str | None = None,
-    limit: int = 20,
-) -> dict[str, Any]:
-    """Search the human's mail using ordinary words, names, companies, or topics.
-
-    `since` and `before`, when useful, are ISO dates (YYYY-MM-DD). Results are
-    ranked from message metadata and body previews. Use a result id with
-    `read_mail` or `read_mail_thread`. Search and reading do not change mail.
-    """
-    return _with_reader(
-        lambda reader: reader.search(query, since=since, before=before, limit=limit)
-    )
-
-
-def read_mail(id: str) -> dict[str, Any]:
-    """Read one mail returned by `search_mail`, without marking it read."""
-    return _with_reader(lambda reader: reader.read(id))
-
-
-def read_mail_thread(id: str) -> dict[str, Any]:
-    """Read the conversation around one search result without changing mail."""
-    return _with_reader(lambda reader: reader.read_thread(id))
 
 
 def record_current_mail_decision(
@@ -89,8 +30,5 @@ def record_current_mail_decision(
 
 
 def register_tools(server: FastMCP) -> None:
-    """Register mail tools."""
-    server.tool(search_mail)
-    server.tool(read_mail)
-    server.tool(read_mail_thread)
+    """Register the one Mail operation scoped to an active event turn."""
     server.tool(record_current_mail_decision)

@@ -166,8 +166,8 @@ state = "{state}"
     assert configured.app_password.get_secret_value() == "app-password"
 
     settings = load_settings(config, environ={})
-    assert settings.mcp_environment["ARIADNE_MAIL_USERNAME"] == "person@example.com"
-    assert settings.mcp_environment["ARIADNE_MAIL_APP_PASSWORD"] == "app-password"
+    assert "ARIADNE_MAIL_USERNAME" not in settings.mcp_environment
+    assert "ARIADNE_MAIL_APP_PASSWORD" not in settings.mcp_environment
 
 
 def test_shared_icloud_credentials_can_enable_mail_without_legacy_fields(
@@ -222,11 +222,11 @@ default_calendar = "Personal"
         "TELEGRAM_ALLOWED_USER_ID": "12345",
         "ARIADNE_TELEGRAM_STATE": str(settings.telegram.state.resolve()),
         REVISIT_STATE_ENVIRONMENT: str(settings.revisits.state.resolve()),
-        "ARIADNE_ICLOUD_USERNAME": "person@example.com",
-        "ARIADNE_ICLOUD_APP_PASSWORD": "calendar-password",
-        "ARIADNE_CALENDAR_TIMEZONE": "Europe/London",
-        "ARIADNE_CALENDAR_DEFAULT": "Personal",
     }
+    assert settings.icloud_credentials is not None
+    username, password = settings.icloud_credentials
+    assert username == "person@example.com"
+    assert password.get_secret_value() == "calendar-password"
 
 
 def test_enabled_calendar_requires_icloud_credentials(tmp_path: Path) -> None:

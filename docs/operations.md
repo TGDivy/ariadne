@@ -2,6 +2,28 @@
 
 This is the operator-facing reference for optional services and routine inspection. Keep credentials, personal routes, and exported data outside the source checkout.
 
+## Unified CLI contract
+
+`ariadne` is both the service entry point and the bounded data-access surface available to Iris. Its command tree is intentionally discoverable on demand instead of placing every Mail and Calendar schema in every model turn:
+
+```bash
+uv run ariadne --help
+uv run ariadne mail --help
+uv run ariadne calendar update --help
+```
+
+The usual production command is simply `ariadne`; `uv run ariadne` is convenient from a source checkout. Global options precede the command, for example `ariadne --config /private/config.toml --pretty calendar list`. Help and argument validation do not load configuration or contact a provider.
+
+Successful non-service commands write exactly one bounded JSON document to stdout. Compact one-line JSON is the default; `--pretty` only changes whitespace. A failed non-service command leaves stdout empty and writes one object of this shape to stderr. `serve` is long-running and retains human-readable operational logging instead:
+
+```json
+{"error":{"code":"invalid_arguments","message":"...","retryable":false}}
+```
+
+Exit status `0` means success. Status `1` is an unexpected internal failure, `2` is invalid arguments, configuration, or a domain request, `3` is failed authentication, `5` is a stale Calendar conflict, and `6` is a retryable provider or network failure. There are no automatic retries for writes. Results are capped at 2 MiB and individual search commands impose smaller item limits; narrow the query when `output_too_large` is returned.
+
+Provider credentials are read from the private TOML file only after a Mail or Calendar command is selected. They are never command arguments, output fields, or MCP environment variables. Provider and validation errors pass through shared secret redaction. Codex telemetry records command execution as the bounded `shell` tool category without exporting the command, arguments, or result.
+
 ## Inspect the active turn profiles
 
 Telegram, Mail, and each revisit attention level have independent turn profiles. Inspect the exact model, prompts, tool set, thread behaviour, permissions, and forwarded environment-variable names for a surface with:
@@ -48,6 +70,18 @@ state = "~/.local/state/ariadne/mail.sqlite3"
 ```
 
 Existing configurations with credentials directly under `[mail]` remain supported. When `[icloud]` is present, its credentials are shared by Mail and Calendar and take precedence over those legacy fields.
+
+### Read-only agent commands
+
+Mail search, message reads, and thread reads use the unified CLI:
+
+```bash
+ariadne mail search "train confirmation" --since 2026-08-01 --limit 10
+ariadne mail read 'mail:OPAQUE_ID'
+ariadne mail thread 'mail:OPAQUE_ID'
+```
+
+Search returns opaque IDs for the other two commands. These operations use read-only mailbox selection and `BODY.PEEK`; they do not mark, move, delete, or send mail. The MCP surface retains only `record_current_mail_decision`, because that mutation is meaningful solely inside the currently claimed ingestion job. Ordinary reads live in the CLI so their less frequently used schemas are loaded through `--help` only when needed.
 
 Routes are ordered and first-match-wins. A `move` rule does not invoke the agent. For `iris_then_move`, an explicit agent decision to flag or move elsewhere wins; `keep_in_inbox` falls back to the route’s configured folder. By default, unmatched mail is inspected and kept in `INBOX`; set `defaults.unmatched_action` to `cheap_triage` to retain clearly routine unmatched mail without starting an agent turn.
 
@@ -103,7 +137,30 @@ timezone = "Europe/London"
 
 `default_calendar` is optional. When there is only one event calendar, Ariadne selects it automatically; otherwise it lists calendars and uses the returned opaque calendar ID for a create operation.
 
-Calendar supports bounded event search, availability, creation, updates, deletion, and invitation responses. Search and read results include an ETag that can be supplied to a mutation to reject stale decisions. Calendar writes and attendee changes can cause provider updates or invitations, so enable it only when that scope is intended.
+Calendar supports bounded event search, availability, creation, updates, deletion, and invitation responses through the CLI:
+
+```bash
+ariadne calendar list
+ariadne calendar search --start 2026-09-01 --end 2026-09-08 \
+  --query "planning" --limit 25
+ariadne calendar read 'calendar-event:OPAQUE_ID'
+ariadne calendar availability \
+  --start 2026-09-03T09:00:00+01:00 \
+  --end 2026-09-03T17:00:00+01:00
+```
+
+Calendar writes are immediate and never prompt interactively, which keeps the contract deterministic for a model or script. Inspect each command’s help before constructing it:
+
+```bash
+ariadne calendar create --help
+ariadne calendar update --help
+ariadne calendar delete --help
+ariadne calendar respond --help
+```
+
+Repeated `--attendee`, `--alarm-minutes-before`, and `--calendar-id` flags follow ordinary CLI conventions. Updates distinguish omitted fields from explicit `--clear-*` flags. Search and read results include an ETag accepted by `--expected-etag` so a mutation can reject stale state. Calendar writes and attendee changes can cause provider updates or invitations, so enable the integration only when that scope is intended.
+
+The model-facing CLI is distinct from the operator maintenance scripts below and in the Mail section. Those scripts may perform bulk work or produce private files and are not advertised to Iris as personal-data commands.
 
 ## One-off revisits
 
@@ -134,6 +191,6 @@ traces = true
 export_interval_seconds = 60
 ```
 
-Use the provider-specific base endpoint ending in `/otlp`; Ariadne appends `/v1/metrics` and `/v1/traces`. The authorization value is redacted by `python -m ariadne config show`. The included Grafana dashboard is `docs/grafana/ariadne-observability.json`.
+Use the provider-specific base endpoint ending in `/otlp`; Ariadne appends `/v1/metrics` and `/v1/traces`. The authorization value is redacted by `ariadne config show`. The included Grafana dashboard is `docs/grafana/ariadne-observability.json`.
 
 Metrics and traces use bounded operational labels such as source, model, reasoning effort, status, tool name, and timing. They do not include prompts, responses, commands, tool arguments/results, Telegram identifiers, mail identifiers, or credentials.

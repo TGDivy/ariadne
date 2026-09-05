@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -11,17 +10,13 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from ariadne.mail import Importance, SuggestedAction
-from ariadne.mcp.mail import read_mail as real_read_mail
-from ariadne.mcp.mail import read_mail_thread as real_read_mail_thread
 from ariadne.mcp.mail import (
     record_current_mail_decision as real_record_current_mail_decision,
 )
-from ariadne.mcp.mail import search_mail as real_search_mail
 from ariadne.mcp.revisit import cancel_wakeup as real_cancel_wakeup
 from ariadne.mcp.revisit import list_wakeups as real_list_wakeups
 from ariadne.mcp.revisit import schedule_wakeup as real_schedule_wakeup
 from ariadne.mcp.revisit import update_wakeup as real_update_wakeup
-from ariadne.mcp.runtime import inspect_ariadne_runtime as real_inspect_ariadne_runtime
 from ariadne.mcp.telegram import (
     read_recent_telegram_messages as real_read_recent_telegram_messages,
 )
@@ -29,28 +24,12 @@ from ariadne.mcp.telegram import (
     request_telegram_file_delivery as real_request_telegram_file_delivery,
 )
 from ariadne.mcp.telegram import send_telegram_message as real_send_telegram_message
-from ariadne.profile import PROFILES
 from ariadne.revisit import Attention
 from ariadne.telegram.history import TelegramMessageSource, TelegramSpeaker
 
-from .fake_calendar import register_tools as register_calendar_tools
 from .fake_knowledge import register_tools as register_knowledge_tools
 from .recording import STATE_ENVIRONMENT as STATE_ENVIRONMENT
 from .recording import record_call
-
-
-@wraps(real_inspect_ariadne_runtime)
-def inspect_ariadne_runtime() -> dict[str, Any]:
-    record_call("inspect_ariadne_runtime", {})
-    try:
-        profile = PROFILES[os.environ["ARIADNE_PROFILE"]]
-    except (KeyError, ValueError) as error:
-        raise ToolError("Scenario profile is not configured.") from error
-    return {
-        "server": {"name": "ariadne-behaviour", "version": "0.1.0"},
-        "scenario": True,
-        "capabilities": list(profile.enabled_tools),
-    }
 
 
 @wraps(real_send_telegram_message)
@@ -124,32 +103,6 @@ def record_current_mail_decision(
         "importance": importance,
         "suggested_action": suggested_action,
     }
-
-
-@wraps(real_search_mail)
-def search_mail(
-    query: str,
-    since: str | None = None,
-    before: str | None = None,
-    limit: int = 20,
-) -> dict[str, Any]:
-    record_call(
-        "search_mail",
-        {"query": query, "since": since, "before": before, "limit": limit},
-    )
-    return {"query": query, "results": [], "searched_folders": 1}
-
-
-@wraps(real_read_mail)
-def read_mail(id: str) -> dict[str, Any]:
-    record_call("read_mail", {"id": id})
-    raise ToolError("That scenario mail id is not available.")
-
-
-@wraps(real_read_mail_thread)
-def read_mail_thread(id: str) -> dict[str, Any]:
-    record_call("read_mail_thread", {"id": id})
-    raise ToolError("That scenario mail id is not available.")
 
 
 _REVISITS: dict[str, dict[str, object]] = {}
@@ -230,15 +183,10 @@ def create_server() -> FastMCP:
         "idempotentHint": True,
         "openWorldHint": False,
     }
-    server.tool(inspect_ariadne_runtime, annotations=harmless)
     server.tool(send_telegram_message, annotations=harmless)
     server.tool(read_recent_telegram_messages, annotations=harmless)
     server.tool(request_telegram_file_delivery, annotations=harmless)
-    server.tool(search_mail, annotations=harmless)
-    server.tool(read_mail, annotations=harmless)
-    server.tool(read_mail_thread, annotations=harmless)
     server.tool(record_current_mail_decision, annotations=harmless)
-    register_calendar_tools(server, harmless)
     register_knowledge_tools(server, harmless)
     server.tool(schedule_wakeup, annotations=harmless)
     server.tool(list_wakeups, annotations=harmless)

@@ -22,7 +22,7 @@ def test_provider_urls_cannot_be_mistaken_for_http_statuses() -> None:
         url="https://p123-caldav.icloud.com/123456/calendars/", reason="Forbidden"
     )
 
-    diagnostic = _diagnostic(format_tool_failure(error, "list_calendars", {}))
+    diagnostic = _diagnostic(format_tool_failure(error, "provider_read", {}))
 
     assert diagnostic["exception_type"] == "AuthorizationError"
     assert diagnostic["http_status"] == 403

@@ -9,10 +9,7 @@ from ariadne.codex.resolver import resolve_profile
 from ariadne.knowledge.capability import ROOT_ENVIRONMENT
 from ariadne.knowledge.capability import TOOLS as KNOWLEDGE_TOOLS
 from ariadne.profile import (
-    CALENDAR_ENVIRONMENT_NAMES,
-    CALENDAR_TOOLS,
     MAIL_PROFILE,
-    MAIL_READ_ENVIRONMENT_NAMES,
     PROFILES,
     REVISIT_PROFILES,
     TELEGRAM_PROFILE,
@@ -50,24 +47,12 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert all(tool in MAIL_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
     assert "send_telegram_message" in MAIL_PROFILE.enabled_tools
     assert "read_recent_telegram_messages" in MAIL_PROFILE.enabled_tools
-    assert all(
-        tool in MAIL_PROFILE.enabled_tools
-        for tool in ("search_mail", "read_mail", "read_mail_thread")
-    )
+    assert "search_mail" not in MAIL_PROFILE.enabled_tools
+    assert "list_calendars" not in MAIL_PROFILE.enabled_tools
     assert "react" not in MAIL_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in MAIL_PROFILE.mcp_environment_names
-    calendar_start = MAIL_PROFILE.enabled_tools.index("list_calendars")
-    assert (
-        MAIL_PROFILE.enabled_tools[
-            calendar_start : calendar_start + len(CALENDAR_TOOLS)
-        ]
-        == CALENDAR_TOOLS
-    )
-    assert all(
-        name in MAIL_PROFILE.mcp_environment_names
-        for name in MAIL_READ_ENVIRONMENT_NAMES
-    )
-    assert set(CALENDAR_ENVIRONMENT_NAMES).issubset(MAIL_PROFILE.mcp_environment_names)
+    assert "ARIADNE_MAIL_APP_PASSWORD" not in MAIL_PROFILE.mcp_environment_names
+    assert "ARIADNE_ICLOUD_APP_PASSWORD" not in MAIL_PROFILE.mcp_environment_names
 
     assert TELEGRAM_PROFILE.name == "telegram"
     assert TELEGRAM_PROFILE.settings == CodexTurnSettings(
@@ -89,21 +74,8 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert "react" not in TELEGRAM_PROFILE.enabled_tools
     assert ROOT_ENVIRONMENT in TELEGRAM_PROFILE.mcp_environment_names
     assert "ARIADNE_TELEGRAM_STATE" in TELEGRAM_PROFILE.mcp_environment_names
-    assert TELEGRAM_PROFILE.enabled_tools[3:6] == (
-        "search_mail",
-        "read_mail",
-        "read_mail_thread",
-    )
-    assert TELEGRAM_PROFILE.enabled_tools[6:14] == (
-        "list_calendars",
-        "search_calendar_events",
-        "read_calendar_event",
-        "check_calendar_availability",
-        "create_calendar_event",
-        "update_calendar_event",
-        "delete_calendar_event",
-        "respond_to_calendar_invitation",
-    )
+    assert "search_mail" not in TELEGRAM_PROFILE.enabled_tools
+    assert "list_calendars" not in TELEGRAM_PROFILE.enabled_tools
     assert TELEGRAM_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
     assert all(tool in TELEGRAM_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
 
@@ -117,7 +89,30 @@ def test_surface_profiles_are_explicit_declarations() -> None:
         assert "send_telegram_message" in revisit.enabled_tools
         assert "read_recent_telegram_messages" in revisit.enabled_tools
         assert "record_current_mail_decision" not in revisit.enabled_tools
+        assert "search_mail" not in revisit.enabled_tools
+        assert "list_calendars" not in revisit.enabled_tools
         assert all(tool in revisit.enabled_tools for tool in REVISIT_TOOLS)
+
+
+def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
+    tmp_path: Path,
+) -> None:
+    for declaration in (
+        TELEGRAM_PROFILE,
+        MAIL_PROFILE,
+        *REVISIT_PROFILES.values(),
+    ):
+        resolved = resolve_profile(
+            declaration,
+            vault=tmp_path,
+            human="Example User",
+        )
+
+        assert "ariadne mail search|read|thread" in resolved.base_instructions
+        assert "ariadne calendar list|search|read|availability" in (
+            resolved.base_instructions
+        )
+        assert "--help" in resolved.base_instructions
 
 
 def test_telegram_profile_is_complete_and_uses_dynamic_settings(
@@ -138,25 +133,18 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert profile.approval_mode == ApprovalMode.auto_review
     assert profile.writable_roots == (Path.home(),)
     assert "github.com" in profile.network_domains
+    assert "imap.mail.me.com" in profile.network_domains
     assert "*.icloud.com" in profile.network_domains
     assert profile.allow_local_binding is True
     assert profile.enabled_tools == (
         "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
-        "search_mail",
-        "read_mail",
-        "read_mail_thread",
-        "list_calendars",
-        "search_calendar_events",
-        "read_calendar_event",
-        "check_calendar_availability",
-        "create_calendar_event",
-        "update_calendar_event",
-        "delete_calendar_event",
-        "respond_to_calendar_invitation",
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
+    )
+    assert "Mail and Calendar are available through the installed `ariadne`" in (
+        profile.base_instructions
     )
     assert "one conversational beat per message" in profile.base_instructions
     assert "do not recap it" in profile.base_instructions
