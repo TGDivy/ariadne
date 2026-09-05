@@ -42,17 +42,10 @@ STOPPING_MESSAGE = "Stopping…"
 STOPPED_MESSAGE = "Stopped."
 THINKING_MESSAGE = "Thinking…"
 LIVE_ACTIVITY_MARKER = "✦"
-TURN_STOP_CALLBACK = "turn:stop"
 
 
 class _LiveBubble:
     """One persistent Rich Message edited until a speech phase settles."""
-
-    _stop_button = RichButton(
-        "Stop", "callback_data", TURN_STOP_CALLBACK, style="danger"
-    )
-    _stopping_button = RichButton("Stopping…", "disabled", style="danger")
-    _stopped_button = RichButton("Stopped", "disabled", style="danger")
 
     def __init__(
         self,
@@ -84,7 +77,7 @@ class _LiveBubble:
             chat_id=self._source.chat_id,
             markdown=markdown,
             message_thread_id=getattr(self._source, "message_thread_id", None),
-            buttons=(self._stop_button,),
+            buttons=(),
             disable_interactions=True,
         )
         self._markdown = markdown
@@ -146,7 +139,7 @@ class _LiveBubble:
         self._activity = STOPPING_MESSAGE
         await self._edit(
             self._live_markdown(),
-            buttons=(self._stopping_button,),
+            buttons=(),
             disable_interactions=True,
         )
 
@@ -168,9 +161,7 @@ class _LiveBubble:
                 content += f"\n\n_{STOPPED_MESSAGE}_"
         if not content:
             content = STOPPED_MESSAGE
-        await self._finalize(
-            content, buttons=(self._stopped_button,), record_history=False
-        )
+        await self._finalize(content, buttons=(), record_history=False)
 
     async def fail(self) -> None:
         self._phase = "terminal"
@@ -197,7 +188,7 @@ class _LiveBubble:
             self._cancel_scheduled_edit()
             await self._edit(
                 markdown,
-                buttons=(self._stop_button,),
+                buttons=(),
                 disable_interactions=True,
                 only_while_running=True,
             )
@@ -211,7 +202,7 @@ class _LiveBubble:
             await asyncio.sleep(delay)
             await self._edit(
                 self._live_markdown(),
-                buttons=(self._stop_button,),
+                buttons=(),
                 disable_interactions=True,
                 only_while_running=True,
             )

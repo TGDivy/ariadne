@@ -378,26 +378,12 @@ class Settings(BaseModel):
 
     @property
     def mcp_environment(self) -> dict[str, str]:
-        values = {
+        return {
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_ALLOWED_USER_ID": str(self.allowed_user_id),
             QUESTION_STATE_ENVIRONMENT: str(self.telegram.state.resolve()),
             REVISIT_STATE_ENVIRONMENT: str(self.revisits.state.resolve()),
         }
-        if self.mail.enabled:
-            assert self.icloud_credentials is not None
-            username, app_password = self.icloud_credentials
-            values["ARIADNE_MAIL_USERNAME"] = username
-            values["ARIADNE_MAIL_APP_PASSWORD"] = app_password.get_secret_value()
-        if self.calendar.enabled:
-            assert self.icloud_credentials is not None
-            username, app_password = self.icloud_credentials
-            values["ARIADNE_ICLOUD_USERNAME"] = username
-            values["ARIADNE_ICLOUD_APP_PASSWORD"] = app_password.get_secret_value()
-            values["ARIADNE_CALENDAR_TIMEZONE"] = self.calendar.timezone
-            if self.calendar.default_calendar is not None:
-                values["ARIADNE_CALENDAR_DEFAULT"] = self.calendar.default_calendar
-        return values
 
     @property
     def mail_settings(self) -> MailSettings | None:

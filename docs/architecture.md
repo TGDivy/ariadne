@@ -10,7 +10,7 @@ sequenceDiagram
     participant Surface as Telegram / Mail / Revisit
     participant Runtime as Ariadne runtime
     participant Agent as Iris agent turn
-    participant Capabilities as Local capabilities
+    participant Capabilities as MCP + Ariadne CLI
     participant PrivateData as Private stores
 
     Person->>Surface: Message or real-world event
@@ -39,15 +39,18 @@ The architecture intentionally keeps the *meaningful data* separate from the run
 
 ## Capability boundary
 
-The agent does not receive a vague integration-level permission. Ariadne exposes clearly named operations with defined parameters and results, for example:
+The agent does not receive a vague integration-level permission. Ariadne owns storage, validation, synchronization, transport, and lifecycle management; the model sees a semantic operation rather than a provider credential or a backing store. The transport is chosen by how a capability participates in a turn, not by a rule that every integration must be MCP or every operation must be a CLI command.
 
-- retrieve, create, update, and archive semantic knowledge records;
-- read recent Telegram context, ask a question, or request an approval-gated file delivery;
-- inspect a configured mailbox and record the decision for the current message;
-- search a calendar, check availability, or make a deliberately scoped event mutation;
-- schedule, inspect, update, or cancel a one-off revisit.
+| Surface | Current capability families | Why it belongs there |
+| --- | --- | --- |
+| **First-class MCP** | Telegram conversation and delivery, semantic knowledge, and one-off revisits | These are fundamental to Iris’s identity and follow-through, are commonly needed without prior discovery, and include interactive or stateful turn semantics. |
+| **Turn-scoped MCP** | `record_current_mail_decision` | The operation is valid only for the ingestion job that activated the current Mail turn; a general process command would weaken that binding. |
+| **Discoverable CLI** | Mail search/read/thread and all Calendar operations | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
+| **Operator commands** | Bulk mail backfill/export, profile inspection, bot-profile changes, and behaviour runs | These have operational or bulk effects and are intentionally not advertised as ordinary model capabilities. |
 
-The implementation owns storage, validation, synchronization, transport, and lifecycle management. The model sees the semantic operation it can use, rather than a provider credential or a hidden side channel.
+The installed `ariadne` CLI emits bounded JSON and keeps provider implementations behind typed `MailReader` and `ICloudCalendar` interfaces. For these provider commands, the long-running service exports the selected private config path and makes the sibling CLI executable discoverable to Codex. Mail and Calendar credentials are loaded by the selected command on demand; they are no longer copied into the MCP subprocess environment.
+
+This split also leaves a clean growth rule: add a namespace to the CLI when a provider exposes a broad, mostly request/response data plane; keep an MCP tool when its schema and lifecycle are fundamental to nearly every turn or intrinsically bound to live turn state. If both surfaces ever need the same operation, both should call one typed use-case/client layer rather than duplicate provider logic.
 
 ## Integration boundaries
 
@@ -66,6 +69,21 @@ Calendar is opt-in. It supports bounded discovery and event operations, includin
 ### Revisit, do not nag
 
 The agent can schedule a single future wake-up with a self-contained reason and one of three attention levels. When due, it starts a fresh turn, re-checks present context, and either completes a useful bounded loop, messages when something still matters, or finishes silently. There is no artificial recurring check-in.
+
+### Future health boundary and activations
+
+Health should follow the CLI data-plane pattern, with a later namespace shaped for discovery as `ariadne health workouts search|summarize|show|series`. Ariadne should call Ithaca through an authenticated, typed HTTP client; Iris should not connect to PostgreSQL or inherit database credentials. This keeps the boundary portable if Ithaca changes tables, storage engines, or deployment topology. The HTTP contract is deliberately not defined by this change.
+
+The eventual commands should make the requested representation explicit. Search and show should return bounded domain records, series should return bounded machine-readable samples for analysis, and summarize should return server-computed aggregates with enough interval/provenance detail to interpret them. Ariadne should not silently replace raw evidence with a summary, nor dump raw time series when a compact answer is sufficient.
+
+Ingestion and activation are separate decisions. Persisting every workout—or later every sleep, weight, nutrition, or other health record—should not automatically start an Iris turn. A record may become a typed trigger source after storage when an explicit policy identifies a useful reason to act, with an idempotent record/event reference and a fresh read through the same API. This avoids one noisy model turn per sync while preserving the option for meaningful workout completion, recovery, anomaly, or user-chosen follow-up activations.
+
+A small staged path is:
+
+1. Freeze Ithaca’s authenticated read contract and add typed Ariadne client/config models with contract tests.
+2. Add read-only workout search/show through the CLI and disposable behaviour fixtures.
+3. Add explicit summary and bounded-series representations after real Iris questions show what is useful.
+4. Add opt-in typed health activations separately, beginning with one narrow policy and idempotency tests.
 
 ## What is deliberately out of scope
 

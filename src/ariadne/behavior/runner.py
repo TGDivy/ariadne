@@ -207,7 +207,6 @@ def _fake_mcp_overrides(
     enabled_tools: tuple[str, ...],
     calls: Path,
     knowledge: Path,
-    calendar: Path,
     telegram: Path,
 ) -> tuple[str, ...]:
     return (
@@ -223,8 +222,6 @@ def _fake_mcp_overrides(
         + json.dumps(str(calls)),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{KNOWLEDGE_ENVIRONMENT}="
         + json.dumps(str(knowledge)),
-        f"mcp_servers.{MCP_SERVER_NAME}.env.{CALENDAR_ENVIRONMENT}="
-        + json.dumps(str(calendar)),
         f"mcp_servers.{MCP_SERVER_NAME}.env.TELEGRAM_ALLOWED_USER_ID="
         + json.dumps("7"),
         f"mcp_servers.{MCP_SERVER_NAME}.env.ARIADNE_TELEGRAM_STATE="
@@ -255,6 +252,18 @@ def _redacted_environment() -> dict[str, str]:
     return {name: "" for name in names}
 
 
+def _write_fake_cli(directory: Path) -> Path:
+    """Install the scenario CLI ahead of ordinary commands on PATH."""
+    directory.mkdir(mode=0o700)
+    executable = directory / "ariadne"
+    executable.write_text(
+        f"#!{sys.executable}\nfrom ariadne.behavior.fake_cli import main\nmain()\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o700)
+    return executable
+
+
 async def run_scenario(
     scenario: BehaviorScenario,
     run_profile: BehaviorRunProfile,
@@ -270,6 +279,7 @@ async def run_scenario(
         knowledge = root / "knowledge.json"
         calendar = root / "calendar.json"
         telegram = root / "telegram.sqlite3"
+        scenario_bin = root / "bin"
         workspace.mkdir()
         _write_scenario(scenario, workspace)
         knowledge.write_text(
@@ -313,6 +323,7 @@ async def run_scenario(
         baseline = _run_git("rev-parse", "HEAD", cwd=workspace)
         _run_git("push", "-u", "origin", "main", cwd=workspace)
         before = _snapshot(workspace)
+        _write_fake_cli(scenario_bin)
 
         if scenario.telegram_prompt is not None:
             surface = TELEGRAM_PROFILE
@@ -341,11 +352,15 @@ async def run_scenario(
                     profile.enabled_tools,
                     calls,
                     knowledge,
-                    calendar,
                     telegram,
                 ),
                 cwd=str(workspace),
-                env=_redacted_environment(),
+                env={
+                    **_redacted_environment(),
+                    "PATH": f"{scenario_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+                    STATE_ENVIRONMENT: str(calls),
+                    CALENDAR_ENVIRONMENT: str(calendar),
+                },
             )
         )
         conversation = CodexConversation(profile, client=client)
@@ -399,7 +414,11 @@ async def run_scenario(
             web_search=profile.web_search,
             duration_seconds=duration_seconds,
             token_usage=usage.model_dump() if usage is not None else None,
-            enabled_capabilities=profile.enabled_tools,
+            enabled_capabilities=(
+                *profile.enabled_tools,
+                "cli.mail",
+                "cli.calendar",
+            ),
             timeline=tuple(timeline),
             messages=tuple(messages),
             capability_attempts=tuple(capability_attempts),

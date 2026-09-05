@@ -12,22 +12,9 @@ from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from ariadne.calendar import CalendarStatus, InvitationResponse, UpdateScope
-from ariadne.mcp.calendar import (
-    check_calendar_availability as real_check_calendar_availability,
-)
-from ariadne.mcp.calendar import create_calendar_event as real_create_calendar_event
-from ariadne.mcp.calendar import delete_calendar_event as real_delete_calendar_event
-from ariadne.mcp.calendar import list_calendars as real_list_calendars
-from ariadne.mcp.calendar import read_calendar_event as real_read_calendar_event
-from ariadne.mcp.calendar import (
-    respond_to_calendar_invitation as real_respond_to_calendar_invitation,
-)
-from ariadne.mcp.calendar import search_calendar_events as real_search_calendar_events
-from ariadne.mcp.calendar import update_calendar_event as real_update_calendar_event
 
 from .recording import record_call
 
@@ -117,9 +104,8 @@ def _validate_interval(start: str, end: str, timezone: ZoneInfo) -> None:
 
 
 @_serialized
-@wraps(real_list_calendars)
 def list_calendars() -> dict[str, Any]:
-    record_call("list_calendars", {})
+    record_call("cli.calendar.list", {})
     _, payload = _state()
     default = next(
         (calendar["id"] for calendar in payload["calendars"] if calendar["is_default"]),
@@ -133,7 +119,6 @@ def list_calendars() -> dict[str, Any]:
 
 
 @_serialized
-@wraps(real_search_calendar_events)
 def search_calendar_events(
     start: str,
     end: str,
@@ -148,7 +133,7 @@ def search_calendar_events(
         "calendar_ids": calendar_ids,
         "limit": limit,
     }
-    record_call("search_calendar_events", arguments)
+    record_call("cli.calendar.search", arguments)
     _, payload = _state()
     timezone = _timezone(payload)
     selected = set(
@@ -187,20 +172,18 @@ def search_calendar_events(
 
 
 @_serialized
-@wraps(real_read_calendar_event)
 def read_calendar_event(id: str) -> dict[str, Any]:
-    record_call("read_calendar_event", {"id": id})
+    record_call("cli.calendar.read", {"id": id})
     _, payload = _state()
     return _event(payload, id)
 
 
 @_serialized
-@wraps(real_check_calendar_availability)
 def check_calendar_availability(
     start: str, end: str, calendar_ids: list[str] | None = None
 ) -> dict[str, Any]:
     record_call(
-        "check_calendar_availability",
+        "cli.calendar.availability",
         {"start": start, "end": end, "calendar_ids": calendar_ids},
     )
     _, payload = _state()
@@ -232,7 +215,6 @@ def check_calendar_availability(
 
 
 @_serialized
-@wraps(real_create_calendar_event)
 def create_calendar_event(
     title: str,
     start: str,
@@ -261,7 +243,7 @@ def create_calendar_event(
         "status": status,
         "busy": busy,
     }
-    record_call("create_calendar_event", arguments)
+    record_call("cli.calendar.create", arguments)
     path, payload = _state()
     if not title.strip():
         raise ToolError("A Calendar event needs a title.")
@@ -312,7 +294,6 @@ def create_calendar_event(
 
 
 @_serialized
-@wraps(real_update_calendar_event)
 def update_calendar_event(
     id: str,
     scope: UpdateScope = "occurrence",
@@ -345,7 +326,7 @@ def update_calendar_event(
         "status": status,
         "busy": busy,
     }
-    record_call("update_calendar_event", arguments)
+    record_call("cli.calendar.update", arguments)
     path, payload = _state()
     event = _event(payload, id)
     if expected_etag is not None and expected_etag != event["etag"]:
@@ -398,14 +379,13 @@ def update_calendar_event(
 
 
 @_serialized
-@wraps(real_delete_calendar_event)
 def delete_calendar_event(
     id: str,
     scope: UpdateScope = "occurrence",
     expected_etag: str | None = None,
 ) -> dict[str, Any]:
     record_call(
-        "delete_calendar_event",
+        "cli.calendar.delete",
         {"id": id, "scope": scope, "expected_etag": expected_etag},
     )
     path, payload = _state()
@@ -418,14 +398,13 @@ def delete_calendar_event(
 
 
 @_serialized
-@wraps(real_respond_to_calendar_invitation)
 def respond_to_calendar_invitation(
     id: str,
     response: InvitationResponse,
     expected_etag: str | None = None,
 ) -> dict[str, Any]:
     record_call(
-        "respond_to_calendar_invitation",
+        "cli.calendar.respond",
         {"id": id, "response": response, "expected_etag": expected_etag},
     )
     _, payload = _state()
@@ -433,15 +412,3 @@ def respond_to_calendar_invitation(
     if expected_etag is not None and expected_etag != event["etag"]:
         raise ToolError("The Calendar event changed. Read it again before retrying.")
     return {"status": response, "id": id}
-
-
-def register_tools(server: FastMCP, annotations: dict[str, bool]) -> None:
-    """Register every disposable Calendar operation."""
-    server.tool(list_calendars, annotations=annotations)
-    server.tool(search_calendar_events, annotations=annotations)
-    server.tool(read_calendar_event, annotations=annotations)
-    server.tool(check_calendar_availability, annotations=annotations)
-    server.tool(create_calendar_event, annotations=annotations)
-    server.tool(update_calendar_event, annotations=annotations)
-    server.tool(delete_calendar_event, annotations=annotations)
-    server.tool(respond_to_calendar_invitation, annotations=annotations)

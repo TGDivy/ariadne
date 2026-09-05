@@ -67,21 +67,6 @@ MCP_TOOL_TIMEOUT_SECONDS = 16 * 60
 MCP_SERVER_NAME = "ariadne"
 TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
 TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "ask_telegram_question")
-MAIL_ACTIVITY = {
-    "search_mail": "Searching mail…",
-    "read_mail": "Reading mail…",
-    "read_mail_thread": "Reading mail thread…",
-}
-CALENDAR_ACTIVITY = {
-    "list_calendars": "Checking calendars…",
-    "search_calendar_events": "Searching the calendar…",
-    "read_calendar_event": "Reading a calendar event…",
-    "check_calendar_availability": "Checking availability…",
-    "create_calendar_event": "Creating a calendar event…",
-    "update_calendar_event": "Updating a calendar event…",
-    "delete_calendar_event": "Deleting a calendar event…",
-    "respond_to_calendar_invitation": "Responding to a calendar invitation…",
-}
 KNOWLEDGE_ACTIVITY = {
     "search_knowledge": "Searching memory…",
     "browse_knowledge": "Browsing memory…",
@@ -99,7 +84,6 @@ REVISIT_ACTIVITY = {
 LOCAL_ACTIVITY = {
     "read_recent_telegram_messages": "Reading recent messages…",
     "request_telegram_file_delivery": "Preparing files…",
-    "inspect_ariadne_runtime": "Checking Ariadne…",
     "record_current_mail_decision": "Triaging mail…",
 }
 
@@ -120,10 +104,6 @@ def _activity_message(item: object) -> str | None:
         if item.server == MCP_SERVER_NAME and item.tool in TELEGRAM_TOOLS:
             # Iris is speaking for herself; what she sends is the status.
             return None
-        if item.server == MCP_SERVER_NAME and item.tool in MAIL_ACTIVITY:
-            return MAIL_ACTIVITY[item.tool]
-        if item.server == MCP_SERVER_NAME and item.tool in CALENDAR_ACTIVITY:
-            return CALENDAR_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in KNOWLEDGE_ACTIVITY:
             return KNOWLEDGE_ACTIVITY[item.tool]
         if item.server == MCP_SERVER_NAME and item.tool in REVISIT_ACTIVITY:

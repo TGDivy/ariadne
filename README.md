@@ -27,7 +27,7 @@ It runs on the owner's machine and connects through a private Telegram conversat
 
 ## How it works
 
-You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent works through a small, explicit set of capabilities for durable personal context, conversation history, one-off revisits, and—when configured—Mail and Calendar. Your *Thread* remains a separate, owner-controlled Git repository.
+You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent uses first-class capabilities for conversational actions and a compact, discoverable CLI for broader personal-data queries such as Mail and Calendar. Your *Thread* remains a separate, owner-controlled Git repository.
 
 ## What is here today
 
@@ -55,8 +55,8 @@ cp config.example.toml ~/.config/ariadne/config.toml
 chmod 600 ~/.config/ariadne/config.toml
 # Edit the private config: bot token, allowed Telegram user, and Thread path.
 
-uv run python -m ariadne config check
-uv run python -m ariadne
+uv run ariadne config check
+uv run ariadne serve
 ```
 
 The example configuration starts with Mail, Calendar, and telemetry disabled. See the [getting-started guide](docs/getting-started.md) before enabling anything optional.

@@ -35,7 +35,7 @@ user message ───────────▶│   STARTING   │
           follow-up ────▶│   RUNNING    │◀──── rich edit / activity
                          └───┬──────┬───┘
                              │      │ model asks a decision
-                     Stop ───┘      ▼
+                    /stop ───┘      ▼
                          │   ┌──────────────┐
                          │   │ WAITING_INPUT│
                          │   └──────┬───────┘
@@ -50,7 +50,8 @@ user message ───────────▶│   STARTING   │
 ```
 
 `WAITING_INPUT` is still part of the active Codex turn. The current live bubble
-and its Stop button remain present while the separate question card waits.
+remains present while the separate question card waits, and `/stop` remains
+available throughout.
 
 ## Mid-turn messages
 
@@ -59,7 +60,7 @@ serializes steering into the one Codex turn:
 
 ```text
 t0  You: initial request
-    Ariadne: [Thinking…] [Stop]
+    Ariadne: [Thinking…]
 
 t1  You: also compare the migration risk ─┐
 t2  You: and keep the table compact       ├─ arrival-order steering queue
@@ -83,20 +84,18 @@ bubbles, and it does not discard input on a steering exception.
 reasoning starts       summary streams        commentary starts
 ┌──────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
 │ ✦ Analysing…    │  │ Confirming the     │  │ The growth figure does │
-│           [Stop] │─▶│ growth calculation │─▶│ not reconcile.         │
-└──────────────────┘  │ ✦ Analysing…      │  └────────────────────────┘
-                      │             [Stop] │       permanent bubble 1
-                      └────────────────────┘
+└──────────────────┘─▶│ growth calculation │─▶│ not reconcile.         │
+                      │ ✦ Analysing…      │  └────────────────────────┘
+                      └────────────────────┘       permanent bubble 1
 
 new work bubble        summary streams        final starts
 ┌──────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
 │ ✦ Thinking…     │  │ Choosing the next  │  │ Correct it before the  │
-│           [Stop] │─▶│ action             │─▶│ meeting.               │
-└──────────────────┘  │ ✦ Analysing…      │  └────────────────────────┘
-                      │             [Stop] │       permanent bubble 2
-                      └────────────────────┘
+└──────────────────┘─▶│ action             │─▶│ meeting.               │
+                      │ ✦ Analysing…      │  └────────────────────────┘
+                      └────────────────────┘       permanent bubble 2
 
-Stop at any live state ─▶ useful partial speech, or “Stopped” + [Stopped]
+`/stop` at any live state ─▶ useful partial speech, or “Stopped”
 ```
 
 Codex is asked for concise reasoning summaries. These are generated summaries,
@@ -224,8 +223,8 @@ Use a private operator config on the machine running Ariadne; never paste the
 bot token into an issue, PR, or chat transcript. Start with:
 
 ```bash
-uv run python -m ariadne config check
-uv run python -m ariadne
+uv run ariadne config check
+uv run ariadne serve
 ```
 
 Run these cases in order:
@@ -239,9 +238,8 @@ Run these cases in order:
    Complete structure must remain rendered during edits. Incomplete table rows,
    code, maths, and details must show a calm labelled state instead of raw tags.
    Links, details, media, and maps must become active only on completion.
-3. Start a long answer and press the red Stop button. It must immediately become
-   disabled, Codex must interrupt, and partial useful text must remain with a
-   terminal “Stopped” state.
+3. Start a long answer and send `/stop`. Codex must interrupt, and partial useful
+   text must remain with a terminal “Stopped” state.
 4. Ask for a deployment choice that genuinely requires input. Answer once with
    a button, then repeat with typed text. In both cases the same answer should
    continue after the card settles; there must not be a second model turn.

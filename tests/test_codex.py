@@ -630,20 +630,6 @@ def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
 @pytest.mark.parametrize(
     ("tool", "expected"),
     [
-        ("search_mail", "Searching mail…"),
-        ("read_mail", "Reading mail…"),
-        ("read_mail_thread", "Reading mail thread…"),
-        ("list_calendars", "Checking calendars…"),
-        ("search_calendar_events", "Searching the calendar…"),
-        ("read_calendar_event", "Reading a calendar event…"),
-        ("check_calendar_availability", "Checking availability…"),
-        ("create_calendar_event", "Creating a calendar event…"),
-        ("update_calendar_event", "Updating a calendar event…"),
-        ("delete_calendar_event", "Deleting a calendar event…"),
-        (
-            "respond_to_calendar_invitation",
-            "Responding to a calendar invitation…",
-        ),
         ("search_knowledge", "Searching memory…"),
         ("browse_knowledge", "Browsing memory…"),
         ("read_knowledge", "Reading memory…"),

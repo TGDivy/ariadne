@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -16,6 +18,7 @@ from ariadne.behavior.runner import (
     RecordedMessage,
     TimelineEntry,
     _redacted_environment,
+    _write_fake_cli,
     _write_scenario,
     render_report,
 )
@@ -105,27 +108,42 @@ def test_model_process_does_not_inherit_service_secrets(
     assert "UNRELATED_VALUE" not in redacted
 
 
+def test_disposable_cli_executable_uses_the_shared_parser(
+    tmp_path: Path,
+) -> None:
+    calls = tmp_path / "calls.jsonl"
+    executable = _write_fake_cli(tmp_path / "bin")
+    environment = {
+        **os.environ,
+        fake_mcp.STATE_ENVIRONMENT: str(calls),
+    }
+
+    result = subprocess.run(
+        [str(executable), "mail", "search", "race train", "--limit", "4"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+
+    assert json.loads(result.stdout) == {
+        "query": "race train",
+        "results": [],
+        "searched_folders": 1,
+    }
+    assert result.stderr == ""
+    assert json.loads(calls.read_text())["tool"] == "cli.mail.search"
+
+
 async def test_fake_capabilities_keep_the_production_contract() -> None:
     production = {tool.name: tool for tool in await production_mcp.list_tools()}
     fake = {tool.name: tool for tool in await fake_mcp.mcp.list_tools()}
 
     assert tuple(fake) == (
-        "inspect_ariadne_runtime",
         "send_telegram_message",
         "read_recent_telegram_messages",
         "request_telegram_file_delivery",
-        "search_mail",
-        "read_mail",
-        "read_mail_thread",
         "record_current_mail_decision",
-        "list_calendars",
-        "search_calendar_events",
-        "read_calendar_event",
-        "check_calendar_availability",
-        "create_calendar_event",
-        "update_calendar_event",
-        "delete_calendar_event",
-        "respond_to_calendar_invitation",
         "search_knowledge",
         "browse_knowledge",
         "read_knowledge",
@@ -268,9 +286,9 @@ async def test_fake_calendar_is_seeded_and_mutable(
     assert found["events"][0]["id"] == "scenario-race-event"
     assert updated["description"] == "Change at Staines."
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
-        "search_calendar_events",
-        "create_calendar_event",
-        "update_calendar_event",
+        "cli.calendar.search",
+        "cli.calendar.create",
+        "cli.calendar.update",
     ]
 
 

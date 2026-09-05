@@ -1,8 +1,10 @@
+import json
 import logging
 import sys
 from pathlib import Path
 
-from ariadne.__main__ import configure_logging, main
+from ariadne.__main__ import main
+from ariadne.service import configure_logging
 
 
 def test_configure_logging_suppresses_http_client_request_logs() -> None:
@@ -45,5 +47,5 @@ allowed_user_id = 7
     main()
 
     output = capsys.readouterr().out
-    assert '"bot_token": "<redacted>"' in output
+    assert json.loads(output)["telegram"]["bot_token"] == "<redacted>"
     assert "super-secret-token" not in output

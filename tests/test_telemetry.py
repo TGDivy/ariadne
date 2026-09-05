@@ -48,13 +48,13 @@ def test_tool_traces_contain_metadata_but_not_arguments() -> None:
         model="gpt-test",
         reasoning_effort="medium",
     )
-    secret = "private mailbox search terms"
+    secret = "private memory search terms"
     started = McpToolCallThreadItem(
         arguments={"query": secret},
         id="tool-1",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="search_mail",
+        tool="search_knowledge",
         type="mcpToolCall",
     )
     completed = started.model_copy(
@@ -67,10 +67,10 @@ def test_tool_traces_contain_metadata_but_not_arguments() -> None:
 
     spans = span_exporter.get_finished_spans()
     assert [span.name for span in spans] == [
-        "execute_tool mcp.search_mail",
+        "execute_tool mcp.search_knowledge",
         "invoke_agent gpt-test",
     ]
-    assert spans[0].attributes["gen_ai.tool.name"] == "mcp.search_mail"
+    assert spans[0].attributes["gen_ai.tool.name"] == "mcp.search_knowledge"
     assert secret not in repr(spans)
 
     metrics = {
@@ -84,7 +84,7 @@ def test_tool_traces_contain_metadata_but_not_arguments() -> None:
         "source": "mail",
         "model": "gpt-test",
         "reasoning_effort": "medium",
-        "tool": "mcp.search_mail",
+        "tool": "mcp.search_knowledge",
         "status": "success",
     }
     tracer_provider.shutdown()
