@@ -41,7 +41,6 @@ from .history import (
 from .live import (
     STOPPED_MESSAGE,
     STOPPING_MESSAGE,
-    TURN_STOP_CALLBACK,
     LiveTurn,
 )
 from .questions import (
@@ -244,24 +243,6 @@ class AriadneBot:
         if message is None:
             return
         await self.handle_stop(message, self._user_id_from(update))
-
-    async def turn_callback(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handle controls embedded in the currently edited Rich Message."""
-        query = update.callback_query
-        if not isinstance(query, CallbackQuery):
-            return
-        await self._answer_callback_safely(query)
-        if not self._is_allowed(self._user_id_from(update)):
-            return
-        message = query.message
-        if (
-            not isinstance(message, Message)
-            or query.data != TURN_STOP_CALLBACK
-            or self._live_response is None
-            or self._live_response.message_id != message.message_id
-        ):
-            return
-        await self._request_stop(None)
 
     async def question_callback(
         self, update: Update, _: ContextTypes.DEFAULT_TYPE
@@ -554,7 +535,7 @@ class AriadneBot:
         await self._request_stop(message)
 
     async def _request_stop(self, command_message: Message | None) -> None:
-        """Interrupt the active turn from either a command or embedded button."""
+        """Interrupt the active turn in response to /stop."""
         if not self._busy:
             if command_message is not None:
                 await self._reply_safely(command_message, NOTHING_TO_STOP_MESSAGE)

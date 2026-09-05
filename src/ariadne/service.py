@@ -187,9 +187,6 @@ def run(path: Path | None = None) -> None:
         CallbackQueryHandler(ariadne.file_delivery_callback, pattern=r"^file-delivery:")
     )
     application.add_handler(
-        CallbackQueryHandler(ariadne.turn_callback, pattern=r"^turn:")
-    )
-    application.add_handler(
         CallbackQueryHandler(ariadne.question_callback, pattern=r"^question:")
     )
     application.add_handler(

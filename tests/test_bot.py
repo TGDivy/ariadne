@@ -372,7 +372,7 @@ async def test_bound_bot_streams_and_finalizes_native_rich_messages(
     assert message.replies == []
     assert rich.sent[0]["markdown"] == "> ✦ _Thinking…_"
     assert "reply_to_message_id" not in rich.sent[0]
-    assert rich.sent[0]["buttons"]
+    assert rich.sent[0]["buttons"] == ()
     assert rich.sent[0]["disable_interactions"] is True
     assert [edit[0] for edit in rich.edits] == [
         "## Heading\n\n> ✦ _Writing…_",
@@ -472,16 +472,16 @@ async def test_live_activity_coexists_with_body_and_resolves_in_the_same_message
     assert rich.edits == [
         (
             "## Finding\n\nThe first result is useful.\n\n> ✦ _Writing…_",
-            (_LiveBubble._stop_button,),
+            (),
         ),
         (
             "## Finding\n\nThe first result is useful.\n\n> ✦ _Reading mail…_",
-            (_LiveBubble._stop_button,),
+            (),
         ),
         (
             "## Finding\n\nThe first result is useful. The second confirms it."
             "\n\n> ✦ _Writing…_",
-            (_LiveBubble._stop_button,),
+            (),
         ),
         (
             "## Finding\n\nThe first result is useful. The second confirms it.",
@@ -575,7 +575,7 @@ async def test_stopping_wins_over_a_racing_rich_completion(
 
     with pytest.raises(TurnInterrupted):
         await live.finish("Finished too late")
-    assert rich.edits[-1][1][0].kind == "disabled"
+    assert rich.edits[-1][1] == ()
 
 
 async def test_stopping_preserves_rich_partial_output_beyond_one_message(
@@ -590,7 +590,7 @@ async def test_stopping_preserves_rich_partial_output_beyond_one_message(
     await live.stopped(partial)
 
     assert rich.edits[-1][0] == "A" * RICH_MESSAGE_LIMIT
-    assert rich.edits[-1][1][0].kind == "disabled"
+    assert rich.edits[-1][1] == ()
     assert rich.sent[1]["markdown"].endswith(f"_{STOPPED_MESSAGE}_")
 
 
