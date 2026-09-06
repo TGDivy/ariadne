@@ -65,7 +65,7 @@ Mail, Calendar, health, and telemetry are off in `config.example.toml`. Enable o
 
 - **Mail:** add shared iCloud credentials under `[icloud]`, point `[mail].routes` at a private routes file, then enable `[mail]`. Mail turns may triage, flag, or move messages under their configured route policy, but never send email.
 - **Calendar:** enable `[calendar]` and set an IANA timezone. Calendar writes and invitation responses can communicate externally, so keep it opt-in and review the [architecture notes](architecture.md#integration-boundaries).
-- **Health:** enable `[health]` with Ithaca's HTTPS API URL, distinct read token, and your IANA timezone. The CLI is read-only and exposes compact workout facts, never the canonical raw snapshot.
+- **Health:** enable `[health]` with Ithaca's HTTPS API URL, distinct read token, and your IANA timezone. The CLI is read-only and exposes compact workout and sleep facts, never canonical raw health records.
 - **Telemetry:** enable `[telemetry]` only after adding an OTLP endpoint and authorization to the private configuration. The included Grafana dashboard is at `docs/grafana/ariadne-observability.json`.
 
 The implementation details and operational contracts for Mail, Calendar, and health live in the source and their nearby documentation. They are intentionally not required for a first private conversation.

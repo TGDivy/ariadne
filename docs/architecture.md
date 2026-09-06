@@ -45,7 +45,7 @@ The agent does not receive a vague integration-level permission. Ariadne owns st
 | --- | --- | --- |
 | **First-class MCP** | Telegram conversation and delivery, semantic knowledge, and one-off revisits | These are fundamental to Iris’s identity and follow-through, are commonly needed without prior discovery, and include interactive or stateful turn semantics. |
 | **Turn-scoped MCP** | `record_current_mail_decision` | The operation is valid only for the ingestion job that activated the current Mail turn; a general process command would weaken that binding. |
-| **Discoverable CLI** | Mail search/read/thread, all Calendar operations, and Ithaca workout reads | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
+| **Discoverable CLI** | Mail search/read/thread, all Calendar operations, and Ithaca health reads | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
 | **Operator commands** | Bulk mail backfill/export, profile inspection, bot-profile changes, and behaviour runs | These have operational or bulk effects and are intentionally not advertised as ordinary model capabilities. |
 
 The installed `ariadne` CLI emits bounded JSON and keeps provider implementations behind typed `MailReader`, `ICloudCalendar`, and `IthacaClient` interfaces. For these provider commands, the long-running service exports the selected private config path and makes the sibling CLI executable discoverable to Codex. Credentials are loaded by the selected command on demand and are not copied into the MCP subprocess environment. The configured Ithaca hostname, but not its URL or token, is added to each turn profile's network allowlist.
@@ -72,18 +72,18 @@ The agent can schedule a single future wake-up with a self-contained reason and 
 
 ### Health reads and future activations
 
-Health follows the CLI data-plane pattern: list workouts in a bounded period, summarize period totals, or show one returned workout ID under `ariadne health workouts`. Ariadne calls Ithaca's bearer-authenticated Workout Metrics Read v1 surface through a typed HTTP client. PostgreSQL credentials and tables do not cross that boundary, so Ithaca can change its storage or deployment without changing Iris's command contract.
+Health follows the CLI data-plane pattern. `ariadne health workouts` lists and summarizes bounded periods or shows one returned workout ID. `ariadne health sleep` lists and summarizes derived sleep dates, shows one date's episode timeline, or returns the latest compact day. Ariadne calls Ithaca's bearer-authenticated read surface through a typed HTTP client. PostgreSQL credentials and tables do not cross that boundary, so Ithaca can change its storage or deployment without changing Iris's command contract.
 
-List and show return bounded compact domain records, while summarize returns deterministic server-computed aggregates. The API reports projection coverage, snapshot selection, availability, and quality rather than manufacturing missing values. Canonical raw snapshots, route points, and detailed series are not exposed by the Iris-facing client.
+List and show return bounded compact domain records, while summarize returns deterministic server-computed aggregates. Workout responses retain useful availability and selection facts. Sleep responses keep recorded facts and explicit missing stage values but omit internal projection and issue metadata. Canonical raw records, route points, and detailed workout series are not exposed by the Iris-facing client.
 
-The typed client validates Ithaca's complete response shape before a small presentation layer shapes it for Iris. That layer omits API schema and snapshot identifiers, null metrics, and non-actionable series catalogues; it keeps fixed-unit numbers, readable source names, workout identifiers, pagination, period projection coverage, freshness, and quality issues. This is intentionally a semantic reduction rather than preformatted prose, so Iris can still compare and calculate from the result.
+The typed client validates Ithaca's complete response shape before a small presentation layer shapes it for Iris. It removes transport and internal projection details while keeping fixed-unit numbers, readable source names, identifiers or derived sleep dates, explicit missing sleep stages, and pagination. This is intentionally a semantic reduction rather than preformatted prose, so Iris can still compare and calculate from the result.
 
 Ingestion and activation are separate decisions. Persisting every workout—or later every sleep, weight, nutrition, or other health record—should not automatically start an Iris turn. A record may become a typed trigger source after storage when an explicit policy identifies a useful reason to act, with an idempotent record/event reference and a fresh read through the same API. This avoids one noisy model turn per sync while preserving the option for meaningful workout completion, recovery, anomaly, or user-chosen follow-up activations.
 
 A small staged path from here is:
 
-1. Validate the three CLI commands against representative real workouts and adjust the still-small public contract if actual questions expose friction.
-2. Add later sleep, body, nutrition, or other categories behind the same authenticated client only when their factual read contracts exist.
+1. Validate the workout and sleep commands against representative real data and adjust the still-small public contract if actual questions expose friction.
+2. Add later body, nutrition, or other categories behind the same authenticated client only when their factual read contracts exist.
 3. Add opt-in typed health activations separately, beginning with one narrow policy and idempotency tests.
 
 Ithaca retains a bounded detailed-series endpoint for diagnostics and other clients, but Ariadne does not advertise it. If real Iris conversations reveal a recurring question that compact detail and splits cannot answer, prefer a purpose-shaped trend or timeline command over exposing raw intervals by default.

@@ -8,6 +8,7 @@ import logging
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
+from datetime import date
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Never, Protocol, cast
@@ -38,7 +39,7 @@ from .health import (
     IthacaUnavailableError,
     WorkoutActivityType,
 )
-from .health.presentation import WorkoutQueries
+from .health.presentation import HealthQueries
 from .mail import IMAP_HOST, MailReader
 from .redaction import redact_sensitive_text
 
@@ -139,7 +140,7 @@ class CalendarCommands(Protocol):
     ) -> dict[str, Any]: ...
 
 
-class WorkoutCommands(Protocol):
+class HealthCommands(Protocol):
     def list_workouts(
         self,
         *,
@@ -160,6 +161,23 @@ class WorkoutCommands(Protocol):
 
     def show_workout(self, workout_uuid: UUID) -> dict[str, Any]: ...
 
+    def list_sleep(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def summarize_sleep(
+        self, *, start_date: date, end_date: date
+    ) -> dict[str, Any]: ...
+
+    def show_sleep(self, sleep_date: date) -> dict[str, Any]: ...
+
+    def latest_sleep(self) -> dict[str, Any]: ...
+
 
 class CliBackend(Protocol):
     def config_check(self) -> dict[str, object]: ...
@@ -172,7 +190,7 @@ class CliBackend(Protocol):
 
     def calendar(self) -> AbstractContextManager[CalendarCommands]: ...
 
-    def health(self) -> AbstractContextManager[WorkoutCommands]: ...
+    def health(self) -> AbstractContextManager[HealthCommands]: ...
 
 
 class CliError(Exception):
@@ -297,7 +315,7 @@ class ProductionBackend:
             yield cast(CalendarCommands, calendar)
 
     @contextmanager
-    def health(self) -> Iterator[WorkoutCommands]:
+    def health(self) -> Iterator[HealthCommands]:
         settings = self._load()
         health = settings.health
         if not health.enabled or health.api_url is None or health.read_token is None:
@@ -306,7 +324,7 @@ class ProductionBackend:
                 "Health access is not enabled in Ariadne's private configuration.",
                 EXIT_USAGE,
             )
-        yield WorkoutQueries(
+        yield HealthQueries(
             IthacaClient(
                 str(health.api_url),
                 health.read_token.get_secret_value(),
@@ -467,6 +485,36 @@ def _health_workouts_show(
         return health.show_workout(args.workout_id)
 
 
+def _health_sleep_list(args: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
+    with backend.health() as health:
+        return health.list_sleep(
+            start_date=args.start_date,
+            end_date=args.end_date,
+            limit=args.limit,
+            cursor=args.cursor,
+        )
+
+
+def _health_sleep_summarize(
+    args: argparse.Namespace, backend: CliBackend
+) -> dict[str, Any]:
+    with backend.health() as health:
+        return health.summarize_sleep(
+            start_date=args.start_date,
+            end_date=args.end_date,
+        )
+
+
+def _health_sleep_show(args: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
+    with backend.health() as health:
+        return health.show_sleep(args.sleep_date)
+
+
+def _health_sleep_latest(_: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
+    with backend.health() as health:
+        return health.latest_sleep()
+
+
 def _add_calendar_selection(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--calendar-id",
@@ -600,6 +648,13 @@ def _workout_activity(value: str) -> WorkoutActivityType:
         ) from error
 
 
+def _sleep_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be an ISO date (YYYY-MM-DD)") from error
+
+
 def _add_workout_period(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--start",
@@ -618,6 +673,23 @@ def _add_workout_period(parser: argparse.ArgumentParser) -> None:
         type=_workout_activity,
         metavar="TYPE",
         help="workout activity type; repeat to include more than one",
+    )
+
+
+def _add_sleep_period(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--start",
+        dest="start_date",
+        type=_sleep_date,
+        required=True,
+        help="inclusive derived sleep date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--end",
+        dest="end_date",
+        type=_sleep_date,
+        required=True,
+        help="exclusive derived sleep date (YYYY-MM-DD)",
     )
 
 
@@ -860,7 +932,12 @@ def build_parser() -> AriadneArgumentParser:
     )
     respond.set_defaults(_handler=_calendar_respond)
 
-    health = commands.add_parser("health", help="read factual personal health data")
+    health = commands.add_parser(
+        "health",
+        help="read factual personal health data",
+        description="Read bounded workout and sleep history from Ithaca.",
+        epilog="Run 'ariadne health <category> --help' for available queries.",
+    )
     health_actions = health.add_subparsers(dest="health_action", required=True)
     workouts = health_actions.add_parser(
         "workouts",
@@ -926,6 +1003,73 @@ def build_parser() -> AriadneArgumentParser:
         help="workout ID returned by list",
     )
     workout_show.set_defaults(_handler=_health_workouts_show)
+
+    sleep = health_actions.add_parser(
+        "sleep",
+        help="list and inspect sleep history",
+        description="Read compact, factual sleep-day records from Ithaca.",
+        epilog=(
+            "List and summarize require --start and --end. Show accepts a "
+            "SLEEP_DATE returned by list or latest. A sleep date is the local date "
+            "on which an episode ended, using its recorded timezone."
+        ),
+    )
+    sleep_actions = sleep.add_subparsers(dest="sleep_action", required=True)
+
+    sleep_list = sleep_actions.add_parser(
+        "list",
+        help="browse a bounded date range newest first",
+        description=(
+            "List newest-first compact sleep days and return dates accepted by show."
+        ),
+    )
+    _add_sleep_period(sleep_list)
+    sleep_list.add_argument(
+        "--limit",
+        type=_bounded_integer(1, 50),
+        default=20,
+        metavar="N",
+        help="maximum sleep days, 1-50 (default: 20)",
+    )
+    sleep_list.add_argument(
+        "--cursor",
+        type=_bounded_text(2048, "cursor"),
+        help="opaque next_cursor from a matching earlier list",
+    )
+    sleep_list.set_defaults(_handler=_health_sleep_list)
+
+    sleep_summarize = sleep_actions.add_parser(
+        "summarize",
+        help="calculate factual sleep trends for a bounded range",
+        description=(
+            "Return observed-day counts plus duration and local-timing averages and "
+            "variability."
+        ),
+    )
+    _add_sleep_period(sleep_summarize)
+    sleep_summarize.set_defaults(_handler=_health_sleep_summarize)
+
+    sleep_show = sleep_actions.add_parser(
+        "show",
+        help="inspect one sleep day",
+        description=(
+            "Show the main and additional sleep episodes with ordered stage intervals."
+        ),
+    )
+    sleep_show.add_argument(
+        "sleep_date",
+        type=_sleep_date,
+        metavar="SLEEP_DATE",
+        help="derived sleep date returned by list or latest",
+    )
+    sleep_show.set_defaults(_handler=_health_sleep_show)
+
+    sleep_latest = sleep_actions.add_parser(
+        "latest",
+        help="read the most recent compact sleep day",
+        description="Return the most recent available sleep day without its timeline.",
+    )
+    sleep_latest.set_defaults(_handler=_health_sleep_latest)
     return parser
 
 

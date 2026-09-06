@@ -1,8 +1,8 @@
-"""Typed request and response models for Ithaca Workout Metrics Read v1."""
+"""Typed request and response models for Ithaca's health read APIs."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -351,3 +351,147 @@ class WorkoutShowResponse(APIModel):
     schema_version: Literal[1]
     selection: Selection
     workout: Workout
+
+
+class SleepDateRangeRequest(APIModel):
+    start_date: date
+    end_date: date
+
+    @model_validator(mode="after")
+    def require_forward_date_range(self) -> SleepDateRangeRequest:
+        if self.end_date <= self.start_date:
+            raise ValueError("end_date must be later than start_date")
+        return self
+
+
+class SleepSearchRequest(SleepDateRangeRequest):
+    limit: int = Field(default=20, ge=1, le=50)
+    cursor: str | None = Field(default=None, max_length=2048)
+
+
+class SleepSummarizeRequest(SleepDateRangeRequest):
+    pass
+
+
+class SleepShowRequest(APIModel):
+    sleep_date: date
+
+
+class SleepProjection(APIModel):
+    schema_version: Literal[2]
+    stale: bool
+
+
+class SleepStageDurations(APIModel):
+    asleep_unspecified_seconds: float | None = Field(default=None, ge=0)
+    core_seconds: float | None = Field(default=None, ge=0)
+    deep_seconds: float | None = Field(default=None, ge=0)
+    rem_seconds: float | None = Field(default=None, ge=0)
+
+
+class MainSleepSummary(APIModel):
+    sleep_started_at: AwareDatetime
+    sleep_ended_at: AwareDatetime
+    sleep_window_seconds: float = Field(ge=0)
+    total_asleep_seconds: float = Field(ge=0)
+    awake_seconds: float | None = Field(default=None, ge=0)
+    stages: SleepStageDurations
+
+
+class AdditionalSleepSummary(APIModel):
+    episode_count: int = Field(ge=0)
+    total_asleep_seconds: float = Field(ge=0)
+
+
+class SleepDaySummary(APIModel):
+    sleep_date: date
+    time_zone_identifier: str
+    source_names: list[str]
+    main_sleep: MainSleepSummary
+    additional_sleep: AdditionalSleepSummary
+    total_asleep_seconds: float = Field(ge=0)
+    issue_codes: list[str]
+
+
+class SleepSearchResponse(APIModel):
+    schema_version: Literal[1]
+    projection: SleepProjection
+    sleep_days: list[SleepDaySummary]
+    next_cursor: str | None
+
+
+class SleepStageInterval(APIModel):
+    stage: Literal["awake", "asleep_unspecified", "core", "deep", "rem"]
+    start_at: AwareDatetime
+    end_at: AwareDatetime
+
+
+class SleepEpisodeDetail(APIModel):
+    sleep_started_at: AwareDatetime
+    sleep_ended_at: AwareDatetime
+    time_zone_identifier: str
+    source_names: list[str]
+    sleep_window_seconds: float = Field(ge=0)
+    total_asleep_seconds: float = Field(ge=0)
+    awake_seconds: float | None = Field(default=None, ge=0)
+    stages: SleepStageDurations
+    stage_intervals: list[SleepStageInterval]
+    issue_codes: list[str]
+
+
+class SleepDayDetail(APIModel):
+    sleep_date: date
+    time_zone_identifier: str
+    source_names: list[str]
+    total_asleep_seconds: float = Field(ge=0)
+    main_sleep: SleepEpisodeDetail
+    additional_sleep: list[SleepEpisodeDetail]
+    issue_codes: list[str]
+
+
+class SleepShowResponse(APIModel):
+    schema_version: Literal[1]
+    projection: SleepProjection
+    sleep_day: SleepDayDetail
+
+
+class SleepLatestResponse(APIModel):
+    schema_version: Literal[1]
+    projection: SleepProjection
+    sleep_day: SleepDayDetail | None
+
+
+class AverageLocalTime(APIModel):
+    local_time: time
+    day_offset_from_sleep_date: int
+
+
+class SleepSummaryAverages(APIModel):
+    main_asleep_seconds: float = Field(ge=0)
+    total_asleep_seconds: float = Field(ge=0)
+    main_sleep_start: AverageLocalTime
+    main_sleep_end: AverageLocalTime
+
+
+class SleepSummaryVariability(APIModel):
+    main_asleep_standard_deviation_seconds: float = Field(ge=0)
+    total_asleep_standard_deviation_seconds: float = Field(ge=0)
+    main_sleep_start_standard_deviation_seconds: float = Field(ge=0)
+    main_sleep_end_standard_deviation_seconds: float = Field(ge=0)
+
+
+class SleepSummaryAdditionalSleep(APIModel):
+    episode_count: int = Field(ge=0)
+    total_asleep_seconds: float = Field(ge=0)
+    average_asleep_seconds_per_sleep_day: float | None = Field(default=None, ge=0)
+
+
+class SleepSummarizeResponse(APIModel):
+    schema_version: Literal[1]
+    start_date: date
+    end_date: date
+    projection: SleepProjection
+    days_with_sleep_data: int = Field(ge=0)
+    averages: SleepSummaryAverages | None
+    variability: SleepSummaryVariability | None
+    additional_sleep: SleepSummaryAdditionalSleep

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from urllib.error import HTTPError, URLError
@@ -21,11 +22,23 @@ from ariadne.health import (
     WorkoutActivityType,
 )
 from ariadne.health.models import (
+    SleepLatestResponse,
+    SleepSearchResponse,
+    SleepShowResponse,
+    SleepSummarizeResponse,
     WorkoutSearchResponse,
     WorkoutShowResponse,
     WorkoutSummarizeResponse,
 )
-from ariadne.health.presentation import list_view, show_view, summarize_view
+from ariadne.health.presentation import (
+    list_view,
+    show_view,
+    sleep_latest_view,
+    sleep_list_view,
+    sleep_show_view,
+    sleep_summarize_view,
+    summarize_view,
+)
 
 WORKOUT_UUID = UUID("00000000-0000-0000-0000-000000000101")
 SNAPSHOT_UUID = UUID("00000000-0000-0000-0000-000000000001")
@@ -182,6 +195,153 @@ def show_payload() -> dict[str, object]:
     }
 
 
+def sleep_projection() -> dict[str, object]:
+    return {"schema_version": 2, "stale": True}
+
+
+def sleep_day_summary_payload() -> dict[str, object]:
+    return {
+        "sleep_date": "2026-09-06",
+        "time_zone_identifier": "Europe/London",
+        "source_names": ["Apple Watch"],
+        "main_sleep": {
+            "sleep_started_at": "2026-09-05T22:00:00Z",
+            "sleep_ended_at": "2026-09-06T06:00:00Z",
+            "sleep_window_seconds": 28800,
+            "total_asleep_seconds": 27000,
+            "awake_seconds": 1800,
+            "stages": {
+                "asleep_unspecified_seconds": None,
+                "core_seconds": 14400,
+                "deep_seconds": 5400,
+                "rem_seconds": 7200,
+            },
+        },
+        "additional_sleep": {
+            "episode_count": 1,
+            "total_asleep_seconds": 1800,
+        },
+        "total_asleep_seconds": 28800,
+        "issue_codes": ["internal_projection_warning"],
+    }
+
+
+def sleep_day_detail_payload() -> dict[str, object]:
+    return {
+        "sleep_date": "2026-09-06",
+        "time_zone_identifier": "Europe/London",
+        "source_names": ["Apple Watch"],
+        "total_asleep_seconds": 28800,
+        "main_sleep": {
+            "sleep_started_at": "2026-09-05T22:00:00Z",
+            "sleep_ended_at": "2026-09-06T06:00:00Z",
+            "time_zone_identifier": "Europe/London",
+            "source_names": ["Apple Watch"],
+            "sleep_window_seconds": 28800,
+            "total_asleep_seconds": 27000,
+            "awake_seconds": 1800,
+            "stages": {
+                "asleep_unspecified_seconds": None,
+                "core_seconds": 14400,
+                "deep_seconds": 5400,
+                "rem_seconds": 7200,
+            },
+            "stage_intervals": [
+                {
+                    "stage": "core",
+                    "start_at": "2026-09-05T22:00:00Z",
+                    "end_at": "2026-09-06T02:00:00Z",
+                }
+            ],
+            "issue_codes": ["internal_projection_warning"],
+        },
+        "additional_sleep": [
+            {
+                "sleep_started_at": "2026-09-06T13:00:00Z",
+                "sleep_ended_at": "2026-09-06T13:30:00Z",
+                "time_zone_identifier": "Europe/London",
+                "source_names": ["Apple Watch"],
+                "sleep_window_seconds": 1800,
+                "total_asleep_seconds": 1800,
+                "awake_seconds": None,
+                "stages": {
+                    "asleep_unspecified_seconds": 1800,
+                    "core_seconds": None,
+                    "deep_seconds": None,
+                    "rem_seconds": None,
+                },
+                "stage_intervals": [
+                    {
+                        "stage": "asleep_unspecified",
+                        "start_at": "2026-09-06T13:00:00Z",
+                        "end_at": "2026-09-06T13:30:00Z",
+                    }
+                ],
+                "issue_codes": [],
+            }
+        ],
+        "issue_codes": ["internal_projection_warning"],
+    }
+
+
+def sleep_search_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "projection": sleep_projection(),
+        "sleep_days": [sleep_day_summary_payload()],
+        "next_cursor": "next-sleep-page",
+    }
+
+
+def sleep_summary_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-08",
+        "projection": sleep_projection(),
+        "days_with_sleep_data": 1,
+        "averages": {
+            "main_asleep_seconds": 27000,
+            "total_asleep_seconds": 28800,
+            "main_sleep_start": {
+                "local_time": "23:00:00",
+                "day_offset_from_sleep_date": -1,
+            },
+            "main_sleep_end": {
+                "local_time": "07:00:00",
+                "day_offset_from_sleep_date": 0,
+            },
+        },
+        "variability": {
+            "main_asleep_standard_deviation_seconds": 0,
+            "total_asleep_standard_deviation_seconds": 0,
+            "main_sleep_start_standard_deviation_seconds": 0,
+            "main_sleep_end_standard_deviation_seconds": 0,
+        },
+        "additional_sleep": {
+            "episode_count": 1,
+            "total_asleep_seconds": 1800,
+            "average_asleep_seconds_per_sleep_day": 1800,
+        },
+    }
+
+
+def sleep_show_payload() -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "projection": sleep_projection(),
+        "sleep_day": sleep_day_detail_payload(),
+    }
+
+
+def sleep_latest_payload(*, present: bool = True) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "projection": sleep_projection(),
+        "sleep_day": sleep_day_detail_payload() if present else None,
+    }
+
+
 def test_search_uses_bearer_post_and_normalizes_configured_timezone() -> None:
     opener = Opener(Response(search_payload()))
     client = IthacaClient(
@@ -239,6 +399,55 @@ def test_summary_and_show_use_the_typed_v1_contract() -> None:
     }
 
 
+def test_sleep_reads_use_dates_bearer_authentication_and_a_bodyless_latest() -> None:
+    opener = Opener(
+        Response(sleep_search_payload()),
+        Response(sleep_summary_payload()),
+        Response(sleep_show_payload()),
+        Response(sleep_latest_payload()),
+    )
+    client = IthacaClient(
+        "https://ithaca.example/", "private-read-token", opener=opener
+    )
+
+    searched = client.search_sleep(
+        start_date=date(2026, 9, 1),
+        end_date=date(2026, 9, 8),
+        limit=12,
+        cursor="sleep-cursor",
+    )
+    summarized = client.summarize_sleep(
+        start_date=date(2026, 9, 1), end_date=date(2026, 9, 8)
+    )
+    shown = client.show_sleep(date(2026, 9, 6))
+    latest = client.latest_sleep()
+
+    assert isinstance(searched, SleepSearchResponse)
+    assert isinstance(summarized, SleepSummarizeResponse)
+    assert isinstance(shown, SleepShowResponse)
+    assert isinstance(latest, SleepLatestResponse)
+    assert [request.full_url for request, _ in opener.requests] == [
+        "https://ithaca.example/v1/health/sleep/search",
+        "https://ithaca.example/v1/health/sleep/summarize",
+        "https://ithaca.example/v1/health/sleep/show",
+        "https://ithaca.example/v1/health/sleep/latest",
+    ]
+    assert json.loads(opener.requests[0][0].data or b"") == {
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-08",
+        "limit": 12,
+        "cursor": "sleep-cursor",
+    }
+    assert json.loads(opener.requests[2][0].data or b"") == {"sleep_date": "2026-09-06"}
+    latest_request = opener.requests[3][0]
+    assert latest_request.data is None
+    assert latest_request.get_header("Content-type") is None
+    assert all(
+        request.get_header("Authorization") == "Bearer private-read-token"
+        for request, _ in opener.requests
+    )
+
+
 def test_iris_views_remove_transport_plumbing_and_absent_metrics() -> None:
     listed = list_view(WorkoutSearchResponse.model_validate(search_payload()))
     summary = summarize_view(WorkoutSummarizeResponse.model_validate(summary_payload()))
@@ -276,6 +485,47 @@ def test_iris_views_remove_transport_plumbing_and_absent_metrics() -> None:
     assert "snapshot_id" not in shown
     assert "available_series" not in shown
     assert "elevation_gain_meters" not in shown["metrics"]
+
+
+def test_sleep_views_keep_facts_and_hide_projection_quality_metadata() -> None:
+    listed = sleep_list_view(SleepSearchResponse.model_validate(sleep_search_payload()))
+    summarized = sleep_summarize_view(
+        SleepSummarizeResponse.model_validate(sleep_summary_payload())
+    )
+    shown = sleep_show_view(SleepShowResponse.model_validate(sleep_show_payload()))
+    latest = sleep_latest_view(
+        SleepLatestResponse.model_validate(sleep_latest_payload())
+    )
+    empty_latest = sleep_latest_view(
+        SleepLatestResponse.model_validate(sleep_latest_payload(present=False))
+    )
+
+    assert listed["next_cursor"] == "next-sleep-page"
+    assert listed["sleep_days"][0]["sleep_date"] == "2026-09-06"
+    assert (
+        listed["sleep_days"][0]["main_sleep"]["stages"]["asleep_unspecified_seconds"]
+        is None
+    )
+    assert summarized["period"] == {
+        "start_date": "2026-09-01",
+        "end_date": "2026-09-08",
+    }
+    assert summarized["days_with_sleep_data"] == 1
+    assert shown["main_sleep"]["stage_intervals"][0]["stage"] == "core"
+    assert "stage_intervals" not in latest["sleep_day"]["main_sleep"]
+    assert latest["sleep_day"]["additional_sleep"] == {
+        "episode_count": 1,
+        "total_asleep_seconds": 1800,
+    }
+    assert empty_latest == {"sleep_day": None}
+
+    public_json = json.dumps(
+        {"list": listed, "summarize": summarized, "show": shown, "latest": latest}
+    )
+    assert "schema_version" not in public_json
+    assert "projection" not in public_json
+    assert "issue" not in public_json
+    assert "stale" not in public_json
 
 
 def http_error(status: int, payload: object) -> HTTPError:
@@ -327,6 +577,8 @@ def test_local_period_validation_fails_before_network_access() -> None:
         client.search_workouts(start="recently", end="2026-09-02")
     with pytest.raises(IthacaRequestError, match="end must be later"):
         client.summarize_workouts(start="2026-09-02", end="2026-09-01")
+    with pytest.raises(IthacaRequestError, match="end_date must be later"):
+        client.summarize_sleep(start_date=date(2026, 9, 2), end_date=date(2026, 9, 1))
 
     assert opener.requests == []
 

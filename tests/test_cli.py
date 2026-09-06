@@ -3,6 +3,7 @@ import logging
 import os
 from collections.abc import Sequence
 from contextlib import contextmanager
+from datetime import date
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -169,6 +170,36 @@ class RecordingHealth:
             "health.workouts.show",
             {"workout_uuid": workout_uuid},
         )
+
+    def list_sleep(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> Any:
+        return self._result(
+            "health.sleep.list",
+            {
+                "start_date": start_date,
+                "end_date": end_date,
+                "limit": limit,
+                "cursor": cursor,
+            },
+        )
+
+    def summarize_sleep(self, *, start_date: date, end_date: date) -> Any:
+        return self._result(
+            "health.sleep.summarize",
+            {"start_date": start_date, "end_date": end_date},
+        )
+
+    def show_sleep(self, sleep_date: date) -> Any:
+        return self._result("health.sleep.show", {"sleep_date": sleep_date})
+
+    def latest_sleep(self) -> Any:
+        return self._result("health.sleep.latest", {})
 
 
 class RecordingBackend:
@@ -577,6 +608,68 @@ def test_health_workout_commands_map_typed_bounded_arguments(
     ]
 
 
+def test_health_sleep_commands_map_typed_bounded_arguments(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = RecordingBackend()
+
+    main(
+        [
+            "health",
+            "sleep",
+            "list",
+            "--start",
+            "2026-08-01",
+            "--end",
+            "2026-09-01",
+            "--limit",
+            "12",
+            "--cursor",
+            "next-page",
+        ],
+        backend=backend,
+    )
+    assert _json_stdout(capsys)["operation"] == "health.sleep.list"
+    main(
+        [
+            "health",
+            "sleep",
+            "summarize",
+            "--start",
+            "2026-08-01",
+            "--end",
+            "2026-09-01",
+        ],
+        backend=backend,
+    )
+    _json_stdout(capsys)
+    main(["health", "sleep", "show", "2026-08-31"], backend=backend)
+    _json_stdout(capsys)
+    main(["health", "sleep", "latest"], backend=backend)
+    _json_stdout(capsys)
+
+    assert backend.calls == [
+        (
+            "health.sleep.list",
+            {
+                "start_date": date(2026, 8, 1),
+                "end_date": date(2026, 9, 1),
+                "limit": 12,
+                "cursor": "next-page",
+            },
+        ),
+        (
+            "health.sleep.summarize",
+            {
+                "start_date": date(2026, 8, 1),
+                "end_date": date(2026, 9, 1),
+            },
+        ),
+        ("health.sleep.show", {"sleep_date": date(2026, 8, 31)}),
+        ("health.sleep.latest", {}),
+    ]
+
+
 def test_health_help_is_lazy_and_lists_only_the_useful_commands(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -584,6 +677,13 @@ def test_health_help_is_lazy_and_lists_only_the_useful_commands(
         raise AssertionError("help must not load private configuration")
 
     monkeypatch.setattr(cli_module, "load_settings", unexpected_load)
+
+    with pytest.raises(SystemExit) as raised:
+        main(["health", "--help"])
+    captured = capsys.readouterr()
+    assert raised.value.code == 0
+    assert "{workouts,sleep}" in captured.out
+    assert captured.err == ""
 
     with pytest.raises(SystemExit) as raised:
         main(["health", "workouts", "--help"])
@@ -612,6 +712,24 @@ def test_health_help_is_lazy_and_lists_only_the_useful_commands(
     assert raised.value.code == 0
     assert "WORKOUT_ID" in captured.out
     assert "snapshot" not in captured.out
+    assert captured.err == ""
+
+    with pytest.raises(SystemExit) as raised:
+        main(["health", "sleep", "--help"])
+    captured = capsys.readouterr()
+    assert raised.value.code == 0
+    assert "{list,summarize,show,latest}" in captured.out
+    assert "SLEEP_DATE" in captured.out
+    assert "returned by list or latest" in captured.out
+    assert "recorded timezone" in captured.out
+    assert captured.err == ""
+
+    with pytest.raises(SystemExit) as raised:
+        main(["health", "sleep", "show", "--help"])
+    captured = capsys.readouterr()
+    assert raised.value.code == 0
+    assert "SLEEP_DATE" in captured.out
+    assert "returned by list or latest" in captured.out
     assert captured.err == ""
 
 
@@ -653,6 +771,18 @@ def test_config_and_serve_dispatch_without_mixing_output(
             "51",
         ],
         ["health", "workouts", "show", "not-a-uuid"],
+        [
+            "health",
+            "sleep",
+            "list",
+            "--start",
+            "2026-09-01",
+            "--end",
+            "2026-09-02",
+            "--limit",
+            "51",
+        ],
+        ["health", "sleep", "show", "yesterday"],
     ],
 )
 def test_argument_errors_are_short_machine_readable_json(

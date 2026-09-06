@@ -1,10 +1,10 @@
-"""Small typed HTTP client for Ithaca's read-only workout API."""
+"""Small typed HTTP client for Ithaca's read-only health APIs."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, TypeVar
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -15,6 +15,13 @@ from pydantic import ValidationError
 
 from .models import (
     APIModel,
+    SleepLatestResponse,
+    SleepSearchRequest,
+    SleepSearchResponse,
+    SleepShowRequest,
+    SleepShowResponse,
+    SleepSummarizeRequest,
+    SleepSummarizeResponse,
     WorkoutActivityType,
     WorkoutSearchRequest,
     WorkoutSearchResponse,
@@ -49,7 +56,7 @@ class IthacaAuthenticationError(IthacaError):
 
 
 class IthacaNotFoundError(IthacaError):
-    """The requested workout data does not exist."""
+    """The requested health data does not exist."""
 
 
 class IthacaRequestError(IthacaError):
@@ -71,7 +78,7 @@ def _validation_message(error: ValidationError) -> str:
         prefix = f"{location}: " if location else ""
         issues.append(prefix + str(issue["msg"]))
     suffix = "; more validation errors omitted" if error.error_count() > 3 else ""
-    return "Invalid workout request: " + "; ".join(issues) + suffix
+    return "Invalid health request: " + "; ".join(issues) + suffix
 
 
 def _error_detail(error: HTTPError) -> str | None:
@@ -104,7 +111,7 @@ def _error_detail(error: HTTPError) -> str | None:
 
 
 class IthacaClient:
-    """Validate and perform bounded Workout Metrics Read v1 operations."""
+    """Validate and perform bounded Ithaca health reads."""
 
     def __init__(
         self,
@@ -146,24 +153,30 @@ class IthacaClient:
     def _post(
         self,
         path: str,
-        payload: APIModel,
+        payload: APIModel | None,
         response_model: type[ResponseModel],
     ) -> ResponseModel:
-        body = json.dumps(
-            payload.model_dump(mode="json", exclude_none=True),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        body = (
+            json.dumps(
+                payload.model_dump(mode="json", exclude_none=True),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+            if payload is not None
+            else None
+        )
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self._read_token}",
+        }
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         request = Request(
             f"{self._api_url}{path}",
             data=body,
             method="POST",
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self._read_token}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
         )
         try:
             with self._opener(request, timeout=self._timeout_seconds) as response:
@@ -181,11 +194,11 @@ class IthacaClient:
                 ) from error
             if error.code == 404:
                 raise IthacaNotFoundError(
-                    detail or "Ithaca could not find that workout data."
+                    detail or "Ithaca could not find that health data."
                 ) from error
             if 400 <= error.code < 500 and error.code != 429:
                 raise IthacaRequestError(
-                    detail or "Ithaca rejected the workout request."
+                    detail or "Ithaca rejected the health request."
                 ) from error
             raise IthacaUnavailableError(
                 "Ithaca could not complete that health read right now."
@@ -203,7 +216,7 @@ class IthacaClient:
             return response_model.model_validate(decoded)
         except (UnicodeDecodeError, json.JSONDecodeError, ValidationError) as error:
             raise IthacaResponseError(
-                "Ithaca returned a response outside Workout Metrics Read v1."
+                "Ithaca returned a response outside its declared health read contract."
             ) from error
 
     def search_workouts(
@@ -251,3 +264,37 @@ class IthacaClient:
             snapshot_id=snapshot_id,
         )
         return self._post("/v1/health/workouts/show", request, WorkoutShowResponse)
+
+    def search_sleep(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> SleepSearchResponse:
+        request = self._request_model(
+            SleepSearchRequest,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+            cursor=cursor,
+        )
+        return self._post("/v1/health/sleep/search", request, SleepSearchResponse)
+
+    def summarize_sleep(
+        self, *, start_date: date, end_date: date
+    ) -> SleepSummarizeResponse:
+        request = self._request_model(
+            SleepSummarizeRequest,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        return self._post("/v1/health/sleep/summarize", request, SleepSummarizeResponse)
+
+    def show_sleep(self, sleep_date: date) -> SleepShowResponse:
+        request = self._request_model(SleepShowRequest, sleep_date=sleep_date)
+        return self._post("/v1/health/sleep/show", request, SleepShowResponse)
+
+    def latest_sleep(self) -> SleepLatestResponse:
+        return self._post("/v1/health/sleep/latest", None, SleepLatestResponse)

@@ -27,7 +27,7 @@ It runs on the owner's machine and connects through a private Telegram conversat
 
 ## How it works
 
-You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent uses first-class capabilities for conversational actions and a compact, discoverable CLI for broader personal-data queries such as Mail, Calendar, and Ithaca workout history. Your *Thread* remains a separate, owner-controlled Git repository.
+You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent uses first-class capabilities for conversational actions and a compact, discoverable CLI for broader personal-data queries such as Mail, Calendar, and Ithaca health history. Your *Thread* remains a separate, owner-controlled Git repository.
 
 ## What is here today
 

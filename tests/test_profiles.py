@@ -112,8 +112,10 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
         assert "ariadne calendar list|search|read|availability" in (
             resolved.base_instructions
         )
-        assert "ariadne health workouts --help" in resolved.base_instructions
-        assert "list workouts in a bounded period" in resolved.base_instructions
+        assert "ariadne health --help" in resolved.base_instructions
+        assert "workout and sleep history" in resolved.base_instructions
+        assert "For workout history" in resolved.base_instructions
+        assert "For sleep, use `latest`" in resolved.base_instructions
         assert "ariadne --help" in resolved.base_instructions
 
 
@@ -145,7 +147,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
     )
-    assert "Mail, Calendar, and factual workout history" in profile.base_instructions
+    assert "Mail, Calendar, and factual health history" in profile.base_instructions
     assert "one conversational beat per message" in profile.base_instructions
     assert "do not recap it" in profile.base_instructions
     assert "ariadne.prompts/telegram.md" in profile.base_instruction_sources
