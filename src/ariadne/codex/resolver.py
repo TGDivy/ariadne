@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from ..knowledge.capability import ROOT_ENVIRONMENT as KNOWLEDGE_ROOT_ENVIRONMENT
@@ -19,8 +20,15 @@ def resolve_profile(
     settings: CodexTurnSettings | None = None,
     mcp_environment: Mapping[str, str] | None = None,
     knowledge_root: Path | None = None,
+    network_domains: tuple[str, ...] = (),
 ) -> ResolvedTurnProfile:
     """Render one exported declaration into the exact turn configuration."""
+    profile = replace(
+        profile,
+        network_domains=tuple(
+            dict.fromkeys((*profile.network_domains, *network_domains))
+        ),
+    )
     prompts = assemble_prompts(
         profile,
         human=human,

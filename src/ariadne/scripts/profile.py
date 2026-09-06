@@ -28,6 +28,7 @@ def main() -> None:
         personality=settings.personality,
         mcp_environment=settings.mcp_environment,
         knowledge_root=settings.vault,
+        network_domains=settings.health_network_domains,
     )
 
     if args.json:

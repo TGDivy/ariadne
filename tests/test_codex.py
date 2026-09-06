@@ -547,6 +547,21 @@ def _command_item(command: str) -> CommandExecutionThreadItem:
             "Checking calendar availability…",
             "Reviewing availability…",
         ),
+        (
+            "ariadne health workouts list --start private --end private",
+            "Listing workout history…",
+            "Reviewing workouts…",
+        ),
+        (
+            "ariadne health workouts summarize --start private --end private",
+            "Summarising workouts…",
+            "Reviewing workout totals…",
+        ),
+        (
+            "ariadne health workouts show private",
+            "Reading a workout…",
+            "Reviewing workout details…",
+        ),
         ("uv run --no-sync pytest", "Running tests…", "Reviewing test results…"),
         ("npm run test", "Running tests…", "Reviewing test results…"),
         ("python3 -m mypy src", "Checking types…", "Reviewing type-check results…"),

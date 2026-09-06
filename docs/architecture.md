@@ -45,10 +45,10 @@ The agent does not receive a vague integration-level permission. Ariadne owns st
 | --- | --- | --- |
 | **First-class MCP** | Telegram conversation and delivery, semantic knowledge, and one-off revisits | These are fundamental to Iris’s identity and follow-through, are commonly needed without prior discovery, and include interactive or stateful turn semantics. |
 | **Turn-scoped MCP** | `record_current_mail_decision` | The operation is valid only for the ingestion job that activated the current Mail turn; a general process command would weaken that binding. |
-| **Discoverable CLI** | Mail search/read/thread and all Calendar operations | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
+| **Discoverable CLI** | Mail search/read/thread, all Calendar operations, and Ithaca workout reads | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
 | **Operator commands** | Bulk mail backfill/export, profile inspection, bot-profile changes, and behaviour runs | These have operational or bulk effects and are intentionally not advertised as ordinary model capabilities. |
 
-The installed `ariadne` CLI emits bounded JSON and keeps provider implementations behind typed `MailReader` and `ICloudCalendar` interfaces. For these provider commands, the long-running service exports the selected private config path and makes the sibling CLI executable discoverable to Codex. Mail and Calendar credentials are loaded by the selected command on demand; they are no longer copied into the MCP subprocess environment.
+The installed `ariadne` CLI emits bounded JSON and keeps provider implementations behind typed `MailReader`, `ICloudCalendar`, and `IthacaClient` interfaces. For these provider commands, the long-running service exports the selected private config path and makes the sibling CLI executable discoverable to Codex. Credentials are loaded by the selected command on demand and are not copied into the MCP subprocess environment. The configured Ithaca hostname, but not its URL or token, is added to each turn profile's network allowlist.
 
 This split also leaves a clean growth rule: add a namespace to the CLI when a provider exposes a broad, mostly request/response data plane; keep an MCP tool when its schema and lifecycle are fundamental to nearly every turn or intrinsically bound to live turn state. If both surfaces ever need the same operation, both should call one typed use-case/client layer rather than duplicate provider logic.
 
@@ -70,20 +70,23 @@ Calendar is opt-in. It supports bounded discovery and event operations, includin
 
 The agent can schedule a single future wake-up with a self-contained reason and one of three attention levels. When due, it starts a fresh turn, re-checks present context, and either completes a useful bounded loop, messages when something still matters, or finishes silently. There is no artificial recurring check-in.
 
-### Future health boundary and activations
+### Health reads and future activations
 
-Health should follow the CLI data-plane pattern, with a later namespace shaped for discovery as `ariadne health workouts search|summarize|show|series`. Ariadne should call Ithaca through an authenticated, typed HTTP client; Iris should not connect to PostgreSQL or inherit database credentials. This keeps the boundary portable if Ithaca changes tables, storage engines, or deployment topology. The HTTP contract is deliberately not defined by this change.
+Health follows the CLI data-plane pattern: list workouts in a bounded period, summarize period totals, or show one returned workout ID under `ariadne health workouts`. Ariadne calls Ithaca's bearer-authenticated Workout Metrics Read v1 surface through a typed HTTP client. PostgreSQL credentials and tables do not cross that boundary, so Ithaca can change its storage or deployment without changing Iris's command contract.
 
-The eventual commands should make the requested representation explicit. Search and show should return bounded domain records, series should return bounded machine-readable samples for analysis, and summarize should return server-computed aggregates with enough interval/provenance detail to interpret them. Ariadne should not silently replace raw evidence with a summary, nor dump raw time series when a compact answer is sufficient.
+List and show return bounded compact domain records, while summarize returns deterministic server-computed aggregates. The API reports projection coverage, snapshot selection, availability, and quality rather than manufacturing missing values. Canonical raw snapshots, route points, and detailed series are not exposed by the Iris-facing client.
+
+The typed client validates Ithaca's complete response shape before a small presentation layer shapes it for Iris. That layer omits API schema and snapshot identifiers, null metrics, and non-actionable series catalogues; it keeps fixed-unit numbers, readable source names, workout identifiers, pagination, period projection coverage, freshness, and quality issues. This is intentionally a semantic reduction rather than preformatted prose, so Iris can still compare and calculate from the result.
 
 Ingestion and activation are separate decisions. Persisting every workout—or later every sleep, weight, nutrition, or other health record—should not automatically start an Iris turn. A record may become a typed trigger source after storage when an explicit policy identifies a useful reason to act, with an idempotent record/event reference and a fresh read through the same API. This avoids one noisy model turn per sync while preserving the option for meaningful workout completion, recovery, anomaly, or user-chosen follow-up activations.
 
-A small staged path is:
+A small staged path from here is:
 
-1. Freeze Ithaca’s authenticated read contract and add typed Ariadne client/config models with contract tests.
-2. Add read-only workout search/show through the CLI and disposable behaviour fixtures.
-3. Add explicit summary and bounded-series representations after real Iris questions show what is useful.
-4. Add opt-in typed health activations separately, beginning with one narrow policy and idempotency tests.
+1. Validate the three CLI commands against representative real workouts and adjust the still-small public contract if actual questions expose friction.
+2. Add later sleep, body, nutrition, or other categories behind the same authenticated client only when their factual read contracts exist.
+3. Add opt-in typed health activations separately, beginning with one narrow policy and idempotency tests.
+
+Ithaca retains a bounded detailed-series endpoint for diagnostics and other clients, but Ariadne does not advertise it. If real Iris conversations reveal a recurring question that compact detail and splits cannot answer, prefer a purpose-shaped trend or timeline command over exposing raw intervals by default.
 
 ## What is deliberately out of scope
 

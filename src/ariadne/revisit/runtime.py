@@ -36,6 +36,7 @@ class RevisitLoop:
         human: str,
         personality: Path | None = None,
         mcp_environment: Mapping[str, str] | None = None,
+        network_domains: tuple[str, ...] = (),
         telemetry: Telemetry | None = None,
         state: RevisitState | None = None,
         conversation_factory: ConversationFactory | None = None,
@@ -47,6 +48,7 @@ class RevisitLoop:
         self.human = human
         self.personality = personality
         self.mcp_environment = dict(mcp_environment or {})
+        self.network_domains = network_domains
         self.telemetry = telemetry or Telemetry()
         self.state = state or RevisitState(settings.state)
         self.state.initialize()
@@ -70,6 +72,7 @@ class RevisitLoop:
                 personality=self.personality,
                 knowledge_root=self.vault,
                 mcp_environment=self.mcp_environment,
+                network_domains=self.network_domains,
             ),
             telemetry=self.telemetry,
         )

@@ -105,7 +105,7 @@ permanent, then Ariadne opens a fresh work bubble for the remainder of the turn.
 
 The activity footer is independent from the provisional body. A tool event can
 change `Analysing…` to `Searching memory…`, `Reading mail…`, `Running tests…`,
-or another semantic activity. Known `ariadne` Mail and Calendar commands,
+or another semantic activity. Known `ariadne` Mail, Calendar, and health commands,
 common development commands, and Codex's structured file-read, list, and search
 actions receive specific labels. The literal command, arguments, paths, queries,
 and output are never copied into Telegram; an unrecognised or compound command

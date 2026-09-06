@@ -210,6 +210,79 @@ class CalendarConfig(BaseModel):
         return value.strip() or None if isinstance(value, str) else value
 
 
+class HealthConfig(BaseModel):
+    """Opt-in access to the owner's read-only Ithaca health boundary."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    api_url: AnyHttpUrl | None = None
+    read_token: SecretStr | None = None
+    timezone: str = "UTC"
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+
+    @field_validator("api_url")
+    @classmethod
+    def require_safe_api_url(cls, value: AnyHttpUrl | None) -> AnyHttpUrl | None:
+        if value is None:
+            return None
+        if value.username or value.password or value.query or value.fragment:
+            raise ValueError(
+                "Health api_url must not contain credentials, a query, or a fragment."
+            )
+        host = value.host.strip("[]") if value.host is not None else None
+        if value.scheme != "https" and host not in {
+            "localhost",
+            "127.0.0.1",
+            "::1",
+        }:
+            raise ValueError("Health api_url must use HTTPS except on localhost.")
+        return value
+
+    @field_validator("read_token", mode="before")
+    @classmethod
+    def normalize_read_token(cls, value: object) -> object:
+        if isinstance(value, SecretStr):
+            token = value.get_secret_value()
+        elif isinstance(value, str):
+            token = value
+        else:
+            return value
+        if token != token.strip():
+            raise ValueError("Health read_token must not contain surrounding space.")
+        if token and (
+            len(token) < 32
+            or any(not 0x21 <= ord(character) <= 0x7E for character in token)
+        ):
+            raise ValueError(
+                "Health read_token must contain at least 32 printable ASCII "
+                "characters without whitespace."
+            )
+        return token or None
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def strip_timezone(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("timezone")
+    @classmethod
+    def require_iana_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise ValueError(
+                "Health timezone must be a valid IANA timezone."
+            ) from error
+        return value
+
+    @model_validator(mode="after")
+    def require_complete_enabled_health(self) -> HealthConfig:
+        if self.enabled and (self.api_url is None or self.read_token is None):
+            raise ValueError("Enabled health access requires api_url and read_token.")
+        return self
+
+
 class RevisitConfig(BaseModel):
     """Always-on local settings for one-off future revisits."""
 
@@ -285,6 +358,7 @@ class Settings(BaseModel):
     icloud: ICloudConfig = Field(default_factory=ICloudConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
+    health: HealthConfig = Field(default_factory=HealthConfig)
     revisits: RevisitConfig = Field(default_factory=RevisitConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
@@ -354,6 +428,13 @@ class Settings(BaseModel):
     @property
     def allowed_user_id(self) -> int:
         return self.telegram.allowed_user_id
+
+    @property
+    def health_network_domains(self) -> tuple[str, ...]:
+        if not self.health.enabled or self.health.api_url is None:
+            return ()
+        host = self.health.api_url.host
+        return (host.strip("[]"),) if host is not None else ()
 
     def turn_settings(self, name: str) -> CodexTurnSettings:
         profile = PROFILES[name]
@@ -491,6 +572,19 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             "enabled": settings.calendar.enabled,
             "timezone": settings.calendar.timezone,
             "default_calendar": settings.calendar.default_calendar,
+        },
+        "health": {
+            "enabled": settings.health.enabled,
+            "api_url": (
+                str(settings.health.api_url)
+                if settings.health.api_url is not None
+                else None
+            ),
+            "read_token": (
+                "<redacted>" if settings.health.read_token is not None else None
+            ),
+            "timezone": settings.health.timezone,
+            "timeout_seconds": settings.health.timeout_seconds,
         },
         "revisits": {
             "state": str(settings.revisits.state),

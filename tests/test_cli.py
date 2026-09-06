@@ -1,9 +1,11 @@
 import json
 import logging
 import os
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 from caldav.lib.error import AuthorizationError, PutError, RateLimitError
@@ -15,6 +17,15 @@ from ariadne.behavior.fake_cli import BehaviorBackend
 from ariadne.behavior.recording import STATE_ENVIRONMENT
 from ariadne.calendar import CalendarConflict
 from ariadne.cli import CliError, ProductionBackend, main
+from ariadne.health import (
+    IthacaAuthenticationError,
+    IthacaNotFoundError,
+    IthacaRequestError,
+    IthacaResponseError,
+    IthacaUnavailableError,
+    WorkoutActivityType,
+)
+from ariadne.health.models import WorkoutSearchResponse
 
 
 class RecordingMail:
@@ -109,6 +120,57 @@ class RecordingCalendar:
         )
 
 
+class RecordingHealth:
+    def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self.calls = calls
+
+    def _result(self, operation: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        self.calls.append((operation, arguments))
+        return {"operation": operation}
+
+    def list_workouts(
+        self,
+        *,
+        start: str,
+        end: str,
+        activity_types: Sequence[WorkoutActivityType] = (),
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> Any:
+        return self._result(
+            "health.workouts.list",
+            {
+                "start": start,
+                "end": end,
+                "activity_types": list(activity_types),
+                "limit": limit,
+                "cursor": cursor,
+            },
+        )
+
+    def summarize_workouts(
+        self,
+        *,
+        start: str,
+        end: str,
+        activity_types: Sequence[WorkoutActivityType] = (),
+    ) -> Any:
+        return self._result(
+            "health.workouts.summarize",
+            {
+                "start": start,
+                "end": end,
+                "activity_types": list(activity_types),
+            },
+        )
+
+    def show_workout(self, workout_uuid: UUID) -> Any:
+        return self._result(
+            "health.workouts.show",
+            {"workout_uuid": workout_uuid},
+        )
+
+
 class RecordingBackend:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -143,6 +205,11 @@ class RecordingBackend:
     def calendar(self):
         self._check_failure()
         yield RecordingCalendar(self.calls)
+
+    @contextmanager
+    def health(self):
+        self._check_failure()
+        yield RecordingHealth(self.calls)
 
 
 def _json_stdout(capsys: pytest.CaptureFixture[str]) -> dict[str, Any]:
@@ -431,6 +498,123 @@ def test_calendar_update_delete_and_response_map_patch_semantics(
     ]
 
 
+def test_health_workout_commands_map_typed_bounded_arguments(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = RecordingBackend()
+    workout_uuid = "00000000-0000-0000-0000-000000000101"
+
+    main(
+        [
+            "health",
+            "workouts",
+            "list",
+            "--start",
+            "2026-08-01",
+            "--end",
+            "2026-09-01",
+            "--activity",
+            "running",
+            "--activity",
+            "cycling",
+            "--limit",
+            "12",
+            "--cursor",
+            "next-page",
+        ],
+        backend=backend,
+    )
+    assert _json_stdout(capsys)["operation"] == "health.workouts.list"
+    main(
+        [
+            "health",
+            "workouts",
+            "summarize",
+            "--start",
+            "2026-08-01T00:00:00+01:00",
+            "--end",
+            "2026-09-01T00:00:00+01:00",
+            "--activity",
+            "running",
+        ],
+        backend=backend,
+    )
+    _json_stdout(capsys)
+    main(
+        ["health", "workouts", "show", workout_uuid],
+        backend=backend,
+    )
+    _json_stdout(capsys)
+
+    assert backend.calls == [
+        (
+            "health.workouts.list",
+            {
+                "start": "2026-08-01",
+                "end": "2026-09-01",
+                "activity_types": [
+                    WorkoutActivityType.RUNNING,
+                    WorkoutActivityType.CYCLING,
+                ],
+                "limit": 12,
+                "cursor": "next-page",
+            },
+        ),
+        (
+            "health.workouts.summarize",
+            {
+                "start": "2026-08-01T00:00:00+01:00",
+                "end": "2026-09-01T00:00:00+01:00",
+                "activity_types": [WorkoutActivityType.RUNNING],
+            },
+        ),
+        (
+            "health.workouts.show",
+            {
+                "workout_uuid": UUID(workout_uuid),
+            },
+        ),
+    ]
+
+
+def test_health_help_is_lazy_and_lists_only_the_useful_commands(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def unexpected_load(_: object = None) -> None:
+        raise AssertionError("help must not load private configuration")
+
+    monkeypatch.setattr(cli_module, "load_settings", unexpected_load)
+
+    with pytest.raises(SystemExit) as raised:
+        main(["health", "workouts", "--help"])
+    captured = capsys.readouterr()
+    assert raised.value.code == 0
+    assert "{list,summarize,show}" in captured.out
+    assert "search" not in captured.out
+    assert "List and summarize require --start and --end" in captured.out
+    assert "WORKOUT_ID" in captured.out
+    assert "returned by list" in captured.out
+    assert "series" not in captured.out
+    assert captured.err == ""
+
+    with pytest.raises(SystemExit) as raised:
+        main(["health", "workouts", "list", "--help"])
+    captured = capsys.readouterr()
+    assert raised.value.code == 0
+    assert "--activity TYPE" in captured.out
+    assert "Valid activity types:" in captured.out
+    assert "--source" not in captured.out
+    assert captured.err == ""
+
+    with pytest.raises(SystemExit) as raised:
+        main(["health", "workouts", "show", "--help"])
+    captured = capsys.readouterr()
+    assert raised.value.code == 0
+    assert "WORKOUT_ID" in captured.out
+    assert "snapshot" not in captured.out
+    assert captured.err == ""
+
+
 def test_config_and_serve_dispatch_without_mixing_output(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -457,6 +641,18 @@ def test_config_and_serve_dispatch_without_mixing_output(
         ["mail", "search", "query", "--limit", "101"],
         ["calendar", "search", "--start", "2026-09-01"],
         ["calendar", "respond", "event:id", "maybe"],
+        [
+            "health",
+            "workouts",
+            "list",
+            "--start",
+            "2026-09-01",
+            "--end",
+            "2026-09-02",
+            "--limit",
+            "51",
+        ],
+        ["health", "workouts", "show", "not-a-uuid"],
     ],
 )
 def test_argument_errors_are_short_machine_readable_json(
@@ -479,6 +675,31 @@ def test_argument_errors_are_short_machine_readable_json(
     [
         (ValueError("bad interval"), 2, "invalid_request", False),
         (CalendarConflict("event changed"), 5, "calendar_conflict", False),
+        (
+            IthacaAuthenticationError("Ithaca rejected the configured token."),
+            3,
+            "health_authentication_failed",
+            False,
+        ),
+        (IthacaNotFoundError("Workout not found."), 4, "health_not_found", False),
+        (
+            IthacaRequestError("The period is invalid."),
+            2,
+            "health_invalid_request",
+            False,
+        ),
+        (
+            IthacaUnavailableError("Ithaca is unavailable."),
+            6,
+            "health_unavailable",
+            True,
+        ),
+        (
+            IthacaResponseError("Ithaca response contract mismatch."),
+            1,
+            "health_invalid_response",
+            False,
+        ),
         (
             AuthorizationError("https://caldav.icloud.test/private"),
             3,
@@ -683,6 +904,88 @@ def test_production_calendar_uses_typed_config_without_secret_environment(
         "default_calendar": "Personal",
     }
     assert "ARIADNE_ICLOUD_APP_PASSWORD" not in os.environ
+
+
+def test_production_health_loads_the_private_token_only_for_a_health_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, _, _ = _private_config(tmp_path)
+    read_token = "health-read-token-0123456789abcdef"
+    config.write_text(
+        config.read_text(encoding="utf-8")
+        + f'''\
+
+[health]
+enabled = true
+api_url = "https://ithaca.example"
+read_token = "{read_token}"
+timezone = "Europe/London"
+timeout_seconds = 19
+''',
+        encoding="utf-8",
+    )
+    captured_constructor: dict[str, Any] = {}
+    captured_request: dict[str, Any] = {}
+
+    class FakeClient:
+        def search_workouts(self, **kwargs: Any) -> WorkoutSearchResponse:
+            captured_request.update(kwargs)
+            return WorkoutSearchResponse.model_validate(
+                {
+                    "schema_version": 1,
+                    "projection_coverage": {
+                        "scope": "requested_period_before_activity_filters",
+                        "canonical_workout_count": 0,
+                        "queryable_workout_count": 0,
+                        "unqueryable_workout_count": 0,
+                        "workouts_with_newer_unqueryable_snapshot_count": 0,
+                    },
+                    "items": [],
+                    "next_cursor": None,
+                }
+            )
+
+    def fake_client(api_url: str, token: str, **kwargs: Any) -> FakeClient:
+        captured_constructor.update(api_url=api_url, token=token, **kwargs)
+        return FakeClient()
+
+    monkeypatch.setattr(cli_module, "IthacaClient", fake_client)
+
+    main(
+        [
+            "--config",
+            str(config),
+            "health",
+            "workouts",
+            "list",
+            "--start",
+            "2026-09-01",
+            "--end",
+            "2026-10-01",
+        ]
+    )
+
+    output = _json_stdout(capsys)
+    assert output == {
+        "period_data_coverage": {
+            "canonical_workouts": 0,
+            "queryable_workouts": 0,
+            "unqueryable_workouts": 0,
+            "workouts_with_newer_unqueryable_data": 0,
+        },
+        "workouts": [],
+        "next_cursor": None,
+    }
+    assert captured_constructor == {
+        "api_url": "https://ithaca.example/",
+        "token": read_token,
+        "timezone": "Europe/London",
+        "timeout_seconds": 19,
+    }
+    assert captured_request["start"] == "2026-09-01"
+    assert read_token not in json.dumps(output)
 
 
 def test_production_provider_failures_do_not_echo_credentials(

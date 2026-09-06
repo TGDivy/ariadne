@@ -258,6 +258,93 @@ timezone = "Not/A_Timezone"
         load_settings(config, environ={})
 
 
+def test_enabled_health_loads_a_private_read_boundary(tmp_path: Path) -> None:
+    read_token = "r" * 32
+    config = write_config(
+        tmp_path,
+        extra=f'''\
+
+[health]
+enabled = true
+api_url = "https://ithaca.example/api"
+read_token = "{read_token}"
+timezone = "Europe/London"
+timeout_seconds = 45
+''',
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.health.enabled is True
+    assert str(settings.health.api_url) == "https://ithaca.example/api"
+    assert settings.health.read_token is not None
+    assert settings.health.read_token.get_secret_value() == read_token
+    assert settings.health.timezone == "Europe/London"
+    assert settings.health.timeout_seconds == 45
+    assert settings.health_network_domains == ("ithaca.example",)
+    assert read_token not in json.dumps(settings_payload(settings))
+
+
+def test_enabled_health_requires_complete_https_configuration(tmp_path: Path) -> None:
+    incomplete = write_config(tmp_path, extra="\n[health]\nenabled = true\n")
+    with pytest.raises(ValidationError, match="api_url and read_token"):
+        load_settings(incomplete, environ={})
+
+    insecure = write_config(
+        tmp_path,
+        extra=f'''\
+
+[health]
+enabled = true
+api_url = "http://ithaca.example"
+read_token = "{"r" * 32}"
+''',
+    )
+    with pytest.raises(ValidationError, match="must use HTTPS"):
+        load_settings(insecure, environ={})
+
+    unsafe_token = "r" * 31 + "\\n" + "s"
+    invalid_token = write_config(
+        tmp_path,
+        extra=f'''\
+
+[health]
+enabled = true
+api_url = "https://ithaca.example"
+read_token = "{unsafe_token}"
+''',
+    )
+    with pytest.raises(ValidationError, match="without whitespace") as raised:
+        load_settings(invalid_token, environ={})
+    assert unsafe_token not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("api_url", "expected_domain"),
+    [
+        ("http://127.0.0.1:8000", "127.0.0.1"),
+        ("http://[::1]:8000", "::1"),
+    ],
+)
+def test_health_accepts_local_http_for_development(
+    tmp_path: Path, api_url: str, expected_domain: str
+) -> None:
+    config = write_config(
+        tmp_path,
+        extra=f'''\
+
+[health]
+enabled = true
+api_url = "{api_url}"
+read_token = "{"r" * 32}"
+''',
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.health_network_domains == (expected_domain,)
+
+
 def test_default_mail_state_expands_the_home_directory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -298,6 +385,7 @@ def test_config_example_is_a_valid_disabled_mail_template(tmp_path: Path) -> Non
     assert settings.mail.enabled is False
     assert settings.mail_settings is None
     assert settings.calendar.enabled is False
+    assert settings.health.enabled is False
     assert settings.telemetry.enabled is False
 
 
@@ -357,6 +445,11 @@ app_password = "icloud-secret"
 enabled = true
 endpoint = "https://otlp.example.com/otlp"
 authorization = "Basic telemetry-secret"
+
+[health]
+enabled = true
+api_url = "https://ithaca.example"
+read_token = "health-read-secret-that-is-long-enough"
 """,
     )
 
@@ -365,6 +458,7 @@ authorization = "Basic telemetry-secret"
     assert "secret" not in serialized
     assert "icloud-secret" not in serialized
     assert "telemetry-secret" not in serialized
+    assert "health-read-secret" not in serialized
     assert "<redacted>" in serialized
 
 

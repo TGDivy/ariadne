@@ -197,6 +197,10 @@ class BehaviorBackend:
         except ToolError as error:
             raise CliError("invalid_request", str(error), EXIT_USAGE) from error
 
+    @contextmanager
+    def health(self) -> Iterator[Never]:
+        yield self._unsupported()
+
 
 def main() -> None:
     run_cli(backend=BehaviorBackend())
