@@ -759,9 +759,13 @@ def _as_cli_error(error: Exception) -> CliError:
             retryable=True,
         )
     if isinstance(error, OSError):
+        detail = str(error).strip()
+        message = "The configured provider could not be reached."
+        if detail:
+            message = f"{message} ({type(error).__name__}: {detail})"
         return CliError(
             "provider_unavailable",
-            "The configured provider could not be reached.",
+            message,
             EXIT_TRANSIENT,
             retryable=True,
         )

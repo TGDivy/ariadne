@@ -26,6 +26,8 @@ Provider credentials are read from the private TOML file only after a Mail or Ca
 
 When adding a networked CLI or MCP capability, add every provider hostname it may contact to `NETWORK_DOMAINS` in `src/ariadne/profile.py`, including redirect or discovery hosts, and add a regression test for the required endpoints. A valid provider configuration can still fail before authentication if the turn-level network allowlist is missing a hostname; the resulting CLI error may be the generic retryable `provider_unavailable` response.
 
+The profile allowlist and the shell environment are separate boundaries: the CLI inherits whichever network access its parent process provides. A `provider_unavailable` error containing a DNS or socket detail therefore points to the execution environment, not necessarily to provider credentials or an iCloud outage. Retry the same read-only command in the permitted network context before diagnosing the provider itself.
+
 ## Inspect the active turn profiles
 
 Telegram, Mail, and each revisit attention level have independent turn profiles. Inspect the exact model, prompts, tool set, thread behaviour, permissions, and forwarded environment-variable names for a surface with:

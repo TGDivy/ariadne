@@ -520,6 +520,8 @@ def test_runtime_failures_have_stable_exits_and_safe_errors(
     assert captured.out == ""
     assert payload["error"]["code"] == code
     assert payload["error"]["retryable"] is retryable
+    if code == "provider_unavailable":
+        assert "socket detail" in payload["error"]["message"]
     assert "provider-secret" not in captured.err
     assert "implementation detail" not in captured.err
 
