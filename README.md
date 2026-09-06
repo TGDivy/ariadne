@@ -27,7 +27,7 @@ It runs on the owner's machine and connects through a private Telegram conversat
 
 ## How it works
 
-You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent uses first-class capabilities for conversational actions and a compact, discoverable CLI for broader personal-data queries such as Mail and Calendar. Your *Thread* remains a separate, owner-controlled Git repository.
+You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent uses first-class capabilities for conversational actions and a compact, discoverable CLI for broader personal-data queries such as Mail, Calendar, and Ithaca workout history. Your *Thread* remains a separate, owner-controlled Git repository.
 
 ## What is here today
 
@@ -36,7 +36,7 @@ You talk to Iris in a private Telegram conversation. Ariadne runs on your machin
 | **Private conversation** | Rich Telegram messages, reply context, attachment handling, questions, reactions, and conversation continuity. |
 | **Durable context** | Searchable, linked personal records with Git-backed change history. |
 | **Follow-through** | One-off scheduled revisits that can re-check a concrete open loop at an appropriate level of attention. |
-| **Optional life integrations** | iCloud Mail routing and Calendar operations, each separately configured and scoped. |
+| **Optional life integrations** | iCloud Mail routing, Calendar operations, and read-only Ithaca health queries, each separately configured and scoped. |
 | **Evaluation and observability** | Reproducible companion-behaviour scenarios plus optional OpenTelemetry/Grafana telemetry. |
 
 Read the fuller [architecture and boundary notes](docs/architecture.md) for the turn lifecycle, data ownership, and integration contracts.
@@ -59,7 +59,7 @@ uv run ariadne config check
 uv run ariadne serve
 ```
 
-The example configuration starts with Mail, Calendar, and telemetry disabled. See the [getting-started guide](docs/getting-started.md) before enabling anything optional.
+The example configuration starts with Mail, Calendar, health, and telemetry disabled. See the [getting-started guide](docs/getting-started.md) before enabling anything optional.
 
 ## Guides
 
@@ -67,7 +67,7 @@ Start with the guide that matches what you need:
 
 - [Getting started](docs/getting-started.md) — prerequisites, private configuration, and a safe first run.
 - [Architecture and boundaries](docs/architecture.md) — turns, data ownership, capabilities, and integration authority.
-- [Operations reference](docs/operations.md) — optional Mail, Calendar, revisits, telemetry, and maintenance commands.
+- [Operations reference](docs/operations.md) — optional Mail, Calendar, health, revisits, telemetry, and maintenance commands.
 
 <details>
 <summary>Reference guides</summary>

@@ -11,6 +11,7 @@ from contextlib import AbstractContextManager, contextmanager
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, Never, Protocol, cast
+from uuid import UUID
 
 from caldav.lib.error import (
     AuthorizationError,
@@ -27,12 +28,24 @@ from pydantic import ValidationError
 
 from .calendar import CalendarConflict, CalendarError, ICloudCalendar
 from .config import Settings, config_path, load_settings, settings_payload
+from .health import (
+    IthacaAuthenticationError,
+    IthacaClient,
+    IthacaError,
+    IthacaNotFoundError,
+    IthacaRequestError,
+    IthacaResponseError,
+    IthacaUnavailableError,
+    WorkoutActivityType,
+)
+from .health.presentation import WorkoutQueries
 from .mail import IMAP_HOST, MailReader
 from .redaction import redact_sensitive_text
 
 EXIT_INTERNAL = 1
 EXIT_USAGE = 2
 EXIT_AUTH = 3
+EXIT_NOT_FOUND = 4
 EXIT_CONFLICT = 5
 EXIT_TRANSIENT = 6
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
@@ -126,6 +139,28 @@ class CalendarCommands(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class WorkoutCommands(Protocol):
+    def search_workouts(
+        self,
+        *,
+        start: str,
+        end: str,
+        activity_types: Sequence[WorkoutActivityType] = (),
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]: ...
+
+    def summarize_workouts(
+        self,
+        *,
+        start: str,
+        end: str,
+        activity_types: Sequence[WorkoutActivityType] = (),
+    ) -> dict[str, Any]: ...
+
+    def show_workout(self, workout_uuid: UUID) -> dict[str, Any]: ...
+
+
 class CliBackend(Protocol):
     def config_check(self) -> dict[str, object]: ...
 
@@ -136,6 +171,8 @@ class CliBackend(Protocol):
     def mail(self) -> AbstractContextManager[MailCommands]: ...
 
     def calendar(self) -> AbstractContextManager[CalendarCommands]: ...
+
+    def health(self) -> AbstractContextManager[WorkoutCommands]: ...
 
 
 class CliError(Exception):
@@ -259,6 +296,25 @@ class ProductionBackend:
             # argparse constrains the string literals before this typed boundary.
             yield cast(CalendarCommands, calendar)
 
+    @contextmanager
+    def health(self) -> Iterator[WorkoutCommands]:
+        settings = self._load()
+        health = settings.health
+        if not health.enabled or health.api_url is None or health.read_token is None:
+            raise CliError(
+                "health_not_configured",
+                "Health access is not enabled in Ariadne's private configuration.",
+                EXIT_USAGE,
+            )
+        yield WorkoutQueries(
+            IthacaClient(
+                str(health.api_url),
+                health.read_token.get_secret_value(),
+                timezone=health.timezone,
+                timeout_seconds=health.timeout_seconds,
+            )
+        )
+
 
 def _serve(_: argparse.Namespace, backend: CliBackend) -> None:
     backend.serve()
@@ -380,6 +436,37 @@ def _calendar_respond(args: argparse.Namespace, backend: CliBackend) -> dict[str
         )
 
 
+def _health_workouts_search(
+    args: argparse.Namespace, backend: CliBackend
+) -> dict[str, Any]:
+    with backend.health() as health:
+        return health.search_workouts(
+            start=args.start,
+            end=args.end,
+            activity_types=args.activity_types or (),
+            limit=args.limit,
+            cursor=args.cursor,
+        )
+
+
+def _health_workouts_summarize(
+    args: argparse.Namespace, backend: CliBackend
+) -> dict[str, Any]:
+    with backend.health() as health:
+        return health.summarize_workouts(
+            start=args.start,
+            end=args.end,
+            activity_types=args.activity_types or (),
+        )
+
+
+def _health_workouts_show(
+    args: argparse.Namespace, backend: CliBackend
+) -> dict[str, Any]:
+    with backend.health() as health:
+        return health.show_workout(args.workout_uuid)
+
+
 def _add_calendar_selection(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--calendar-id",
@@ -482,6 +569,54 @@ def _bounded_integer(minimum: int, maximum: int) -> Callable[[str], int]:
         return parsed
 
     return parse
+
+
+def _bounded_text(maximum: int, label: str) -> Callable[[str], str]:
+    def parse(value: str) -> str:
+        if not value or len(value) > maximum:
+            raise argparse.ArgumentTypeError(
+                f"{label} must contain between 1 and {maximum} characters"
+            )
+        return value
+
+    return parse
+
+
+def _uuid(value: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a UUID") from error
+
+
+def _workout_activity(value: str) -> WorkoutActivityType:
+    try:
+        return WorkoutActivityType(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "unknown activity type; see this command's --help for valid values"
+        ) from error
+
+
+def _add_workout_period(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--start",
+        required=True,
+        help="inclusive ISO date or date-time (date-only uses health timezone)",
+    )
+    parser.add_argument(
+        "--end",
+        required=True,
+        help="exclusive ISO date or date-time (date-only uses health timezone)",
+    )
+    parser.add_argument(
+        "--activity",
+        dest="activity_types",
+        action="append",
+        type=_workout_activity,
+        metavar="TYPE",
+        help="workout activity type; repeat to include more than one",
+    )
 
 
 def build_parser() -> AriadneArgumentParser:
@@ -722,12 +857,97 @@ def build_parser() -> AriadneArgumentParser:
         "--expected-etag", help="reject the write unless this last-read ETag matches"
     )
     respond.set_defaults(_handler=_calendar_respond)
+
+    health = commands.add_parser("health", help="read factual personal health data")
+    health_actions = health.add_subparsers(dest="health_action", required=True)
+    workouts = health_actions.add_parser(
+        "workouts",
+        help="search and inspect workout history",
+        description="Read compact, factual workout metrics from Ithaca.",
+    )
+    workout_actions = workouts.add_subparsers(dest="workout_action", required=True)
+    activity_epilog = "Valid activity types:\n  " + ", ".join(
+        activity.value for activity in WorkoutActivityType
+    )
+
+    workout_search = workout_actions.add_parser(
+        "search",
+        help="find workouts in a bounded period",
+        description="Find newest-first compact workouts and return UUIDs for show.",
+        epilog=activity_epilog,
+    )
+    _add_workout_period(workout_search)
+    workout_search.add_argument(
+        "--limit",
+        type=_bounded_integer(1, 50),
+        default=20,
+        metavar="N",
+        help="maximum workouts, 1-50 (default: 20)",
+    )
+    workout_search.add_argument(
+        "--cursor",
+        type=_bounded_text(2048, "cursor"),
+        help="opaque next_cursor from a matching earlier search",
+    )
+    workout_search.set_defaults(_handler=_health_workouts_search)
+
+    workout_summarize = workout_actions.add_parser(
+        "summarize",
+        help="aggregate workouts in a bounded period",
+        description=(
+            "Return factual period totals and complete activity-specific metrics."
+        ),
+        epilog=activity_epilog,
+    )
+    _add_workout_period(workout_summarize)
+    workout_summarize.set_defaults(_handler=_health_workouts_summarize)
+
+    workout_show = workout_actions.add_parser(
+        "show",
+        help="show one compact workout",
+        description=(
+            "Show metrics, splits, zones, components, route availability, quality, "
+            "and data freshness for one workout."
+        ),
+    )
+    workout_show.add_argument(
+        "workout_uuid",
+        type=_uuid,
+        metavar="WORKOUT_UUID",
+        help="UUID returned by workout search",
+    )
+    workout_show.set_defaults(_handler=_health_workouts_show)
     return parser
 
 
 def _as_cli_error(error: Exception) -> CliError:
     if isinstance(error, CliError):
         return error
+    if isinstance(error, IthacaAuthenticationError):
+        return CliError(
+            "health_authentication_failed",
+            str(error),
+            EXIT_AUTH,
+        )
+    if isinstance(error, IthacaNotFoundError):
+        return CliError("health_not_found", str(error), EXIT_NOT_FOUND)
+    if isinstance(error, IthacaRequestError):
+        return CliError("health_invalid_request", str(error), EXIT_USAGE)
+    if isinstance(error, IthacaUnavailableError):
+        return CliError(
+            "health_unavailable",
+            str(error),
+            EXIT_TRANSIENT,
+            retryable=True,
+        )
+    if isinstance(error, IthacaResponseError):
+        return CliError("health_invalid_response", str(error), EXIT_INTERNAL)
+    if isinstance(error, IthacaError):
+        return CliError(
+            "health_error",
+            "Ariadne could not complete that health read.",
+            EXIT_INTERNAL,
+        )
     if isinstance(error, ValidationError):
         return CliError(
             "configuration_error",

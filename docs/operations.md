@@ -4,12 +4,13 @@ This is the operator-facing reference for optional services and routine inspecti
 
 ## Unified CLI contract
 
-`ariadne` is both the service entry point and the bounded data-access surface available to Iris. Its command tree is intentionally discoverable on demand instead of placing every Mail and Calendar schema in every model turn:
+`ariadne` is both the service entry point and the bounded data-access surface available to Iris. Its command tree is intentionally discoverable on demand instead of placing every Mail, Calendar, and health schema in every model turn:
 
 ```bash
 uv run ariadne --help
 uv run ariadne mail --help
 uv run ariadne calendar update --help
+uv run ariadne health workouts --help
 ```
 
 The usual production service command is `ariadne serve`; `uv run ariadne serve` is convenient from a source checkout. Global options precede the command, for example `ariadne --config /private/config.toml --pretty calendar list`. Help and argument validation do not load configuration or contact a provider.
@@ -20,9 +21,9 @@ Successful non-service commands write exactly one bounded JSON document to stdou
 {"error":{"code":"invalid_arguments","message":"...","retryable":false}}
 ```
 
-Exit status `0` means success. Status `1` is an unexpected internal failure, `2` is invalid arguments, configuration, or a domain request, `3` is failed authentication, `5` is a stale Calendar conflict, and `6` is a retryable provider or network failure. There are no automatic retries for writes. Results are capped at 2 MiB and individual search commands impose smaller item limits; narrow the query when `output_too_large` is returned.
+Exit status `0` means success. Status `1` is an unexpected internal or response-contract failure, `2` is invalid arguments, configuration, or a domain request, `3` is failed authentication, `4` is not found, `5` is a stale Calendar conflict, and `6` is a retryable provider or network failure. There are no automatic retries for writes. Results are capped at 2 MiB and individual search commands impose smaller item limits; narrow the query when `output_too_large` is returned.
 
-Provider credentials are read from the private TOML file only after a Mail or Calendar command is selected. They are never command arguments, output fields, or MCP environment variables. Provider and validation errors pass through shared secret redaction. Codex telemetry records command execution as the bounded `shell` tool category without exporting the command, arguments, or result.
+Provider credentials are read from the private TOML file only after the corresponding command is selected. They are never command arguments, output fields, or MCP environment variables. Provider and validation errors pass through shared secret redaction. Codex telemetry records command execution as the bounded `shell` tool category without exporting the command, arguments, or result.
 
 ## Inspect the active turn profiles
 
@@ -161,6 +162,42 @@ ariadne calendar respond --help
 Repeated `--attendee`, `--alarm-minutes-before`, and `--calendar-id` flags follow ordinary CLI conventions. Updates distinguish omitted fields from explicit `--clear-*` flags. Search and read results include an ETag accepted by `--expected-etag` so a mutation can reject stale state. Calendar writes and attendee changes can cause provider updates or invitations, so enable the integration only when that scope is intended.
 
 The model-facing CLI is distinct from the operator maintenance scripts below and in the Mail section. Those scripts may perform bulk work or produce private files and are not advertised to Iris as personal-data commands.
+
+## Health workouts
+
+Health access is opt-in and read-only. Configure Ithaca's HTTPS API root and separate read token in the private TOML file; use the timezone in which date-only and offset-free CLI bounds should be interpreted:
+
+```toml
+[health]
+enabled = true
+api_url = "https://your-ithaca-host.example"
+read_token = "YOUR_DISTINCT_ITHACA_READ_TOKEN"
+timezone = "Europe/London"
+timeout_seconds = 30
+```
+
+The token stays in the private file and is sent only as an authorization header. It is redacted by `ariadne config show`. The configured hostname is added to Codex's network allowlist so the installed CLI can reach a private deployment; the full URL and token are not model instructions or MCP environment values.
+
+Search returns compact newest-first workouts and a stable `next_cursor`. Summarize uses the same half-open period and filters:
+
+```bash
+ariadne health workouts search \
+  --start 2026-08-01 --end 2026-09-01 --activity running --limit 20
+ariadne health workouts summarize \
+  --start 2026-08-01 --end 2026-09-01 --activity running
+```
+
+Date-only and offset-free bounds use `[health].timezone`; explicit ISO offsets are respected. Requests are normalized to UTC for Ithaca. Repeat `--activity` to include more than one activity type. Run each command's `--help` for the complete reviewed activity values.
+
+The CLI validates Ithaca's complete response shape, then removes transport details, snapshot identifiers, null metrics, and the non-actionable detailed-series catalogue before emitting JSON. It retains unit-bearing field names, workout IDs, readable source names, cursors, freshness and quality flags, and `period_data_coverage`; those coverage counts describe the requested period before optional activity filters.
+
+Use a UUID returned by search to retrieve compact detail. `show` includes selection and projection quality, metrics, splits, heart-rate zones, components, and route availability:
+
+```bash
+ariadne health workouts show '00000000-0000-0000-0000-000000000101'
+```
+
+Ithaca returns facts and deterministic arithmetic, not coaching or diagnoses. Missing metrics remain absent from CLI output, while explicit availability, projection, and quality warnings remain visible for Iris's interpretation. Ithaca's lower-level detailed-series endpoint is deliberately not exposed to Iris; a purpose-shaped trend command can be added later if real questions justify the extra data and complexity.
 
 ## One-off revisits
 

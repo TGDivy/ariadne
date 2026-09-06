@@ -100,6 +100,7 @@ def run(path: Path | None = None) -> None:
             personality=settings.personality,
             mcp_environment=settings.mcp_environment,
             knowledge_root=settings.vault,
+            network_domains=settings.health_network_domains,
         ),
         telemetry=telemetry,
     )
@@ -118,6 +119,7 @@ def run(path: Path | None = None) -> None:
                 human=settings.human_name,
                 personality=settings.personality,
                 mcp_environment=settings.mcp_environment,
+                network_domains=settings.health_network_domains,
                 telemetry=telemetry,
             )
             if mail_settings is not None
@@ -130,6 +132,7 @@ def run(path: Path | None = None) -> None:
             human=settings.human_name,
             personality=settings.personality,
             mcp_environment=settings.mcp_environment,
+            network_domains=settings.health_network_domains,
             telemetry=telemetry,
         )
     except ValueError as error:

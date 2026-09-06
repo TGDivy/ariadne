@@ -1032,6 +1032,7 @@ class MailLoop:
         human: str,
         personality: Path | None = None,
         mcp_environment: Mapping[str, str] | None = None,
+        network_domains: tuple[str, ...] = (),
         client_factory: ClientFactory | None = None,
         telemetry: Telemetry | None = None,
     ) -> None:
@@ -1041,6 +1042,7 @@ class MailLoop:
         self.human = human
         self.personality = personality
         self.mcp_environment = dict(mcp_environment or {})
+        self.network_domains = network_domains
         self.telemetry = telemetry or Telemetry()
         self.routes = load_routes(settings.routes)
         self.state = MailState(settings.state)
@@ -1067,6 +1069,7 @@ class MailLoop:
                     "ARIADNE_MAIL_JOB_ID": job_id,
                     "ARIADNE_MAIL_STATE": str(self.settings.state),
                 },
+                network_domains=self.network_domains,
             ),
             telemetry=self.telemetry,
         )

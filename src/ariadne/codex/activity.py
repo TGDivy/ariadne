@@ -70,7 +70,7 @@ _LOCAL_ACTIVITY = {
     ),
 }
 
-_ARIADNE_COMMAND_ACTIVITY = {
+_ARIADNE_COMMAND_ACTIVITY: dict[tuple[str, ...], ActivityDescription] = {
     ("config", "check"): _activity(
         "Checking Ariadne's configuration…", "Reviewing configuration…"
     ),
@@ -101,6 +101,15 @@ _ARIADNE_COMMAND_ACTIVITY = {
     ),
     ("calendar", "respond"): _activity(
         "Responding to a calendar invitation…", "Checking the response…"
+    ),
+    ("health", "workouts", "search"): _activity(
+        "Searching workout history…", "Reviewing workouts…"
+    ),
+    ("health", "workouts", "summarize"): _activity(
+        "Summarising workouts…", "Reviewing workout totals…"
+    ),
+    ("health", "workouts", "show"): _activity(
+        "Reading a workout…", "Reviewing workout details…"
     ),
 }
 
@@ -174,9 +183,11 @@ def _ariadne_activity(tokens: tuple[str, ...]) -> ActivityDescription | None:
             index += 1
             continue
         break
-    if len(tokens) - index < 2:
-        return None
-    return _ARIADNE_COMMAND_ACTIVITY.get((tokens[index], tokens[index + 1]))
+    for width in (3, 2):
+        key = tokens[index : index + width]
+        if len(key) == width and key in _ARIADNE_COMMAND_ACTIVITY:
+            return _ARIADNE_COMMAND_ACTIVITY[key]
+    return None
 
 
 def _common_command_activity(tokens: tuple[str, ...]) -> ActivityDescription | None:

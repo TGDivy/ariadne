@@ -112,6 +112,9 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
         assert "ariadne calendar list|search|read|availability" in (
             resolved.base_instructions
         )
+        assert "ariadne health workouts search|summarize|show" in (
+            resolved.base_instructions
+        )
         assert "ariadne --help" in resolved.base_instructions
 
 
@@ -143,9 +146,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
     )
-    assert "Mail and Calendar are available through the installed `ariadne`" in (
-        profile.base_instructions
-    )
+    assert "Mail, Calendar, and factual workout history" in profile.base_instructions
     assert "one conversational beat per message" in profile.base_instructions
     assert "do not recap it" in profile.base_instructions
     assert "ariadne.prompts/telegram.md" in profile.base_instruction_sources
@@ -154,6 +155,20 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     )
     assert "The trigger is not the task" in profile.developer_instructions
     assert "Live web search is enabled." in profile.developer_instructions
+
+
+def test_configured_health_host_extends_the_runtime_network_allowlist(
+    tmp_path: Path,
+) -> None:
+    profile = resolve_profile(
+        TELEGRAM_PROFILE,
+        vault=tmp_path,
+        human="Example User",
+        network_domains=("ithaca.example", "github.com"),
+    )
+
+    assert "ithaca.example" in profile.network_domains
+    assert profile.network_domains.count("github.com") == 1
 
 
 def test_shared_personality_is_applied_to_every_resolved_profile(

@@ -27,6 +27,13 @@ enabled = false
 timezone = "UTC"
 # default_calendar = "Calendar"
 
+[health]
+enabled = false
+timezone = "UTC"
+timeout_seconds = 30
+# api_url = "https://your-ithaca-host.example"
+# read_token = ""
+
 [revisits]
 state = "~/.local/state/ariadne/revisits.sqlite3"
 poll_interval_seconds = 15
