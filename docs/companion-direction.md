@@ -191,14 +191,17 @@ entire knowledge base.
 Markdown and Git remain the canonical store because they are portable,
 inspectable, and recoverable. They are implementation details of Ariadne rather
 than part of Iris's ordinary task. Iris finds and changes durable context through
-five semantic operations: search, read, create, update, and archive.
+six semantic operations: search, list, read, create, update, and archive.
 
 The record model is deliberately small. A neutral stable id and optional aliases
 and untyped links live in front matter. The H1 is the title, the first paragraph
 is a retrieval summary, and ordinary prose carries dates, state, uncertainty,
-provenance, and why linked subjects are connected. Active and archived records
-live in separate flat directories. There are no model-visible paths, kinds,
-collections, tags, lifecycle timestamps, or relationship types.
+provenance, and why linked subjects are connected. The repository itself is the
+Thread; active records live in meaningful semantic folders and archived records
+mirror that hierarchy below `archive/`. Iris can browse those folders one level
+at a time, but never sees filenames, absolute repository paths, hidden files, or
+Git metadata. There are no kinds, collections, tags, lifecycle timestamps, or
+relationship types.
 
 One concise record with id `now` captures active priorities, constraints,
 near-term commitments, and unresolved tensions. Ariadne supplies it with each
@@ -225,6 +228,7 @@ A strong initial retrieval path can combine:
 
 - stable record identities and aliases, especially for people and named work;
 - fast full-text ranking across ids, titles, aliases, summaries, and bodies;
+- bounded one-level folder listing when orientation is more useful than search;
 - following compact links and backlinks from one good match to nearby context;
 - concise current relevance from `now`;
 - short, explainable search results before reading the selected records in
@@ -406,8 +410,8 @@ changed the wording of one live response.
 ### 2. Keep The Thread behind a knowledge capability
 
 This is implemented as the compact semantic record model above. Markdown and
-Git remain underneath; Iris uses search, read, create, update, and archive while
-Ariadne owns validation, paths, synchronization, commits, and pushes.
+Git remain underneath; Iris uses search, list, read, create, update, and archive
+while Ariadne owns validation, filenames, synchronization, commits, and pushes.
 
 ### 3. Close one complete life-event loop
 

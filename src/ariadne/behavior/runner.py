@@ -144,7 +144,6 @@ def _write_scenario(scenario: BehaviorScenario, workspace: Path) -> None:
             raise ValueError(f"Scenario file escapes its workspace: {fixture.path}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(fixture.content, encoding="utf-8")
-    (workspace / "records").mkdir(exist_ok=True)
     (workspace / "archive").mkdir(exist_ok=True)
     for record in scenario.knowledge:
         metadata = KnowledgeMetadata(
@@ -154,7 +153,9 @@ def _write_scenario(scenario: BehaviorScenario, workspace: Path) -> None:
             aliases=record.aliases,
             links=record.links,
         )
-        destination = workspace / "records" / f"{slug(record.title)}.md"
+        destination = workspace.joinpath(*record.folder.split("/"))
+        destination = destination / f"{slug(record.title)}.md"
+        destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(render_document(metadata, record.body))
 
 

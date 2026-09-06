@@ -99,7 +99,7 @@ class KnowledgeIndex:
         try:
             self._database.execute(
                 "CREATE VIRTUAL TABLE records USING fts5("
-                "id UNINDEXED, title, aliases, summary, body, "
+                "id UNINDEXED, title, aliases, folder, summary, body, "
                 "tokenize='porter unicode61 remove_diacritics 2')"
             )
         except sqlite3.OperationalError as error:
@@ -107,13 +107,14 @@ class KnowledgeIndex:
                 "This Python SQLite build does not provide the required FTS5 support."
             ) from error
         self._database.executemany(
-            "INSERT INTO records(id, title, aliases, summary, body) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO records(id, title, aliases, folder, summary, body) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 (
                     record.metadata.id,
                     record.metadata.title,
                     " ".join(record.metadata.aliases),
+                    record.folder,
                     record.metadata.summary,
                     record.body,
                 )
@@ -140,6 +141,7 @@ class KnowledgeIndex:
                 id=target.metadata.id,
                 title=target.metadata.title,
                 summary=target.metadata.summary,
+                folder=target.folder,
             )
             for target in sorted(
                 linked,
@@ -156,6 +158,7 @@ class KnowledgeIndex:
             "id": _field_matches(terms, metadata.id, fuzzy=False),
             "title": _field_matches(terms, metadata.title),
             "alias": _field_matches(terms, " ".join(metadata.aliases)),
+            "folder": _field_matches(terms, record.folder, fuzzy=False),
             "summary": _field_matches(terms, metadata.summary),
             "body": _field_matches(terms, record.body, fuzzy=False),
         }
@@ -167,6 +170,7 @@ class KnowledgeIndex:
                 "id": 1_000.0,
                 "title": 1_000.0,
                 "alias": 800.0,
+                "folder": 150.0,
                 "summary": 120.0,
                 "body": 10.0,
             }.items()
@@ -191,6 +195,7 @@ class KnowledgeIndex:
         self,
         query: str,
         *,
+        folder: str | None = None,
         include_archived: bool = False,
         limit: int = 10,
     ) -> tuple[KnowledgeSearchResult, ...]:
@@ -205,7 +210,7 @@ class KnowledgeIndex:
         try:
             with self._database_lock:
                 rows = self._database.execute(
-                    "SELECT id, bm25(records, 0.0, 10.0, 8.0, 6.0, 1.0) "
+                    "SELECT id, bm25(records, 0.0, 10.0, 8.0, 4.0, 6.0, 1.0) "
                     "FROM records WHERE records MATCH ? ORDER BY 2",
                     (_search_expression(query),),
                 ).fetchall()
@@ -227,6 +232,10 @@ class KnowledgeIndex:
             record = self._records[identifier]
             if record.archived and not include_archived:
                 continue
+            if folder not in (None, "") and not (
+                record.folder == folder or record.folder.startswith(f"{folder}/")
+            ):
+                continue
             matched_terms, matched_by, boost = self._lexical_evidence(record, query)
             matches.append((score + boost, record, matched_terms, matched_by))
 
@@ -237,6 +246,7 @@ class KnowledgeIndex:
                 title=record.metadata.title,
                 summary=record.metadata.summary,
                 aliases=record.metadata.aliases,
+                folder=record.folder,
                 archived=record.archived,
                 links=self.links(record.metadata.id),
                 excerpt=_excerpt(record.body, tuple(matched_terms)),

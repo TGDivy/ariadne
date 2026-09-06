@@ -96,6 +96,7 @@ instructions and the course guide are available on the event website.
         ScenarioKnowledge(
             id="divy",
             title="Divy",
+            folder="people/self",
             summary="Divy's practical personal preferences and standing context.",
             body=(
                 "Lives near Southwark in London. Likes M&S for practical "
@@ -105,6 +106,7 @@ instructions and the course guide are available on the event website.
         ScenarioKnowledge(
             id="running",
             title="Running",
+            folder="goal/goals",
             summary="Build consistency and complete a half marathon comfortably.",
             body=(
                 "Divy is building consistency and wants to complete a half marathon "
@@ -165,6 +167,7 @@ selected itinerary, not a booked-train restriction.
         ScenarioKnowledge(
             id="windsor-trail-run-2026-08",
             title="Windsor Trail Run — 30 August 2026",
+            folder="event/running",
             summary=(
                 "Confirmed Windsor half marathon with preparation and transport "
                 "being organised."
@@ -180,6 +183,7 @@ selected itinerary, not a booked-train restriction.
         ScenarioKnowledge(
             id="running",
             title="Running",
+            folder="goal/goals",
             summary="Complete the Windsor half marathon comfortably.",
             body="Complete the Windsor half marathon comfortably.",
         ),
@@ -230,6 +234,7 @@ RACE_EVENING_REVISIT = BehaviorScenario(
         ScenarioKnowledge(
             id="windsor-trail-run-2026-08",
             title="Windsor Trail Run — 30 August 2026",
+            folder="event/running",
             summary=(
                 "Tomorrow's Windsor half marathon; transport is confirmed and "
                 "final preparation remains."
@@ -247,6 +252,7 @@ RACE_EVENING_REVISIT = BehaviorScenario(
         ScenarioKnowledge(
             id="divy",
             title="Divy",
+            folder="people/self",
             summary="Divy's practical personal preferences and standing context.",
             body=(
                 "Lives near Southwark in London. Likes M&S for practical breakfast "
@@ -256,6 +262,7 @@ RACE_EVENING_REVISIT = BehaviorScenario(
         ScenarioKnowledge(
             id="running",
             title="Running",
+            folder="goal/goals",
             summary="Complete the Windsor half marathon comfortably.",
             body="Complete the Windsor half marathon comfortably.",
         ),
@@ -325,6 +332,7 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
         ScenarioKnowledge(
             id="windsor-trail-run-2026-08",
             title="Windsor Trail Run — 30 August 2026",
+            folder="event/running",
             summary="Tomorrow's race is arranged; final packing was still open.",
             body=(
                 "Race starts at 09:20. Transport is confirmed. Check tonight "
@@ -336,6 +344,7 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
         ScenarioKnowledge(
             id="running",
             title="Running",
+            folder="goal/goals",
             summary="Complete the Windsor half marathon comfortably.",
             body="Complete the Windsor half marathon comfortably.",
         ),
@@ -398,6 +407,7 @@ CONFLICTING_NEEDS = BehaviorScenario(
         ScenarioKnowledge(
             id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary=(
                 "Divy's own profile, including how his energy and working style "
                 "can vary with context."
@@ -414,6 +424,7 @@ CONFLICTING_NEEDS = BehaviorScenario(
         ScenarioKnowledge(
             id="watching-preferences",
             title="Watching Preferences",
+            folder="preference/entertainment",
             summary=(
                 "Divy likes reflective, humane stories with quiet wonder and "
                 "emotional intelligence."
@@ -457,6 +468,7 @@ KNOWN_PERSON_NEWS = BehaviorScenario(
         ScenarioKnowledge(
             id="lily",
             title="Lily",
+            folder="people/friends",
             summary=(
                 "A close friend of Divy's who was anxious about the final interview "
                 "for a role she really wanted."
@@ -471,6 +483,7 @@ KNOWN_PERSON_NEWS = BehaviorScenario(
         ScenarioKnowledge(
             id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary="Divy's own stable personal context.",
             aliases=("Divy", "me", "myself"),
             body="Divy values close friendships and shows up for his friends.",
@@ -504,6 +517,7 @@ TENTATIVE_AMBITION = BehaviorScenario(
         ScenarioKnowledge(
             id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary="Divy's own stable personal context and developing direction.",
             aliases=("Divy", "me", "myself"),
             body=(
@@ -541,6 +555,7 @@ NEW_PERSON_DAY = BehaviorScenario(
         ScenarioKnowledge(
             id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary="Divy's own stable personal context.",
             aliases=("Divy", "me", "myself"),
             body="Divy values warm friendships and enjoys getting to know people.",

@@ -10,7 +10,6 @@ from pydantic import ValidationError
 
 from .models import KnowledgeMetadata, KnowledgeValidationError
 
-ACTIVE_DIRECTORY = "records"
 ARCHIVE_DIRECTORY = "archive"
 
 
@@ -21,6 +20,7 @@ class StoredKnowledge:
     metadata: KnowledgeMetadata
     body: str
     path: Path
+    folder: str = ""
     archived: bool = False
 
 
@@ -65,7 +65,19 @@ def _content(value: str, path: Path) -> tuple[str, str, str]:
     return title.strip(), summary, body.strip() if separator else ""
 
 
-def parse_document(path: Path) -> StoredKnowledge:
+def _location(path: Path, root: Path) -> tuple[str, bool]:
+    try:
+        relative = path.relative_to(root)
+    except ValueError as error:
+        raise KnowledgeValidationError(
+            f"Managed record {path} is outside the knowledge repository."
+        ) from error
+    archived = bool(relative.parts and relative.parts[0] == ARCHIVE_DIRECTORY)
+    folder_parts = relative.parts[1:-1] if archived else relative.parts[:-1]
+    return "/".join(folder_parts), archived
+
+
+def parse_document(path: Path, *, root: Path | None = None) -> StoredKnowledge:
     """Load one v2 record and derive title and summary from its Markdown."""
     try:
         text = path.read_bytes().decode("utf-8")
@@ -81,12 +93,8 @@ def parse_document(path: Path) -> StoredKnowledge:
         raise KnowledgeValidationError(
             f"Managed record {path} is invalid: {error}"
         ) from error
-    return StoredKnowledge(
-        metadata,
-        body,
-        path,
-        archived=path.parent.name == ARCHIVE_DIRECTORY,
-    )
+    folder, archived = _location(path, (root or path.parent).resolve())
+    return StoredKnowledge(metadata, body, path, folder=folder, archived=archived)
 
 
 def render_document(metadata: KnowledgeMetadata, body: str) -> bytes:
@@ -110,12 +118,15 @@ def render_document(metadata: KnowledgeMetadata, body: str) -> bytes:
 
 
 def markdown_paths(root: Path) -> tuple[Path, ...]:
-    """Return every Markdown candidate beneath the two managed stores."""
-    return tuple(
-        sorted(
-            path
-            for directory in (ACTIVE_DIRECTORY, ARCHIVE_DIRECTORY)
-            for path in (root / directory).rglob("*.md")
-            if path.is_file()
+    """Return every non-hidden Markdown record in the Thread repository."""
+    paths: list[Path] = []
+    for directory, directories, filenames in root.walk():
+        directories[:] = sorted(
+            name for name in directories if not name.startswith(".")
         )
-    )
+        paths.extend(
+            directory / name
+            for name in filenames
+            if not name.startswith(".") and name.endswith(".md")
+        )
+    return tuple(sorted(paths))

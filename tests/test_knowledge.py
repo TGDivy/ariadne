@@ -72,7 +72,6 @@ def knowledge_repository(tmp_path: Path) -> Path:
     root = tmp_path / "knowledge"
     origin = tmp_path / "origin.git"
     root.mkdir()
-    (root / "records").mkdir()
     (root / "archive").mkdir()
     git(tmp_path, "init", "--bare", str(origin))
     git(root, "init", "--initial-branch=main")
@@ -81,7 +80,7 @@ def knowledge_repository(tmp_path: Path) -> Path:
     git(root, "remote", "add", "origin", str(origin))
     write_record(
         root,
-        "records/now.md",
+        "now.md",
         metadata(
             "now",
             "Now",
@@ -91,7 +90,7 @@ def knowledge_repository(tmp_path: Path) -> Path:
     )
     write_record(
         root,
-        "records/running.md",
+        "goal/running.md",
         metadata(
             "running",
             "Running",
@@ -102,7 +101,7 @@ def knowledge_repository(tmp_path: Path) -> Path:
     )
     write_record(
         root,
-        "records/windsor-trail-run.md",
+        "event/running/windsor-trail-run.md",
         metadata(
             "windsor-2026",
             "Windsor Trail Run",
@@ -113,7 +112,7 @@ def knowledge_repository(tmp_path: Path) -> Path:
     )
     write_record(
         root,
-        "records/trainline-booking.md",
+        "event/travel/trainline-booking.md",
         metadata(
             "trainline-windsor",
             "Trainline booking",
@@ -191,6 +190,67 @@ def test_search_is_or_ranked_prefix_stemmed_and_typo_tolerant(
     assert typo[0].id == "windsor-2026"
     assert prefix[0].id == "trainline-windsor"
     assert plural[0].id == "trainline-windsor"
+
+
+def test_search_can_narrow_to_a_folder_and_its_descendants(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+
+    all_folders = store.search("Windsor", folder="")
+    events = store.search("Windsor", folder="event")
+    running = store.search("Windsor", folder="event/running")
+
+    assert {result.id for result in all_folders} == {
+        "now",
+        "windsor-2026",
+        "trainline-windsor",
+    }
+    assert {result.id for result in events} == {
+        "windsor-2026",
+        "trainline-windsor",
+    }
+    assert [result.id for result in running] == ["windsor-2026"]
+    assert store.search("travel")[0].id == "trainline-windsor"
+
+
+def test_list_returns_only_immediate_semantic_folders_and_direct_records(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+
+    root = store.list_folder()
+    events = store.list_folder("event")
+    running = store.list_folder("event/running")
+
+    assert [(item.folder, item.record_count) for item in root.folders] == [
+        ("event", 2),
+        ("goal", 1),
+    ]
+    assert [(record.id, record.title) for record in root.records] == [("now", "Now")]
+    assert [item.folder for item in events.folders] == [
+        "event/running",
+        "event/travel",
+    ]
+    assert events.records == ()
+    assert [(record.id, record.title) for record in running.records] == [
+        ("windsor-2026", "Windsor Trail Run")
+    ]
+    assert ".md" not in json.dumps(root.model_dump(mode="json"))
+    with pytest.raises(KnowledgeValidationError, match="does not exist"):
+        store.list_folder("missing")
+
+
+def test_list_reports_independent_bounded_counts(
+    knowledge_repository: Path,
+) -> None:
+    listing = KnowledgeStore(knowledge_repository).list_folder(limit=1)
+
+    assert listing.folder_count == 2
+    assert listing.folders_truncated is True
+    assert len(listing.folders) == 1
+    assert listing.record_count == 1
+    assert listing.records_truncated is False
 
 
 def test_long_query_terms_do_not_reverse_match_tiny_field_words(
@@ -311,7 +371,9 @@ def test_search_and_read_return_compact_untyped_links(
 
     result_links = {link.id: link for link in result.links}
     assert result_links["trainline-windsor"].summary.startswith("Train tickets")
+    assert result_links["trainline-windsor"].folder == "event/travel"
     assert {link.id for link in plan.links} == {"running", "trainline-windsor"}
+    assert plan.folder == "event/running"
     assert goal.links[0].id == "windsor-2026"
     assert "body" not in result.links[0].model_dump()
     assert "relation" not in result.links[0].model_dump()
@@ -354,7 +416,7 @@ def test_whole_repository_validation_checks_records_and_links(
 def test_whole_repository_validation_rejects_a_broken_link(
     knowledge_repository: Path,
 ) -> None:
-    path = knowledge_repository / "records/running.md"
+    path = knowledge_repository / "goal/running.md"
     record = parse_document(path)
     broken = record.metadata.model_copy(update={"links": ("missing",)})
     path.write_bytes(render_document(broken, record.body))
@@ -366,14 +428,31 @@ def test_whole_repository_validation_rejects_a_broken_link(
 def test_whole_repository_validation_rejects_a_stale_title_filename(
     knowledge_repository: Path,
 ) -> None:
-    original = knowledge_repository / "records/windsor-trail-run.md"
+    original = knowledge_repository / "event/running/windsor-trail-run.md"
     original.rename(original.with_name("old-title.md"))
 
     with pytest.raises(KnowledgeValidationError, match="does not match title"):
         validate_repository(knowledge_repository)
 
 
-def test_unrelated_repository_markdown_is_not_a_knowledge_collection(
+def test_runtime_repository_errors_do_not_expose_paths_or_filenames(
+    knowledge_repository: Path,
+) -> None:
+    path = knowledge_repository / "goal/running.md"
+    path.write_text("not a knowledge record", encoding="utf-8")
+
+    with pytest.raises(
+        KnowledgeValidationError,
+        match="invalid and needs operator review",
+    ) as raised:
+        KnowledgeStore(knowledge_repository).search("running")
+
+    message = str(raised.value)
+    assert str(knowledge_repository) not in message
+    assert "running.md" not in message
+
+
+def test_hidden_repository_markdown_is_not_a_knowledge_record(
     knowledge_repository: Path,
 ) -> None:
     workflow = knowledge_repository / ".github/README.md"
@@ -385,30 +464,71 @@ def test_unrelated_repository_markdown_is_not_a_knowledge_collection(
     assert report.records == 4
 
 
-def test_nested_markdown_inside_a_managed_store_is_rejected(
+def test_nested_semantic_folders_are_valid(
     knowledge_repository: Path,
 ) -> None:
-    nested = knowledge_repository / "records/old-hierarchy/example.md"
+    nested = knowledge_repository / "project/ariadne/example.md"
     write_record(
         knowledge_repository,
-        "records/old-hierarchy/example.md",
+        "project/ariadne/example.md",
         metadata("example", "Example"),
-        "This must move into the flat store.",
+        "This belongs in a meaningful nested folder.",
     )
 
-    with pytest.raises(KnowledgeValidationError, match="directly under"):
-        validate_repository(knowledge_repository)
+    report = validate_repository(knowledge_repository)
 
     assert nested.is_file()
+    assert report.records == 5
 
 
-def test_runtime_requires_both_canonical_record_directories(tmp_path: Path) -> None:
+def test_legacy_records_wrapper_is_rejected(knowledge_repository: Path) -> None:
+    write_record(
+        knowledge_repository,
+        "records/example.md",
+        metadata("example", "Example"),
+        "This wrapper no longer belongs in Thread v2.",
+    )
+
+    with pytest.raises(KnowledgeValidationError, match="reserved"):
+        validate_repository(knowledge_repository)
+
+
+def test_runtime_requires_the_archive_namespace(tmp_path: Path) -> None:
     root = tmp_path / "knowledge"
     root.mkdir()
     git(root, "init", "--initial-branch=main")
 
-    with pytest.raises(KnowledgeValidationError, match="records/ and archive/"):
+    with pytest.raises(KnowledgeValidationError, match="archive/"):
         KnowledgeStore(root)
+
+
+@pytest.mark.parametrize("folder", ["archive", "archive/old", "records", "People"])
+def test_reserved_or_nonsemantic_folders_are_rejected_before_writing(
+    knowledge_repository: Path,
+    folder: str,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+
+    with pytest.raises(KnowledgeValidationError, match="folder"):
+        store.create(
+            title="Invalid location",
+            summary="This should never be written.",
+            body="This should never be written.",
+            folder=folder,
+        )
+
+    assert not (knowledge_repository / "invalid-location.md").exists()
+
+
+def test_current_context_cannot_move_out_of_the_root(
+    knowledge_repository: Path,
+) -> None:
+    store = KnowledgeStore(knowledge_repository)
+
+    with pytest.raises(KnowledgeValidationError, match="belongs at the root"):
+        store.update("now", folder="journal")
+
+    assert (knowledge_repository / "now.md").is_file()
 
 
 def test_validation_command_reports_a_compact_summary(
@@ -425,7 +545,7 @@ def test_validation_command_reports_a_compact_summary(
     )
 
 
-def test_create_generates_stable_id_and_flat_path_then_pushes(
+def test_create_generates_stable_id_in_a_semantic_folder_then_pushes(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
@@ -434,12 +554,14 @@ def test_create_generates_stable_id_and_flat_path_then_pushes(
         title="Race Breakfast & Snacks",
         summary="Possible food for race morning and recovery.",
         body="Try oats, banana, and a bagel.",
+        folder="plan/health",
         links=("windsor-2026",),
     )
 
-    path = knowledge_repository / "records/race-breakfast-snacks.md"
+    path = knowledge_repository / "plan/health/race-breakfast-snacks.md"
     rendered = path.read_text(encoding="utf-8")
     assert created.metadata.id == "race-breakfast-snacks"
+    assert created.folder == "plan/health"
     assert path.is_file()
     assert "created_at" not in rendered
     assert "kind:" not in rendered
@@ -447,7 +569,7 @@ def test_create_generates_stable_id_and_flat_path_then_pushes(
     assert git(knowledge_repository, "rev-list", "@{upstream}..HEAD") == ""
 
 
-def test_update_moves_title_path_while_preserving_stable_id_and_links(
+def test_update_can_move_folder_and_title_while_preserving_id_and_links(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
@@ -457,13 +579,15 @@ def test_update_moves_title_path_while_preserving_stable_id_and_links(
         title="Windsor Race Day",
         summary="Race and train arrangements are confirmed.",
         body="Arrive at 08:44 and go directly to bib collection.",
+        folder="plan/running",
     )
     booking = store.read(("trainline-windsor",))[0]
 
-    destination = knowledge_repository / "records/windsor-race-day.md"
-    assert not (knowledge_repository / "records/windsor-trail-run.md").exists()
+    destination = knowledge_repository / "plan/running/windsor-race-day.md"
+    assert not (knowledge_repository / "event/running/windsor-trail-run.md").exists()
     assert destination.is_file()
     assert updated.metadata.id == "windsor-2026"
+    assert updated.folder == "plan/running"
     assert booking.links[0].id == "windsor-2026"
     assert git(knowledge_repository, "status", "--porcelain") == ""
 
@@ -476,10 +600,17 @@ def test_archive_moves_record_and_hides_it_without_deleting(
     archived = store.archive("trainline-windsor", "The journey is complete.")
 
     assert archived.archived is True
-    assert not (knowledge_repository / "records/trainline-booking.md").exists()
-    assert (knowledge_repository / "archive/trainline-booking.md").is_file()
+    assert archived.folder == "event/travel"
+    assert not (knowledge_repository / "event/travel/trainline-booking.md").exists()
+    assert (
+        knowledge_repository / "archive/event/travel/trainline-booking.md"
+    ).is_file()
     assert store.search("Trainline") == ()
     assert store.search("Trainline", include_archived=True)[0].id == "trainline-windsor"
+    archived_event = store.list_folder("event", archived=True)
+    assert [(item.folder, item.record_count) for item in archived_event.folders] == [
+        ("event/travel", 1)
+    ]
     with pytest.raises(KnowledgeConflict, match="already archived"):
         store.archive("trainline-windsor", "Do not archive twice.")
 
@@ -526,7 +657,7 @@ def test_unmanaged_changes_block_mutation_without_overwriting_them(
         )
 
     assert unmanaged.read_text(encoding="utf-8") == "mine"
-    assert not (knowledge_repository / "records/blocked.md").exists()
+    assert not (knowledge_repository / "blocked.md").exists()
 
 
 def test_a_local_commit_is_the_retry_state_after_push_failure(
@@ -576,7 +707,7 @@ def test_a_mutation_automatically_pulls_remote_knowledge_before_writing(
     git(other, "config", "user.email", "other@example.test")
     write_record(
         other,
-        "records/remote-change.md",
+        "project/remote-change.md",
         metadata(
             "remote-change",
             "Remote change",
@@ -650,6 +781,7 @@ async def test_mcp_tools_hide_storage_and_git_details(
                 "title": "Windsor weather",
                 "summary": "Check the forecast before packing.",
                 "body": "Check the forecast before packing.",
+                "folder": "event/running",
                 "links": ["windsor-2026"],
             },
         )
@@ -657,6 +789,7 @@ async def test_mcp_tools_hide_storage_and_git_details(
     payload = created.data["record"]
     rendered = json.dumps(payload)
     assert payload["id"] == "windsor-weather"
+    assert payload["folder"] == "event/running"
     assert str(knowledge_repository) not in rendered
     assert "created_at" not in rendered
     assert "updated_at" not in rendered
@@ -673,6 +806,7 @@ async def test_knowledge_tool_contract_is_small_and_annotations_are_accurate() -
         "title",
         "summary",
         "body",
+        "folder",
         "aliases",
         "links",
     }
@@ -681,13 +815,20 @@ async def test_knowledge_tool_contract_is_small_and_annotations_are_accurate() -
         "title",
         "summary",
         "body",
+        "folder",
         "aliases",
         "links",
         "clear",
     }
+    assert set(tools["list_knowledge"].parameters["properties"]) == {
+        "folder",
+        "archived",
+        "limit",
+    }
+    assert "folder" in tools["search_knowledge"].parameters["properties"]
     assert "browse_knowledge" not in tools
 
-    for name in ("search_knowledge", "read_knowledge"):
+    for name in ("search_knowledge", "list_knowledge", "read_knowledge"):
         assert tools[name].annotations is not None
         assert tools[name].annotations.readOnlyHint is True
         assert tools[name].annotations.destructiveHint is False

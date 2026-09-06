@@ -69,6 +69,7 @@ TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
 TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "ask_telegram_question")
 KNOWLEDGE_ACTIVITY = {
     "search_knowledge": "Searching memory…",
+    "list_knowledge": "Browsing memory…",
     "read_knowledge": "Reading memory…",
     "create_knowledge": "Remembering…",
     "update_knowledge": "Updating memory…",

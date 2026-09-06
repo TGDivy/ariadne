@@ -11,10 +11,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from .documents import (
-    ACTIVE_DIRECTORY,
     ARCHIVE_DIRECTORY,
     StoredKnowledge,
     markdown_paths,
@@ -22,7 +21,11 @@ from .documents import (
     render_document,
 )
 from .models import (
+    Folder,
     KnowledgeConflict,
+    KnowledgeFolderSummary,
+    KnowledgeListing,
+    KnowledgeListRecord,
     KnowledgeMetadata,
     KnowledgeRecord,
     KnowledgeSearchResult,
@@ -34,6 +37,8 @@ from .search import KnowledgeIndex
 from .validation import validate_records
 
 CURRENT_CONTEXT_ID = "now"
+_FOLDER_ADAPTER = TypeAdapter(Folder)
+_RESERVED_FOLDER_ROOTS = {ARCHIVE_DIRECTORY, "records"}
 
 
 class KnowledgeStore:
@@ -49,13 +54,9 @@ class KnowledgeStore:
             raise KnowledgeValidationError(
                 "The knowledge store must be the root of its Git working tree."
             )
-        if not all(
-            (self.root / directory).is_dir()
-            for directory in (ACTIVE_DIRECTORY, ARCHIVE_DIRECTORY)
-        ):
+        if not (self.root / ARCHIVE_DIRECTORY).is_dir():
             raise KnowledgeValidationError(
-                f"The knowledge store needs {ACTIVE_DIRECTORY}/ and "
-                f"{ARCHIVE_DIRECTORY}/ directories."
+                f"The knowledge store needs an {ARCHIVE_DIRECTORY}/ directory."
             )
         self._index: KnowledgeIndex | None = None
         self._indexed_head: str | None = None
@@ -85,8 +86,16 @@ class KnowledgeStore:
             head = self._head()
             if self._index is not None and self._indexed_head == head:
                 return self._index
-            records = tuple(parse_document(path) for path in markdown_paths(self.root))
-            validate_records(self.root, records)
+            try:
+                records = tuple(
+                    parse_document(path, root=self.root)
+                    for path in markdown_paths(self.root)
+                )
+                validate_records(self.root, records)
+            except KnowledgeValidationError as error:
+                raise KnowledgeValidationError(
+                    "Private knowledge is invalid and needs operator review."
+                ) from error
             self._index = KnowledgeIndex(records)
             self._indexed_head = head
             return self._index
@@ -156,6 +165,7 @@ class KnowledgeStore:
         return KnowledgeRecord(
             metadata=record.metadata,
             body=record.body,
+            folder=record.folder,
             archived=record.archived,
             links=index.links(record.metadata.id),
         )
@@ -164,12 +174,75 @@ class KnowledgeStore:
         self,
         query: str,
         *,
+        folder: str | None = None,
         include_archived: bool = False,
         limit: int = 10,
     ) -> tuple[KnowledgeSearchResult, ...]:
         """Search canonical records without exposing storage mechanics."""
+        normalized = self._folder(folder) if folder is not None else None
         return self._load_index().search(
-            query, include_archived=include_archived, limit=limit
+            query,
+            folder=normalized,
+            include_archived=include_archived,
+            limit=limit,
+        )
+
+    def list_folder(
+        self,
+        folder: str = "",
+        *,
+        archived: bool = False,
+        limit: int = 50,
+    ) -> KnowledgeListing:
+        """List only immediate semantic child folders and direct records."""
+        if not 1 <= limit <= 50:
+            raise KnowledgeValidationError("Knowledge list limit must be 1 to 50.")
+        normalized = self._folder(folder)
+        records = tuple(
+            record
+            for record in self._load_index().records.values()
+            if record.archived == archived
+        )
+        direct = sorted(
+            (record for record in records if record.folder == normalized),
+            key=lambda record: (
+                record.metadata.title.casefold(),
+                record.metadata.id,
+            ),
+        )
+        child_counts: dict[str, int] = {}
+        prefix = f"{normalized}/" if normalized else ""
+        for record in records:
+            if normalized and not record.folder.startswith(prefix):
+                continue
+            remainder = record.folder[len(prefix) :] if prefix else record.folder
+            if not remainder:
+                continue
+            child = remainder.split("/", 1)[0]
+            child_folder = f"{prefix}{child}"
+            child_counts[child_folder] = child_counts.get(child_folder, 0) + 1
+        if normalized and not direct and not child_counts:
+            state = "archived " if archived else ""
+            raise KnowledgeValidationError(
+                f"The {state}knowledge folder {normalized!r} does not exist."
+            )
+        folders = tuple(
+            KnowledgeFolderSummary(folder=name, record_count=count)
+            for name, count in sorted(child_counts.items())[:limit]
+        )
+        listed_records = tuple(
+            KnowledgeListRecord(id=record.metadata.id, title=record.metadata.title)
+            for record in direct[:limit]
+        )
+        return KnowledgeListing(
+            folder=normalized,
+            archived=archived,
+            folders=folders,
+            folder_count=len(child_counts),
+            folders_truncated=len(child_counts) > limit,
+            records=listed_records,
+            record_count=len(direct),
+            records_truncated=len(direct) > limit,
         )
 
     def read(self, identifiers: Sequence[str]) -> tuple[KnowledgeRecord, ...]:
@@ -206,14 +279,32 @@ class KnowledgeStore:
             suffix += 1
         return candidate
 
+    @staticmethod
+    def _folder(value: str) -> str:
+        try:
+            normalized = _FOLDER_ADAPTER.validate_python(value)
+        except ValidationError as error:
+            raise KnowledgeValidationError(
+                "A knowledge folder must be a relative lowercase kebab-case path."
+            ) from error
+        root = normalized.partition("/")[0]
+        if root in _RESERVED_FOLDER_ROOTS:
+            raise KnowledgeValidationError(
+                f"Knowledge folder {root!r} is reserved by the repository."
+            )
+        return normalized
+
     def _available_path(
         self,
         title: str,
         *,
+        folder: str,
         archived: bool,
         exclude: Path | None = None,
     ) -> Path:
-        directory = self.root / (ARCHIVE_DIRECTORY if archived else ACTIVE_DIRECTORY)
+        directory = self.root / ARCHIVE_DIRECTORY if archived else self.root
+        if folder:
+            directory = directory.joinpath(*folder.split("/"))
         base = slug(title)
         candidate = directory / f"{base}.md"
         suffix = 2
@@ -238,6 +329,15 @@ class KnowledgeStore:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def _prune_empty_parents(self, directory: Path) -> None:
+        stops = {self.root, self.root / ARCHIVE_DIRECTORY}
+        while directory not in stops and directory.is_relative_to(self.root):
+            try:
+                directory.rmdir()
+            except OSError:
+                return
+            directory = directory.parent
+
     def _commit(self, message: str, paths: Sequence[Path]) -> None:
         relative = [str(path.relative_to(self.root)) for path in paths]
         self._git("add", "--", *relative)
@@ -251,6 +351,7 @@ class KnowledgeStore:
         for path, content in previous.items():
             if content is None:
                 path.unlink(missing_ok=True)
+                self._prune_empty_parents(path.parent)
             else:
                 self._write_atomic(path, content)
 
@@ -269,11 +370,15 @@ class KnowledgeStore:
         metadata: KnowledgeMetadata,
         body: str,
         *,
+        folder: str,
         archived: bool,
         message: str,
     ) -> None:
         destination = self._available_path(
-            metadata.title, archived=archived, exclude=current.path
+            metadata.title,
+            folder=folder,
+            archived=archived,
+            exclude=current.path,
         )
         content = render_document(metadata, body)
         if destination == current.path and current.path.read_bytes() == content:
@@ -290,6 +395,7 @@ class KnowledgeStore:
             self._write_atomic(destination, content)
             if destination != current.path:
                 current.path.unlink()
+                self._prune_empty_parents(current.path.parent)
             self._commit(message, paths)
         except (KnowledgeSyncError, OSError):
             if self._head() == previous_head:
@@ -302,6 +408,7 @@ class KnowledgeStore:
         title: str,
         summary: str,
         body: str,
+        folder: str = "",
         aliases: Sequence[str] = (),
         links: Sequence[str] = (),
     ) -> KnowledgeRecord:
@@ -315,6 +422,11 @@ class KnowledgeStore:
                 for name in (record.metadata.id, *record.metadata.aliases)
             }
             identifier = self._available_identifier(title, occupied)
+            normalized_folder = self._folder(folder)
+            if identifier == CURRENT_CONTEXT_ID and normalized_folder:
+                raise KnowledgeValidationError(
+                    "The current-context record with id 'now' belongs at the root."
+                )
             self._validate_links(identifier, links, index.records)
             collisions = sorted(
                 name
@@ -333,7 +445,11 @@ class KnowledgeStore:
                 aliases=tuple(aliases),
                 links=tuple(links),
             )
-            path = self._available_path(metadata.title, archived=False)
+            path = self._available_path(
+                metadata.title,
+                folder=normalized_folder,
+                archived=False,
+            )
             content = render_document(metadata, body)
             previous_head = self._head()
             try:
@@ -352,6 +468,7 @@ class KnowledgeStore:
         title: str | None = None,
         summary: str | None = None,
         body: str | None = None,
+        folder: str | None = None,
         aliases: Sequence[str] | None = None,
         links: Sequence[str] | None = None,
         clear: Sequence[str] = (),
@@ -391,6 +508,11 @@ class KnowledgeStore:
                 else current.metadata.links
             )
             self._validate_links(identifier, new_links, index.records)
+            new_folder = self._folder(folder) if folder is not None else current.folder
+            if identifier == CURRENT_CONTEXT_ID and new_folder:
+                raise KnowledgeValidationError(
+                    "The current-context record with id 'now' belongs at the root."
+                )
             new_aliases = (
                 ()
                 if "aliases" in clear
@@ -425,6 +547,7 @@ class KnowledgeStore:
                 current,
                 metadata,
                 body if body is not None else current.body,
+                folder=new_folder,
                 archived=current.archived,
                 message=f"Update {metadata.title}",
             )
@@ -445,11 +568,16 @@ class KnowledgeStore:
                 ) from error
             if current.archived:
                 raise KnowledgeConflict("This knowledge is already archived.")
+            if identifier == CURRENT_CONTEXT_ID:
+                raise KnowledgeValidationError(
+                    "Current context cannot be archived; rewrite it instead."
+                )
             body = f"{current.body.rstrip()}\n\n## Archived\n\n{reason.strip()}".strip()
             self._persist(
                 current,
                 current.metadata,
                 body,
+                folder=current.folder,
                 archived=True,
                 message=f"Archive {current.metadata.title}",
             )

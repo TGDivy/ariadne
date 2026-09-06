@@ -15,6 +15,17 @@ Identifier = Annotated[
         pattern=r"^[a-z0-9][a-z0-9._-]*$",
     ),
 ]
+Folder = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        max_length=240,
+        pattern=(
+            r"^(?:[a-z0-9]+(?:-[a-z0-9]+)*"
+            r"(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*)?$"
+        ),
+    ),
+]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 Summary = Annotated[
     str,
@@ -58,6 +69,7 @@ class KnowledgeLinkSummary(BaseModel):
     id: Identifier
     title: str
     summary: str
+    folder: Folder
 
 
 class KnowledgeRecord(BaseModel):
@@ -67,6 +79,7 @@ class KnowledgeRecord(BaseModel):
 
     metadata: KnowledgeMetadata
     body: str
+    folder: Folder = ""
     archived: bool = False
     links: tuple[KnowledgeLinkSummary, ...] = ()
 
@@ -78,6 +91,7 @@ class KnowledgeRecord(BaseModel):
             "title": metadata.title,
             "summary": metadata.summary,
             "aliases": list(metadata.aliases),
+            "folder": self.folder,
             "archived": self.archived,
             "links": [link.model_dump(mode="json") for link in self.links],
             "body": self.body,
@@ -93,12 +107,46 @@ class KnowledgeSearchResult(BaseModel):
     title: str
     summary: str
     aliases: tuple[str, ...]
+    folder: Folder
     archived: bool
     links: tuple[KnowledgeLinkSummary, ...]
     excerpt: str
     matched_terms: tuple[str, ...]
     unmatched_terms: tuple[str, ...]
     matched_by: tuple[str, ...]
+
+
+class KnowledgeFolderSummary(BaseModel):
+    """One immediate child folder in a bounded semantic listing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    folder: Folder
+    record_count: int
+
+
+class KnowledgeListRecord(BaseModel):
+    """A deliberately small direct record entry in a folder listing."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: Identifier
+    title: str
+
+
+class KnowledgeListing(BaseModel):
+    """Immediate child folders and records without repository mechanics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    folder: Folder
+    archived: bool
+    folders: tuple[KnowledgeFolderSummary, ...]
+    folder_count: int
+    folders_truncated: bool
+    records: tuple[KnowledgeListRecord, ...]
+    record_count: int
+    records_truncated: bool
 
 
 class KnowledgeError(RuntimeError):

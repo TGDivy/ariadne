@@ -37,6 +37,7 @@ class ScenarioKnowledge:
     title: str
     summary: str
     body: str
+    folder: str = ""
     aliases: tuple[str, ...] = ()
     links: tuple[str, ...] = ()
 
@@ -45,6 +46,7 @@ class ScenarioKnowledge:
             "id": self.id,
             "title": self.title,
             "summary": self.summary,
+            "folder": self.folder,
             "aliases": list(self.aliases),
             "links": list(self.links),
             "archived": False,

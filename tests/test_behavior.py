@@ -145,6 +145,7 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "request_telegram_file_delivery",
         "record_current_mail_decision",
         "search_knowledge",
+        "list_knowledge",
         "read_knowledge",
         "create_knowledge",
         "update_knowledge",
@@ -233,15 +234,19 @@ async def test_fake_knowledge_is_seeded_and_mutable(
     monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
     monkeypatch.setenv(fake_knowledge.KNOWLEDGE_ENVIRONMENT, str(knowledge))
 
-    found = fake_knowledge.search_knowledge("Windsor")
+    listing = fake_knowledge.list_knowledge()
+    found = fake_knowledge.search_knowledge("Windsor", folder="event")
     result = found["results"][0]
     updated = fake_knowledge.update_knowledge(
-        result["id"], body="Transport is arranged."
+        result["id"], body="Transport is arranged.", folder="event/travel"
     )
 
+    assert listing["folders"] == [{"folder": "event", "record_count": 1}]
     assert found["count"] == 1
     assert updated["record"]["body"] == "Transport is arranged."
+    assert updated["record"]["folder"] == "event/travel"
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
+        "list_knowledge",
         "search_knowledge",
         "update_knowledge",
     ]

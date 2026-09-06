@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .documents import (
-    ACTIVE_DIRECTORY,
     ARCHIVE_DIRECTORY,
     StoredKnowledge,
     markdown_paths,
@@ -17,6 +16,9 @@ from .models import KnowledgeValidationError
 from .paths import filename_matches_title
 
 _KEBAB_FILE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
+_KEBAB_FOLDER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_LEGACY_WRAPPER = "records"
+_RESERVED_FOLDER_ROOTS = {ARCHIVE_DIRECTORY, _LEGACY_WRAPPER}
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,17 +34,37 @@ def validate_records(root: Path, records: tuple[StoredKnowledge, ...]) -> None:
     """Validate the few collection-wide invariants v2 retains."""
     by_id: dict[str, StoredKnowledge] = {}
     names: dict[str, str] = {}
-    allowed_parents = {root / ACTIVE_DIRECTORY, root / ARCHIVE_DIRECTORY}
     for record in records:
         metadata = record.metadata
-        if record.path.parent not in allowed_parents:
+        try:
+            relative = record.path.relative_to(root)
+        except ValueError as error:
             raise KnowledgeValidationError(
-                f"Knowledge record {metadata.id!r} must live directly under "
-                f"{ACTIVE_DIRECTORY}/ or {ARCHIVE_DIRECTORY}/."
+                f"Knowledge record {metadata.id!r} is outside the repository."
+            ) from error
+        archived = relative.parts[0] == ARCHIVE_DIRECTORY
+        folder_parts = relative.parts[1:-1] if archived else relative.parts[:-1]
+        folder = "/".join(folder_parts)
+        if folder_parts and folder_parts[0] in _RESERVED_FOLDER_ROOTS:
+            raise KnowledgeValidationError(
+                f"Knowledge folder {folder_parts[0]!r} is reserved by the repository."
             )
-        if record.archived != (record.path.parent.name == ARCHIVE_DIRECTORY):
+        invalid_folders = [
+            part for part in folder_parts if _KEBAB_FOLDER.fullmatch(part) is None
+        ]
+        if invalid_folders:
             raise KnowledgeValidationError(
-                f"Knowledge record {metadata.id!r} has inconsistent archive state."
+                "Knowledge folders must be lowercase kebab-case: "
+                + ", ".join(invalid_folders)
+            )
+        if record.folder != folder or record.archived != archived:
+            raise KnowledgeValidationError(
+                f"Knowledge record {metadata.id!r} has inconsistent location state."
+            )
+        if metadata.id == "now" and (folder or archived):
+            raise KnowledgeValidationError(
+                "The current-context record with id 'now' must be active at the "
+                "repository root."
             )
         if _KEBAB_FILE.fullmatch(record.path.name) is None:
             raise KnowledgeValidationError(
@@ -88,13 +110,14 @@ def validate_repository(root: Path) -> KnowledgeValidationReport:
         raise KnowledgeValidationError(
             f"Knowledge repository {resolved} is not a directory."
         )
-    active = resolved / ACTIVE_DIRECTORY
     archive = resolved / ARCHIVE_DIRECTORY
-    if not active.is_dir() or not archive.is_dir():
+    if not archive.is_dir():
         raise KnowledgeValidationError(
-            f"Knowledge repository needs {ACTIVE_DIRECTORY}/ and {ARCHIVE_DIRECTORY}/."
+            f"Knowledge repository needs an {ARCHIVE_DIRECTORY}/ directory."
         )
-    records = tuple(parse_document(path) for path in markdown_paths(resolved))
+    records = tuple(
+        parse_document(path, root=resolved) for path in markdown_paths(resolved)
+    )
     validate_records(resolved, records)
     return KnowledgeValidationReport(
         records=len(records),

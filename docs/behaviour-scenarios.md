@@ -93,6 +93,6 @@ two ordinary conversational moments:
   the person record and Divy's lived experience in the journal.
 
 These first runs should make current capability gaps visible. The scenario uses
-the same five semantic knowledge operations and concise generated current
+the same six semantic knowledge operations and concise generated current
 context as the production mail profile, with harmless temporary implementations
 behind those contracts.

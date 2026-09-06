@@ -24,6 +24,9 @@ def test_knowledge_instructions_make_context_work_explicit() -> None:
     assert "ask which person Example User means" in rendered
     assert "describes his feelings, energy, health, priorities" in rendered
     assert "Search before every `create_knowledge` call" in rendered
+    assert "use `list_knowledge` from the root" in rendered
+    assert "Folders are the only organisational layer" in rendered
+    assert "move a misplaced record by updating its folder" in rendered
     assert "Update private knowledge before responding" in rendered
     assert "a commitment, booking, appointment" in rendered
     assert "Current context" in rendered
