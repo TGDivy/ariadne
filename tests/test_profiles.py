@@ -10,6 +10,7 @@ from ariadne.knowledge.capability import ROOT_ENVIRONMENT
 from ariadne.knowledge.capability import TOOLS as KNOWLEDGE_TOOLS
 from ariadne.profile import (
     MAIL_PROFILE,
+    NETWORK_DOMAINS,
     PROFILES,
     REVISIT_PROFILES,
     TELEGRAM_PROFILE,
@@ -28,6 +29,10 @@ MAIL_SETTINGS = CodexTurnSettings(
     effort=ReasoningEffort.medium,
     web_search="live",
 )
+
+
+def test_network_allowlist_covers_current_icloud_cli_endpoints() -> None:
+    assert {"imap.mail.me.com", "caldav.icloud.com"} <= set(NETWORK_DOMAINS)
 
 
 def test_surface_profiles_are_explicit_declarations() -> None:

@@ -12,6 +12,9 @@ from .revisit import ATTENTION_SETTINGS, Attention
 from .revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
 from .revisit import TOOLS as REVISIT_TOOLS
 
+# Keep every hostname contacted by a networked CLI or MCP capability here.
+# Provider URLs may redirect to additional hosts, so retain exact operational
+# endpoints alongside any provider-wide redirect wildcard.
 NETWORK_DOMAINS = (
     "github.com",
     "*.github.com",

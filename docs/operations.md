@@ -24,6 +24,8 @@ Exit status `0` means success. Status `1` is an unexpected internal failure, `2`
 
 Provider credentials are read from the private TOML file only after a Mail or Calendar command is selected. They are never command arguments, output fields, or MCP environment variables. Provider and validation errors pass through shared secret redaction. Codex telemetry records command execution as the bounded `shell` tool category without exporting the command, arguments, or result.
 
+When adding a networked CLI or MCP capability, add every provider hostname it may contact to `NETWORK_DOMAINS` in `src/ariadne/profile.py`, including redirect or discovery hosts, and add a regression test for the required endpoints. A valid provider configuration can still fail before authentication if the turn-level network allowlist is missing a hostname; the resulting CLI error may be the generic retryable `provider_unavailable` response.
+
 ## Inspect the active turn profiles
 
 Telegram, Mail, and each revisit attention level have independent turn profiles. Inspect the exact model, prompts, tool set, thread behaviour, permissions, and forwarded environment-variable names for a surface with:
