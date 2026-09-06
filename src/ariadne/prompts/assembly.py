@@ -8,7 +8,6 @@ from pathlib import Path
 from ..codex.models import TurnProfile
 from ..knowledge.store import KnowledgeStore
 from . import render
-from .orientation import render_knowledge_orientation
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +56,11 @@ def assemble_prompts(
         )
     if knowledge_root is not None:
         root = knowledge_root.resolve()
-        orientation = render_knowledge_orientation(**KnowledgeStore(root).orientation())
-        developer_sources += ("generated/knowledge-orientation",)
-        developer = f"{developer}\n\n{orientation}"
+        context = KnowledgeStore(root).current_context()
+        if context is not None:
+            current = f"## Current context\n\n{context.metadata.summary}"
+            if context.body:
+                current = f"{current}\n\n{context.body}"
+            developer_sources += ("generated/current-context",)
+            developer = f"{developer}\n\n{current}"
     return PromptAssembly(base_sources, developer_sources, base, developer)

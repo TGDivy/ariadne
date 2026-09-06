@@ -1,4 +1,4 @@
-"""Read-only validation of a complete canonical knowledge collection."""
+"""Read-only validation of a complete v2 knowledge collection."""
 
 from __future__ import annotations
 
@@ -6,7 +6,13 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from .documents import StoredKnowledge, markdown_paths, parse_document
+from .documents import (
+    ACTIVE_DIRECTORY,
+    ARCHIVE_DIRECTORY,
+    StoredKnowledge,
+    markdown_paths,
+    parse_document,
+)
 from .models import KnowledgeValidationError
 from .paths import filename_matches_title
 
@@ -18,30 +24,33 @@ class KnowledgeValidationReport:
     """A compact successful validation result for people and automation."""
 
     records: int
-    relationships: int
+    links: int
     archived: int
 
 
 def validate_records(root: Path, records: tuple[StoredKnowledge, ...]) -> None:
-    """Validate whole-collection invariants that one file cannot prove alone."""
+    """Validate the few collection-wide invariants v2 retains."""
     by_id: dict[str, StoredKnowledge] = {}
     names: dict[str, str] = {}
+    allowed_parents = {root / ACTIVE_DIRECTORY, root / ARCHIVE_DIRECTORY}
     for record in records:
         metadata = record.metadata
-        relative = record.path.relative_to(root)
-        expected_parent = Path(metadata.kind) / Path(metadata.collection)
-        if relative.parent != expected_parent:
+        if record.path.parent not in allowed_parents:
             raise KnowledgeValidationError(
-                f"Knowledge record {metadata.id!r} must live under "
-                f"{expected_parent.as_posix()}/."
+                f"Knowledge record {metadata.id!r} must live directly under "
+                f"{ACTIVE_DIRECTORY}/ or {ARCHIVE_DIRECTORY}/."
             )
-        if _KEBAB_FILE.fullmatch(relative.name) is None:
+        if record.archived != (record.path.parent.name == ARCHIVE_DIRECTORY):
             raise KnowledgeValidationError(
-                f"Knowledge filename {relative.name!r} must be lowercase kebab-case."
+                f"Knowledge record {metadata.id!r} has inconsistent archive state."
             )
-        if not filename_matches_title(relative.name, metadata.title):
+        if _KEBAB_FILE.fullmatch(record.path.name) is None:
             raise KnowledgeValidationError(
-                f"Knowledge filename {relative.name!r} does not match title "
+                f"Knowledge filename {record.path.name!r} must be lowercase kebab-case."
+            )
+        if not filename_matches_title(record.path.name, metadata.title):
+            raise KnowledgeValidationError(
+                f"Knowledge filename {record.path.name!r} does not match title "
                 f"{metadata.title!r}."
             )
         if metadata.id in by_id:
@@ -59,37 +68,36 @@ def validate_records(root: Path, records: tuple[StoredKnowledge, ...]) -> None:
             names[folded] = metadata.id
 
     for record in records:
-        seen: set[tuple[str, str]] = set()
-        for relation in record.metadata.related:
-            edge = (relation.record, relation.relation)
-            if edge in seen:
-                raise KnowledgeValidationError(
-                    f"Knowledge record {record.metadata.id!r} repeats relationship "
-                    f"{relation.relation!r} to {relation.record!r}."
-                )
-            seen.add(edge)
-            if relation.record == record.metadata.id:
-                raise KnowledgeValidationError(
-                    f"Knowledge record {record.metadata.id!r} relates to itself."
-                )
-            if relation.record not in by_id:
-                raise KnowledgeValidationError(
-                    f"Knowledge relation from {record.metadata.id!r} points to "
-                    f"missing record {relation.record!r}."
-                )
+        metadata = record.metadata
+        if metadata.id in metadata.links:
+            raise KnowledgeValidationError(
+                f"Knowledge record {metadata.id!r} cannot link to itself."
+            )
+        missing = sorted(set(metadata.links) - by_id.keys())
+        if missing:
+            raise KnowledgeValidationError(
+                f"Knowledge links from {metadata.id!r} point to missing records: "
+                + ", ".join(missing)
+            )
 
 
 def validate_repository(root: Path) -> KnowledgeValidationReport:
-    """Validate every Markdown record and all references without changing it."""
+    """Validate every v2 record and link without changing the repository."""
     resolved = root.resolve()
     if not resolved.is_dir():
         raise KnowledgeValidationError(
             f"Knowledge repository {resolved} is not a directory."
         )
+    active = resolved / ACTIVE_DIRECTORY
+    archive = resolved / ARCHIVE_DIRECTORY
+    if not active.is_dir() or not archive.is_dir():
+        raise KnowledgeValidationError(
+            f"Knowledge repository needs {ACTIVE_DIRECTORY}/ and {ARCHIVE_DIRECTORY}/."
+        )
     records = tuple(parse_document(path) for path in markdown_paths(resolved))
     validate_records(resolved, records)
     return KnowledgeValidationReport(
         records=len(records),
-        relationships=sum(len(record.metadata.related) for record in records),
-        archived=sum(record.metadata.archived_at is not None for record in records),
+        links=sum(len(record.metadata.links) for record in records),
+        archived=sum(record.archived for record in records),
     )

@@ -187,7 +187,7 @@ def test_shared_instructions_keep_knowledge_storage_out_of_iriss_workflow(
         assert "private-memory capabilities" in profile.developer_instructions
         assert "The trigger is not the task" in profile.developer_instructions
         assert "instead of merely reporting" in profile.developer_instructions
-        assert "If an input names a person, call `search_knowledge`" in (
+        assert "If an input names a person, search that name" in (
             profile.base_instructions
         )
         assert profile.base_instruction_sources[-1] == "ariadne.prompts/knowledge.md"

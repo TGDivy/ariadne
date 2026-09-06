@@ -631,7 +631,6 @@ def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
     ("tool", "expected"),
     [
         ("search_knowledge", "Searching memory…"),
-        ("browse_knowledge", "Browsing memory…"),
         ("read_knowledge", "Reading memory…"),
         ("create_knowledge", "Remembering…"),
         ("update_knowledge", "Updating memory…"),

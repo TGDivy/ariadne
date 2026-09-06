@@ -71,7 +71,7 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert SCENARIOS[7].telegram_prompt is not None
 
 
-def test_scenario_knowledge_is_also_valid_generated_orientation(
+def test_scenario_knowledge_is_a_valid_v2_collection(
     tmp_path: Path,
 ) -> None:
     for scenario in SCENARIOS:
@@ -145,7 +145,6 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "request_telegram_file_delivery",
         "record_current_mail_decision",
         "search_knowledge",
-        "browse_knowledge",
         "read_knowledge",
         "create_knowledge",
         "update_knowledge",

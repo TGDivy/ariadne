@@ -19,20 +19,21 @@ def test_knowledge_instructions_make_context_work_explicit() -> None:
     rendered = render("knowledge", human="Example User")
 
     assert "Example User cares deeply about continuity" in rendered
-    assert "Do not skip these checks because a message is casual" in rendered
-    assert "If an input names a person, call `search_knowledge`" in rendered
-    assert "call `read_knowledge` with every result returned" in rendered
-    assert "ask Example User who they are and why they matter" in rendered
-    assert "describes his feelings, energy, health, needs, priorities" in rendered
+    assert "If an input names a person, search that name" in rendered
+    assert "read the records that could actually concern the input" in rendered
+    assert "ask which person Example User means" in rendered
+    assert "describes his feelings, energy, health, priorities" in rendered
     assert "Search before every `create_knowledge` call" in rendered
-    assert "Make the durable update before responding" in rendered
-    assert "a new commitment, promise, booking" in rendered
-    assert "under wishes and dreams" in rendered
-    assert "surrounding context reveals something" in rendered
-    assert "Do not store greetings, passing jokes" in rendered
-    assert "journal records Example User's lived experience" in rendered
-    assert "damaged personal relationship" in rendered
+    assert "Update private knowledge before responding" in rendered
+    assert "a commitment, booking, appointment" in rendered
     assert "Current context" in rendered
+    assert "Rewrite it as focus changes" in rendered
+    assert "Search results are candidates" in rendered
+    assert "read likely records, not every weak lexical match" in rendered
+    assert "search again with archived records included" in rendered
+    assert "Do not store greetings, passing jokes" in rendered
+    assert "Journals preserve what happened" in rendered
+    assert "Links are optional untyped connections" in rendered
     assert "{{" not in rendered
 
 

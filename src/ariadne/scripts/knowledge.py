@@ -20,7 +20,7 @@ def main() -> None:
         parser.exit(1, f"Knowledge validation failed: {error}\n")
     print(
         f"Knowledge is valid: {report.records} records, "
-        f"{report.relationships} relationships, {report.archived} archived."
+        f"{report.links} links, {report.archived} archived."
     )
 
 

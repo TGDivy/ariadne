@@ -1,42 +1,43 @@
-"""Git-backed implementation of Ariadne's semantic knowledge capability."""
+"""Git-backed implementation of Ariadne's compact knowledge capability."""
 
 from __future__ import annotations
 
 import fcntl
 import os
-import re
 import subprocess
 import tempfile
-from collections import Counter
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
-from typing import Any
 
 from pydantic import ValidationError
 
-from .documents import StoredKnowledge, markdown_paths, parse_document, render_document
+from .documents import (
+    ACTIVE_DIRECTORY,
+    ARCHIVE_DIRECTORY,
+    StoredKnowledge,
+    markdown_paths,
+    parse_document,
+    render_document,
+)
 from .models import (
     KnowledgeConflict,
     KnowledgeMetadata,
     KnowledgeRecord,
-    KnowledgeRelation,
     KnowledgeSearchResult,
     KnowledgeSyncError,
     KnowledgeValidationError,
 )
-from .orientation import KnowledgeOrientation
 from .paths import slug
 from .search import KnowledgeIndex
 from .validation import validate_records
 
-_SLUG_CHARACTER = re.compile(r"[^a-z0-9]+")
+CURRENT_CONTEXT_ID = "now"
 
 
 class KnowledgeStore:
-    """Own canonical records and hide all filesystem and Git operations."""
+    """Own canonical records while hiding files, Git, and derived indexing."""
 
     def __init__(self, root: Path) -> None:
         self.root = root.resolve()
@@ -47,6 +48,14 @@ class KnowledgeStore:
         if Path(self._git("rev-parse", "--show-toplevel")).resolve() != self.root:
             raise KnowledgeValidationError(
                 "The knowledge store must be the root of its Git working tree."
+            )
+        if not all(
+            (self.root / directory).is_dir()
+            for directory in (ACTIVE_DIRECTORY, ARCHIVE_DIRECTORY)
+        ):
+            raise KnowledgeValidationError(
+                f"The knowledge store needs {ACTIVE_DIRECTORY}/ and "
+                f"{ARCHIVE_DIRECTORY}/ directories."
             )
         self._index: KnowledgeIndex | None = None
         self._indexed_head: str | None = None
@@ -129,51 +138,42 @@ class KnowledgeStore:
         self._invalidate_index()
 
     @staticmethod
-    def _validate_relationships(
+    def _validate_links(
         identifier: str,
-        related: Sequence[KnowledgeRelation],
+        links: Sequence[str],
         records: dict[str, StoredKnowledge],
     ) -> None:
-        missing = sorted(
-            {relation.record for relation in related if relation.record not in records}
-        )
+        missing = sorted(set(links) - records.keys())
         if missing:
             raise KnowledgeValidationError(
-                "Related knowledge does not exist: " + ", ".join(missing)
+                "Linked knowledge does not exist: " + ", ".join(missing)
             )
-        if any(relation.record == identifier for relation in related):
-            raise KnowledgeValidationError(
-                "A knowledge record cannot relate to itself."
-            )
+        if identifier in links:
+            raise KnowledgeValidationError("A knowledge record cannot link to itself.")
+
+    @staticmethod
+    def _record(index: KnowledgeIndex, record: StoredKnowledge) -> KnowledgeRecord:
+        return KnowledgeRecord(
+            metadata=record.metadata,
+            body=record.body,
+            archived=record.archived,
+            links=index.links(record.metadata.id),
+        )
 
     def search(
         self,
-        query: str = "",
+        query: str,
         *,
-        kinds: Iterable[str] = (),
-        collections: Iterable[str] = (),
-        tags: Iterable[str] = (),
-        date_from: str | None = None,
-        date_through: str | None = None,
-        related_to: str | None = None,
         include_archived: bool = False,
         limit: int = 10,
     ) -> tuple[KnowledgeSearchResult, ...]:
         """Search canonical records without exposing storage mechanics."""
         return self._load_index().search(
-            query,
-            kinds=kinds,
-            collections=collections,
-            tags=tags,
-            date_from=date_from,
-            date_through=date_through,
-            related_to=related_to,
-            include_archived=include_archived,
-            limit=limit,
+            query, include_archived=include_archived, limit=limit
         )
 
     def read(self, identifiers: Sequence[str]) -> tuple[KnowledgeRecord, ...]:
-        """Read a bounded set of records and compact direct relationships."""
+        """Read a bounded set of records and compact direct links."""
         if not 1 <= len(identifiers) <= 20:
             raise KnowledgeValidationError("Read between 1 and 20 knowledge records.")
         index = self._load_index()
@@ -185,18 +185,20 @@ class KnowledgeStore:
                 "Knowledge does not exist: " + ", ".join(missing)
             )
         return tuple(
-            KnowledgeRecord(
-                metadata=index.records[identifier].metadata,
-                body=index.records[identifier].body,
-                relationships=index.relationships(identifier),
-            )
-            for identifier in identifiers
+            self._record(index, index.records[identifier]) for identifier in identifiers
         )
 
-    def _available_identifier(
-        self, kind: str, title: str, occupied_names: set[str]
-    ) -> str:
-        base = f"{kind}:{slug(title)}"
+    def current_context(self) -> KnowledgeRecord | None:
+        """Return the concise current context when the Thread defines one."""
+        index = self._load_index()
+        record = index.records.get(CURRENT_CONTEXT_ID)
+        if record is None or record.archived:
+            return None
+        return self._record(index, record)
+
+    @staticmethod
+    def _available_identifier(title: str, occupied_names: set[str]) -> str:
+        base = slug(title)
         candidate = base
         suffix = 2
         while candidate.casefold() in occupied_names:
@@ -205,9 +207,13 @@ class KnowledgeStore:
         return candidate
 
     def _available_path(
-        self, kind: str, collection: str, title: str, *, exclude: Path | None = None
+        self,
+        title: str,
+        *,
+        archived: bool,
+        exclude: Path | None = None,
     ) -> Path:
-        directory = self.root / kind / Path(collection)
+        directory = self.root / (ARCHIVE_DIRECTORY if archived else ACTIVE_DIRECTORY)
         base = slug(title)
         candidate = directory / f"{base}.md"
         suffix = 2
@@ -248,21 +254,58 @@ class KnowledgeStore:
             else:
                 self._write_atomic(path, content)
 
+    @staticmethod
+    def _metadata(**values: object) -> KnowledgeMetadata:
+        try:
+            return KnowledgeMetadata.model_validate(values)
+        except ValidationError as error:
+            raise KnowledgeValidationError(
+                f"The proposed knowledge record is invalid: {error}"
+            ) from error
+
+    def _persist(
+        self,
+        current: StoredKnowledge,
+        metadata: KnowledgeMetadata,
+        body: str,
+        *,
+        archived: bool,
+        message: str,
+    ) -> None:
+        destination = self._available_path(
+            metadata.title, archived=archived, exclude=current.path
+        )
+        content = render_document(metadata, body)
+        if destination == current.path and current.path.read_bytes() == content:
+            raise KnowledgeConflict("The knowledge update does not change the record.")
+        previous: dict[Path, bytes | None] = {current.path: current.path.read_bytes()}
+        paths = [current.path]
+        if destination != current.path:
+            previous[destination] = (
+                destination.read_bytes() if destination.exists() else None
+            )
+            paths.append(destination)
+        previous_head = self._head()
+        try:
+            self._write_atomic(destination, content)
+            if destination != current.path:
+                current.path.unlink()
+            self._commit(message, paths)
+        except (KnowledgeSyncError, OSError):
+            if self._head() == previous_head:
+                self._restore_uncommitted(previous)
+            raise
+
     def create(
         self,
         *,
         title: str,
         summary: str,
-        kind: str,
-        collection: str,
         body: str,
-        tags: Sequence[str] = (),
         aliases: Sequence[str] = (),
-        starts_at: str | None = None,
-        ends_at: str | None = None,
-        related: Sequence[KnowledgeRelation] = (),
+        links: Sequence[str] = (),
     ) -> KnowledgeRecord:
-        """Create and automatically synchronize one canonical record."""
+        """Create and automatically synchronize one compact record."""
         with self._mutation_lock():
             self._synchronize()
             index = self._load_index()
@@ -271,41 +314,31 @@ class KnowledgeStore:
                 for record in index.records.values()
                 for name in (record.metadata.id, *record.metadata.aliases)
             }
-            identifier = self._available_identifier(kind, title, occupied)
-            self._validate_relationships(identifier, related, index.records)
-            collisions = sorted(name for name in aliases if name.casefold() in occupied)
+            identifier = self._available_identifier(title, occupied)
+            self._validate_links(identifier, links, index.records)
+            collisions = sorted(
+                name
+                for name in aliases
+                if name.casefold() in occupied
+                or name.casefold() == identifier.casefold()
+            )
             if collisions:
                 raise KnowledgeConflict(
                     "A knowledge id or alias already uses: " + ", ".join(collisions)
                 )
-            now = datetime.now(UTC)
-            try:
-                metadata = KnowledgeMetadata(
-                    id=identifier,
-                    title=title,
-                    summary=summary,
-                    kind=kind,
-                    collection=collection,
-                    tags=tuple(tags),
-                    aliases=tuple(aliases),
-                    starts_at=starts_at,
-                    ends_at=ends_at,
-                    related=tuple(related),
-                    created_at=now,
-                    updated_at=now,
-                )
-            except ValidationError as error:
-                raise KnowledgeValidationError(
-                    f"The proposed knowledge record is invalid: {error}"
-                ) from error
-            path = self._available_path(
-                metadata.kind, metadata.collection, metadata.title
+            metadata = self._metadata(
+                id=identifier,
+                title=title,
+                summary=summary,
+                aliases=tuple(aliases),
+                links=tuple(links),
             )
+            path = self._available_path(metadata.title, archived=False)
             content = render_document(metadata, body)
             previous_head = self._head()
             try:
                 self._write_atomic(path, content)
-                self._commit(f"Remember {title}", (path,))
+                self._commit(f"Remember {metadata.title}", (path,))
             except (KnowledgeSyncError, OSError):
                 if self._head() == previous_head:
                     self._restore_uncommitted({path: None})
@@ -318,19 +351,13 @@ class KnowledgeStore:
         *,
         title: str | None = None,
         summary: str | None = None,
-        kind: str | None = None,
-        collection: str | None = None,
         body: str | None = None,
-        tags: Sequence[str] | None = None,
         aliases: Sequence[str] | None = None,
-        starts_at: str | None = None,
-        ends_at: str | None = None,
-        related: Sequence[KnowledgeRelation] | None = None,
+        links: Sequence[str] | None = None,
         clear: Sequence[str] = (),
-        archive_reason: str | None = None,
     ) -> KnowledgeRecord:
-        """Apply supplied semantic fields to the latest version and synchronize."""
-        clearable = {"tags", "aliases", "starts_at", "ends_at", "related"}
+        """Replace supplied semantic fields on the latest version."""
+        clearable = {"aliases", "links"}
         unknown_clear = set(clear) - clearable
         if unknown_clear:
             raise KnowledgeValidationError(
@@ -338,13 +365,7 @@ class KnowledgeStore:
             )
         supplied = {
             name
-            for name, value in (
-                ("tags", tags),
-                ("aliases", aliases),
-                ("starts_at", starts_at),
-                ("ends_at", ends_at),
-                ("related", related),
-            )
+            for name, value in (("aliases", aliases), ("links", links))
             if value is not None
         }
         contradictory = set(clear) & supplied
@@ -362,16 +383,14 @@ class KnowledgeStore:
                 raise KnowledgeValidationError(
                     f"Knowledge {identifier!r} does not exist."
                 ) from error
-            if archive_reason is not None and current.metadata.archived_at is not None:
-                raise KnowledgeConflict("This knowledge is already archived.")
-            new_related = (
+            new_links = (
                 ()
-                if "related" in clear
-                else tuple(related)
-                if related is not None
-                else current.metadata.related
+                if "links" in clear
+                else tuple(links)
+                if links is not None
+                else current.metadata.links
             )
-            self._validate_relationships(identifier, new_related, index.records)
+            self._validate_links(identifier, new_links, index.records)
             new_aliases = (
                 ()
                 if "aliases" in clear
@@ -386,191 +405,52 @@ class KnowledgeStore:
                 if record.metadata.id != identifier
             }
             collisions = sorted(
-                alias for alias in new_aliases if alias.casefold() in occupied
+                alias
+                for alias in new_aliases
+                if alias.casefold() in occupied
+                or alias.casefold() == identifier.casefold()
             )
             if collisions:
                 raise KnowledgeConflict(
                     "A knowledge id or alias already uses: " + ", ".join(collisions)
                 )
-            new_body = body if body is not None else current.body
-            if archive_reason is not None:
-                new_body += f"\n\n## Archived\n\n{archive_reason.strip()}"
-            values = current.metadata.model_dump(by_alias=False)
-            values.update(
-                {
-                    "title": title if title is not None else current.metadata.title,
-                    "summary": (
-                        summary if summary is not None else current.metadata.summary
-                    ),
-                    "kind": kind if kind is not None else current.metadata.kind,
-                    "collection": (
-                        collection
-                        if collection is not None
-                        else current.metadata.collection
-                    ),
-                    "tags": (
-                        ()
-                        if "tags" in clear
-                        else tuple(tags)
-                        if tags is not None
-                        else current.metadata.tags
-                    ),
-                    "aliases": new_aliases,
-                    "starts_at": (
-                        None
-                        if "starts_at" in clear
-                        else starts_at
-                        if starts_at is not None
-                        else current.metadata.starts_at
-                    ),
-                    "ends_at": (
-                        None
-                        if "ends_at" in clear
-                        else ends_at
-                        if ends_at is not None
-                        else current.metadata.ends_at
-                    ),
-                    "related": new_related,
-                    "updated_at": datetime.now(UTC),
-                    "archived_at": (
-                        datetime.now(UTC)
-                        if archive_reason is not None
-                        else current.metadata.archived_at
-                    ),
-                }
+            metadata = self._metadata(
+                id=identifier,
+                title=title if title is not None else current.metadata.title,
+                summary=summary if summary is not None else current.metadata.summary,
+                aliases=new_aliases,
+                links=new_links,
             )
-            try:
-                metadata = KnowledgeMetadata.model_validate(values)
-            except ValidationError as error:
-                raise KnowledgeValidationError(
-                    f"The proposed knowledge update is invalid: {error}"
-                ) from error
-            destination = self._available_path(
-                metadata.kind,
-                metadata.collection,
-                metadata.title,
-                exclude=current.path,
+            self._persist(
+                current,
+                metadata,
+                body if body is not None else current.body,
+                archived=current.archived,
+                message=f"Update {metadata.title}",
             )
-            content = render_document(metadata, new_body)
-            previous: dict[Path, bytes | None] = {
-                current.path: current.path.read_bytes()
-            }
-            paths = [current.path]
-            if destination != current.path:
-                previous[destination] = (
-                    destination.read_bytes() if destination.exists() else None
-                )
-                paths.append(destination)
-            previous_head = self._head()
-            try:
-                self._write_atomic(destination, content)
-                if destination != current.path:
-                    current.path.unlink()
-                self._commit(f"Update {metadata.title}", paths)
-            except (KnowledgeSyncError, OSError):
-                if self._head() == previous_head:
-                    self._restore_uncommitted(previous)
-                raise
             return self.read((identifier,))[0]
 
     def archive(self, identifier: str, reason: str) -> KnowledgeRecord:
-        """Archive one record while retaining its content and Git history."""
+        """Move one record out of ordinary recall while retaining its history."""
         if not reason.strip():
             raise KnowledgeValidationError("Archiving knowledge needs a reason.")
-        return self.update(identifier, archive_reason=reason)
-
-    def browse(
-        self,
-        location: str = "",
-        *,
-        depth: int = 2,
-        include_summaries: bool = True,
-        include_archived: bool = False,
-    ) -> dict[str, Any]:
-        """Browse the human-readable hierarchy without using paths as identity."""
-        if not 1 <= depth <= 5:
-            raise KnowledgeValidationError("Knowledge browse depth must be 1 to 5.")
-        if location:
-            parts = Path(location).parts
-            if any(_SLUG_CHARACTER.search(part) for part in parts):
+        with self._mutation_lock():
+            self._synchronize()
+            index = self._load_index()
+            try:
+                current = index.records[identifier]
+            except KeyError as error:
                 raise KnowledgeValidationError(
-                    "Knowledge locations use lowercase kebab-case folder names."
-                )
-        selected = (self.root / location).resolve()
-        if not selected.is_relative_to(self.root) or not selected.is_dir():
-            raise KnowledgeValidationError(
-                f"Knowledge collection {location or '/'} does not exist."
+                    f"Knowledge {identifier!r} does not exist."
+                ) from error
+            if current.archived:
+                raise KnowledgeConflict("This knowledge is already archived.")
+            body = f"{current.body.rstrip()}\n\n## Archived\n\n{reason.strip()}".strip()
+            self._persist(
+                current,
+                current.metadata,
+                body,
+                archived=True,
+                message=f"Archive {current.metadata.title}",
             )
-        index = self._load_index()
-        by_parent: dict[Path, list[StoredKnowledge]] = {}
-        for record in index.records.values():
-            if not include_archived and record.metadata.archived_at is not None:
-                continue
-            by_parent.setdefault(record.path.parent, []).append(record)
-
-        def build(directory: Path, remaining: int) -> dict[str, Any]:
-            relative = directory.relative_to(self.root).as_posix()
-            direct = sorted(
-                by_parent.get(directory, ()),
-                key=lambda item: item.metadata.title.casefold(),
-            )
-            records = [
-                {
-                    "id": record.metadata.id,
-                    "title": record.metadata.title,
-                    "kind": record.metadata.kind,
-                    "tags": list(record.metadata.tags),
-                    **(
-                        {"summary": record.metadata.summary}
-                        if include_summaries
-                        else {}
-                    ),
-                }
-                for record in direct
-            ]
-            children = []
-            if remaining:
-                for child in sorted(
-                    (
-                        path
-                        for path in directory.iterdir()
-                        if path.is_dir() and path.name != ".git"
-                    ),
-                    key=lambda path: path.name,
-                ):
-                    children.append(build(child, remaining - 1))
-            return {
-                "name": directory.name if directory != self.root else "/",
-                "location": "" if directory == self.root else relative,
-                "records": records,
-                "collections": children,
-            }
-
-        return build(selected, depth)
-
-    def orientation(self) -> KnowledgeOrientation:
-        """Return compact vocabulary and a two-level tree for generated prompts."""
-        index = self._load_index()
-        active = [
-            record
-            for record in index.records.values()
-            if record.metadata.archived_at is None
-        ]
-        kinds = Counter(record.metadata.kind for record in active)
-        tags = Counter(tag for record in active for tag in record.metadata.tags)
-        relations = Counter(
-            relation.relation
-            for record in active
-            for relation in record.metadata.related
-        )
-        return {
-            "kinds": dict(sorted(kinds.items())),
-            "tags": dict(sorted(tags.items())),
-            "relationships": dict(sorted(relations.items())),
-            "collections": sorted(
-                {
-                    f"{record.metadata.kind}/{record.metadata.collection}"
-                    for record in active
-                }
-            ),
-        }
+            return self.read((identifier,))[0]

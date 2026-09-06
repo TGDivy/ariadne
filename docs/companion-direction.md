@@ -180,43 +180,39 @@ reconsider, not proof of what Divy thought.
 
 Iris should also occasionally organise the knowledge she depends on. A quiet
 nightly or weekly pass could reconcile duplicate or contradictory records,
-promote useful material from working notes, archive things that are no longer
-current, repair relationships between records, and leave the overall structure
-easier to navigate. This is maintenance of her own context, not something Divy
-should have to request or receive a routine report about. It should normally be
-silent and bounded rather than repeatedly rewriting the entire knowledge base.
+archive things that are no longer current, repair stale links, and leave the
+overall collection easier to retrieve. This is maintenance of her own context,
+not something Divy should have to request or receive a routine report about. It
+should normally be silent and bounded rather than repeatedly rewriting the
+entire knowledge base.
 
 ## The Thread becomes a hidden knowledge capability
 
-Markdown and Git will remain the canonical store for now. They are useful for
-portability, inspection, history, and recovery. They should become an
-implementation detail of Ariadne rather than part of Iris's ordinary task.
+Markdown and Git remain the canonical store because they are portable,
+inspectable, and recoverable. They are implementation details of Ariadne rather
+than part of Iris's ordinary task. Iris finds and changes durable context through
+five semantic operations: search, read, create, update, and archive.
 
-Iris should be able to find, read, and change durable context using concepts
-that reflect Divy's actual life. People, plans, commitments, goals, projects,
-preferences, and dated events are possible examples, not a settled taxonomy.
-We should discover the useful shapes from real stories and make the important
-ones first-class rather than treating every document as an undifferentiated
-blob. Ariadne should own file placement, metadata, links, validation, commits,
-and pushes.
+The record model is deliberately small. A neutral stable id and optional aliases
+and untyped links live in front matter. The H1 is the title, the first paragraph
+is a retrieval summary, and ordinary prose carries dates, state, uncertainty,
+provenance, and why linked subjects are connected. Active and archived records
+live in separate flat directories. There are no model-visible paths, kinds,
+collections, tags, lifecycle timestamps, or relationship types.
+
+One concise record with id `now` captures active priorities, constraints,
+near-term commitments, and unresolved tensions. Ariadne supplies it with each
+applicable turn, while all other bodies remain available on demand. Iris rewrites
+`now` as the present changes rather than appending history to it.
 
 This removes several current problems:
 
 - normal remembering no longer resembles publishing source code;
 - Iris does not need repeated permission to run Git commands;
 - Git details no longer leak into conversational responses;
-- related updates can be kept consistent;
-- records can carry stable identity and source information even if files move;
-- richer relationships and search can be added later without replacing the
-  Markdown source of truth.
-
-A scratch space may deserve to be first-class too. Iris often needs somewhere
-for incomplete thoughts, material gathered during research, tentative links,
-or context that is useful for the current work but not yet worthy of the durable
-record. She should be able to use that space freely, then promote, merge, or
-discard material as its value becomes clear. Making the distinction visible is
-better than either polluting durable knowledge with every intermediate thought
-or forcing all useful context to disappear at the end of a turn.
+- related updates can be reconciled into one canonical account;
+- records keep stable identity when titles or files move;
+- search can improve later without replacing the Markdown source of truth.
 
 ### Retrieval as the knowledge grows
 
@@ -228,10 +224,9 @@ an exact filename.
 A strong initial retrieval path can combine:
 
 - stable record identities and aliases, especially for people and named work;
-- rich metadata for dates, kinds of record, status, and relationships;
-- fast full-text ranking across titles, metadata, and contents;
-- following explicit relationships from one good match to nearby context;
-- recency and current relevance where they genuinely help;
+- fast full-text ranking across ids, titles, aliases, summaries, and bodies;
+- following compact links and backlinks from one good match to nearby context;
+- concise current relevance from `now`;
 - short, explainable search results before reading the selected records in
   depth.
 
@@ -240,19 +235,14 @@ become a second source of truth. At this scale it can remain simple and local.
 Semantic or embedding-based retrieval may become useful, especially when Divy
 and Iris describe the same idea in very different words, but it should earn its
 place against real retrieval failures rather than being assumed from the start.
-Exact lookup, metadata, full text, and relationships should work well together
-regardless.
+Exact lookup, aliases, full text, and links should work well together regardless.
 
 Search quality should be judged by whether Iris finds the small set of context
 that changes her understanding or action. Returning many vaguely similar notes
-is not success. Results should preserve enough source and relationship
-information for Iris to understand why they matched and to fetch more only when
-needed.
-
-Stable record identity, useful metadata, explicit relationships, source
-references, good Markdown, scratch space, and explainable retrieval give us a
-powerful foundation without prematurely choosing a universal personal-data
-schema.
+is not success. Results should explain why they matched and expose enough nearby
+context for Iris to fetch more only when needed. Stable identity, small
+metadata, good prose, optional links, and explainable retrieval provide a strong
+foundation without inventing a universal personal-data schema.
 
 ## Prompt and identity direction
 
@@ -413,17 +403,11 @@ slices will change prompts and capabilities together; without repeatable stories
 it would be difficult to tell whether a change improved judgement or merely
 changed the wording of one live response.
 
-### 2. Hide The Thread behind a knowledge capability
+### 2. Keep The Thread behind a knowledge capability
 
-Design a powerful personal knowledge interface around the real ways Iris needs
-to understand Divy's life. Keep Markdown and Git underneath, make useful record
-types, relationships, provenance, scratch work, and retrieval first-class where
-they help, remove the repeated Thread-push suffix, and remove Git workflow from
-the personality and ordinary companion prompt.
-
-This slice deserves a dedicated design discussion before implementation. It is
-not constrained to the minimum feature set of an existing general-purpose
-knowledge tool.
+This is implemented as the compact semantic record model above. Markdown and
+Git remain underneath; Iris uses search, read, create, update, and archive while
+Ariadne owns validation, paths, synchronization, commits, and pushes.
 
 ### 3. Close one complete life-event loop
 

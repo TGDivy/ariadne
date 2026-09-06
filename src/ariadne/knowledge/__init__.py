@@ -3,10 +3,9 @@
 from .models import (
     KnowledgeConflict,
     KnowledgeError,
+    KnowledgeLinkSummary,
     KnowledgeMetadata,
     KnowledgeRecord,
-    KnowledgeRelation,
-    KnowledgeRelationshipSummary,
     KnowledgeSearchError,
     KnowledgeSearchResult,
     KnowledgeSyncError,
@@ -16,10 +15,9 @@ from .models import (
 __all__ = [
     "KnowledgeConflict",
     "KnowledgeError",
+    "KnowledgeLinkSummary",
     "KnowledgeMetadata",
     "KnowledgeRecord",
-    "KnowledgeRelation",
-    "KnowledgeRelationshipSummary",
     "KnowledgeSearchError",
     "KnowledgeSearchResult",
     "KnowledgeSyncError",

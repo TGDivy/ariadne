@@ -36,31 +36,17 @@ class ScenarioKnowledge:
     id: str
     title: str
     summary: str
-    kind: str
-    collection: str
     body: str
-    tags: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
-    starts_at: str | None = None
-    ends_at: str | None = None
-    related: tuple[tuple[str, str], ...] = ()
+    links: tuple[str, ...] = ()
 
     def payload(self) -> dict[str, object]:
         return {
-            "schema": 1,
             "id": self.id,
             "title": self.title,
             "summary": self.summary,
-            "kind": self.kind,
-            "collection": self.collection,
-            "tags": list(self.tags),
             "aliases": list(self.aliases),
-            "starts_at": self.starts_at,
-            "ends_at": self.ends_at,
-            "related": [
-                {"record": record, "relation": relation}
-                for record, relation in self.related
-            ],
+            "links": list(self.links),
             "archived": False,
             "body": self.body,
         }
