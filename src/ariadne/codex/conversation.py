@@ -158,8 +158,8 @@ def _turn_input(message: str, image_paths: tuple[Path, ...]) -> RunInput:
     )
 
 
-def _sandbox_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
-    """Return Iris's writable roots and network allowlist.
+def _permission_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
+    """Select Iris's named filesystem and network permission profile.
 
     The allowlist is enforced by Codex's network proxy, which is off unless
     the feature is enabled.
@@ -215,7 +215,7 @@ class CodexConversation:
             if client is not None
             else AsyncCodex(
                 CodexConfig(
-                    config_overrides=_sandbox_config_overrides(profile)
+                    config_overrides=_permission_config_overrides(profile)
                     + _mcp_config_overrides(profile),
                     cwd=str(profile.cwd),
                 )
@@ -323,7 +323,6 @@ class CodexConversation:
                 cwd=str(self._profile.cwd),
                 effort=self._profile.effort,
                 model=self._profile.model,
-                sandbox=self._profile.sandbox,
                 summary=ReasoningSummary.model_validate(
                     self._profile.reasoning_summary
                 ),
@@ -469,7 +468,6 @@ class CodexConversation:
                 cwd=str(self._profile.cwd),
                 developer_instructions=self._profile.developer_instructions,
                 model=self._profile.model,
-                sandbox=self._profile.sandbox,
             )
             self._telemetry.thread_started(
                 source=self._profile.name,

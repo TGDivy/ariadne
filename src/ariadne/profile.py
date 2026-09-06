@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from openai_codex import ApprovalMode, Sandbox
+from openai_codex import ApprovalMode
 from openai_codex.generated.v2_all import ReasoningEffort
 
 from .codex.models import TurnProfile
@@ -44,7 +44,6 @@ TELEGRAM_PROFILE = TurnProfile(
     ),
     thread_policy="shared",
     reasoning_summary="concise",
-    sandbox=Sandbox.workspace_write,
     approval_mode=ApprovalMode.auto_review,
     permission_profile="ariadne",
     writable_roots=(Path.home(),),
@@ -76,7 +75,6 @@ MAIL_PROFILE = TurnProfile(
         *KNOWLEDGE_TOOLS,
     ),
     thread_policy="fresh-per-event",
-    sandbox=Sandbox.workspace_write,
     approval_mode=ApprovalMode.auto_review,
     permission_profile="ariadne",
     writable_roots=(Path.home(),),
@@ -111,7 +109,6 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
             *KNOWLEDGE_TOOLS,
         ),
         thread_policy="fresh-per-event",
-        sandbox=Sandbox.workspace_write,
         approval_mode=ApprovalMode.auto_review,
         permission_profile="ariadne",
         writable_roots=(Path.home(),),

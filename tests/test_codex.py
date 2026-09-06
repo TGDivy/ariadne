@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -9,11 +10,12 @@ import pytest
 from openai_codex import (
     ApprovalMode,
     AsyncCodex,
+    CodexConfig,
     LocalImageInput,
     RunInput,
-    Sandbox,
     TextInput,
 )
+from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
     CommandExecutionThreadItem,
@@ -32,6 +34,7 @@ from openai_codex.generated.v2_all import (
     ReasoningThreadItem,
     SearchCommandAction,
     ThreadItem,
+    ThreadStartParams,
     ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification,
     TokenUsageBreakdown,
@@ -40,6 +43,7 @@ from openai_codex.generated.v2_all import (
     TurnStatus,
     UnknownCommandAction,
     WebSearchThreadItem,
+    WorkspaceWriteSandboxPolicy,
 )
 from openai_codex.models import AgentMessageDeltaNotification
 from opentelemetry.sdk.metrics import MeterProvider
@@ -126,8 +130,8 @@ def test_mcp_config_forwards_its_required_environment(
     assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
 
 
-def test_sandbox_config_enables_profile_network_access(tmp_path: Path) -> None:
-    overrides = conversation_module._sandbox_config_overrides(
+def test_permission_config_enables_profile_network_access(tmp_path: Path) -> None:
+    overrides = conversation_module._permission_config_overrides(
         resolve_profile(
             TELEGRAM_PROFILE,
             vault=tmp_path,
@@ -143,6 +147,32 @@ def test_sandbox_config_enables_profile_network_access(tmp_path: Path) -> None:
     assert '"github.com"="allow"' in domains
     assert '"imap.mail.me.com"="allow"' in domains
     assert '"caldav.icloud.com"="allow"' in domains
+
+
+def test_default_permission_profile_controls_the_effective_runtime_sandbox(
+    tmp_path: Path,
+) -> None:
+    declaration = replace(
+        TELEGRAM_PROFILE,
+        writable_roots=(tmp_path,),
+        network_domains=("ithaca.example",),
+        allow_local_binding=False,
+    )
+    profile = resolve_profile(declaration, vault=tmp_path, human=HUMAN)
+    config = CodexConfig(
+        config_overrides=conversation_module._permission_config_overrides(profile),
+        cwd=str(tmp_path),
+    )
+
+    with CodexClient(config) as client:
+        client.initialize()
+        started = client.thread_start(
+            ThreadStartParams(cwd=str(tmp_path), ephemeral=True)
+        )
+
+    effective = started.sandbox.root
+    assert isinstance(effective, WorkspaceWriteSandboxPolicy)
+    assert effective.network_access is True
 
 
 class FakeTurn:
@@ -369,7 +399,6 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
             "cwd": str(tmp_path),
             "developer_instructions": conversation.profile.developer_instructions,
             "model": "gpt-5.6-luna",
-            "sandbox": Sandbox.workspace_write,
         }
     ]
     assert thread.turn_options == [
@@ -378,7 +407,6 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
             "cwd": str(tmp_path),
             "effort": ReasoningEffort.low,
             "model": "gpt-5.6-luna",
-            "sandbox": Sandbox.workspace_write,
             "summary": ReasoningSummary.model_validate("concise"),
         },
         {
@@ -386,7 +414,6 @@ async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
             "cwd": str(tmp_path),
             "effort": ReasoningEffort.low,
             "model": "gpt-5.6-luna",
-            "sandbox": Sandbox.workspace_write,
             "summary": ReasoningSummary.model_validate("concise"),
         },
     ]

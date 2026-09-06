@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Literal
 
-from openai_codex import ApprovalMode, Sandbox
+from openai_codex import ApprovalMode
 from openai_codex.generated.v2_all import ReasoningEffort
 
 WebSearchSetting = Literal["disabled", "live"]
@@ -46,7 +46,6 @@ class TurnProfile:
     enabled_tools: tuple[str, ...]
     thread_policy: ThreadPolicy
     reasoning_summary: ReasoningSummarySetting = "none"
-    sandbox: Sandbox = Sandbox.workspace_write
     approval_mode: ApprovalMode = ApprovalMode.auto_review
     permission_profile: str = "ariadne"
     writable_roots: tuple[Path, ...] = (Path.home(),)
@@ -100,10 +99,6 @@ class ResolvedTurnProfile:
     @property
     def reasoning_summary(self) -> ReasoningSummarySetting:
         return self.profile.reasoning_summary
-
-    @property
-    def sandbox(self) -> Sandbox:
-        return self.profile.sandbox
 
     @property
     def approval_mode(self) -> ApprovalMode:
