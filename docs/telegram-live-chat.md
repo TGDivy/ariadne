@@ -20,16 +20,16 @@ instead.
 
 The live message is the visible activity signal, so Ariadne does not also send
 Telegram typing actions. This avoids a redundant indicator and an unbounded
-refresh loop while preserving the more informative progress state and Stop
-control. Ordinary live responses are top-level messages in the same Telegram
-topic. Telegram replies provide quoted input context but do not force a visual
-reply from Iris.
+refresh loop while preserving the more informative progress state. Interruption
+remains available through `/stop`. Ordinary live responses are top-level
+messages in the same Telegram topic. Telegram replies provide quoted input
+context but do not force a visual reply from Iris.
 
 ```text
                          ┌──────────────┐
 user message ───────────▶│   STARTING   │
                          └──────┬───────┘
-                                │ temporary “Thinking…” + Stop
+                                │ temporary “Thinking…”
                                 ▼
                          ┌──────────────┐
           follow-up ────▶│   RUNNING    │◀──── rich edit / activity
@@ -104,22 +104,31 @@ the next native commentary or final message. Each completed commentary item is
 permanent, then Ariadne opens a fresh work bubble for the remainder of the turn.
 
 The activity footer is independent from the provisional body. A tool event can
-change `Analysing…` to `Searching…`, `Reading mail…`, or `Running a command…`.
-`Analysing…` and `Planning…` come from corresponding Codex events. The stable `✦`
-is intentionally quiet rather than timer-driven: labels change only when a real
-event occurs.
+change `Analysing…` to `Searching memory…`, `Reading mail…`, `Running tests…`,
+or another semantic activity. Known `ariadne` Mail and Calendar commands,
+common development commands, and Codex's structured file-read, list, and search
+actions receive specific labels. The literal command, arguments, paths, queries,
+and output are never copied into Telegram; an unrecognised or compound command
+uses `Running a command…`.
+
+Activity identity is retained until completion. The current item then moves to
+a short result-reading state such as `Reviewing mail…` or `Reviewing test
+results…`; if activities overlap, finishing the newest restores the activity
+still running underneath it. `Analysing…` and `Planning…` come from corresponding
+Codex events. The stable `✦` is intentionally quiet rather than timer-driven:
+labels change only when a real event occurs.
 
 Telegram's native shimmering `<tg-thinking>` block is restricted to
 `sendRichMessageDraft`. Because that draft transport can make the composer's
 send action unavailable, the persistent path does not use it.
 
 ```text
-Codex item start ──▶ item id → commentary/final phase
-summary delta ─────▶ temporary work body ─┐
-message delta ─────▶ structural stabilizer ├─▶ current message ID
-tool event ────────▶ activity footer      │
-latest state within 1 second ─────────────┘
-item completes ───▶ exact rich source, no footer ──▶ permanent bubble
+Codex item start ─────▶ item id → commentary/final phase
+summary delta ────────▶ temporary work body ─┐
+message delta ────────▶ structural stabilizer ├─▶ current message ID
+activity starts/ends ─▶ lifecycle-aware footer│
+latest state within 1 second ─────────────────┘
+speech item completes ─▶ exact rich source, no footer ──▶ permanent bubble
 commentary completes ──▶ open next temporary work bubble
 ```
 
@@ -132,10 +141,10 @@ not lost merely because it arrived inside the throttle window.
 
 Automatic entity detection, links, mentions, dates, spoilers, expandable
 details, media, maps, and model-authored buttons are inert while streaming.
-Media and maps use labelled placeholders. The Stop control is the deliberate
-live exception. On the terminal edit, the exact complete rich source restores
-safe links and structured blocks atomically. Callback data is never trusted
-from model text; Ariadne constructs its own active controls.
+Media and maps use labelled placeholders. On the terminal edit, the exact
+complete rich source restores safe links and structured blocks atomically.
+Callback data is never trusted from model text; Ariadne constructs its own
+active controls.
 
 One Rich Message accepts 32,768 characters. A live preview uses the first safe
 rich chunk; a completed commentary or final message over the limit is split on
@@ -238,28 +247,31 @@ Run these cases in order:
    Complete structure must remain rendered during edits. Incomplete table rows,
    code, maths, and details must show a calm labelled state instead of raw tags.
    Links, details, media, and maps must become active only on completion.
-3. Start a long answer and send `/stop`. Codex must interrupt, and partial useful
+3. Ask Iris to search Mail, inspect files, and run tests. Each operation must
+   receive a semantic activity label, then a result-reviewing label; no command
+   arguments, paths, queries, or output may appear in the footer.
+4. Start a long answer and send `/stop`. Codex must interrupt, and partial useful
    text must remain with a terminal “Stopped” state.
-4. Ask for a deployment choice that genuinely requires input. Answer once with
+5. Ask for a deployment choice that genuinely requires input. Answer once with
    a button, then repeat with typed text. In both cases the same answer should
    continue after the card settles; there must not be a second model turn.
-5. Double-tap a choice and tap an old choice after completion. The first valid
+6. Double-tap a choice and tap an old choice after completion. The first valid
    selection wins; later taps are harmless and report that the card is inactive
    or already answered.
-6. Request more than 4,096 characters. It should remain one formatted Rich
+7. Request more than 4,096 characters. It should remain one formatted Rich
    Message. Request more than 32,768 characters; final overflow should use
    additional formatted Rich Messages without broken fenced-code blocks.
-7. Restart Ariadne while a question is waiting. On startup the old question
+8. Restart Ariadne while a question is waiting. On startup the old question
    should show Cancelled and its buttons should no longer act.
-8. Make `sendRichMessage` return a Bot API `BadRequest`. The operation must fail
+9. Make `sendRichMessage` return a Bot API `BadRequest`. The operation must fail
    explicitly and must not send a classic text or keyboard substitute.
-9. Send three casual messages such as “ugh, long day”, “that was funny”, and
+10. Send three casual messages such as “ugh, long day”, “that was funny”, and
    “what do you think?” They should feel like continuing one chat, not three
    miniature reports with restatements and headings.
-10. Trigger a mail event worth notifying about. It must use
+11. Trigger a mail event worth notifying about. It must use
     `send_telegram_message`; the tool must not be available in an ordinary
     Telegram-triggered turn.
-11. Schedule a wake-up about an open task, then resolve it in Telegram before
+12. Schedule a wake-up about an open task, then resolve it in Telegram before
     the wake-up runs. The fresh turn should be able to read the newer message
     and avoid a redundant notification. Restart Ariadne between the message and
     wake-up to verify persistence.

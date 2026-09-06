@@ -12,6 +12,7 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 
 from ariadne.codex import (
+    ActivityCompleted,
     ActivityUpdated,
     AgentMessageCompleted,
     AgentMessageStarted,
@@ -39,7 +40,7 @@ from ariadne.telegram.bot import (
 )
 from ariadne.telegram.bot import AriadneBot as TelegramBot
 from ariadne.telegram.history import TelegramMessageStore
-from ariadne.telegram.live import FAILURE_MESSAGE, _LiveBubble
+from ariadne.telegram.live import FAILURE_MESSAGE, LiveTurn, _LiveBubble
 from ariadne.telegram.questions import TelegramQuestionStore
 from ariadne.telegram.rich import RICH_MESSAGE_LIMIT, RichBotAPI, RichButton
 
@@ -668,6 +669,49 @@ async def test_safe_activity_status_is_shown_before_the_answer(
     rich = cast(FakeRichAPI, bot._rich_api)
     assert any("Searching the web…" in edit for edit, _ in rich.edits)
     assert rich.edits[-1][0] == "The answer"
+
+
+async def test_completed_activity_moves_to_reviewing_before_the_answer(
+    message: FakeMessage, unthrottled_live_edits: None
+) -> None:
+    events = [
+        ActivityUpdated("Running tests…", "command"),
+        ActivityCompleted("command", "Reviewing test results…"),
+        AgentMessageStarted("final", MessagePhase.final_answer),
+        AgentMessageUpdated("final", MessagePhase.final_answer, "All tests passed."),
+        AgentMessageCompleted("final", MessagePhase.final_answer, "All tests passed."),
+    ]
+    bot = AriadneBot(7, cast(CodexConversation, FakeConversation([], events=events)))
+
+    await bot.handle_text(cast(Message, message), 7, "Run the tests")
+
+    rich = cast(FakeRichAPI, bot._rich_api)
+    markdown = [text for text, _buttons in rich.edits]
+    assert any("Running tests…" in text for text in markdown)
+    assert any("Reviewing test results…" in text for text in markdown)
+    assert rich.edits[-1][0] == "All tests passed."
+
+
+async def test_overlapping_activity_completion_restores_the_remaining_activity(
+    message: FakeMessage,
+    unthrottled_live_edits: None,
+    history_store: TelegramMessageStore,
+) -> None:
+    rich = FakeRichAPI()
+    live = LiveTurn(cast(Message, message), cast(RichBotAPI, rich), history_store)
+    await live.start()
+
+    await live.apply(ActivityUpdated("Searching the web…", "web"))
+    await live.apply(ActivityUpdated("Running tests…", "command"))
+    await live.apply(ActivityCompleted("command", "Reviewing test results…"))
+    await live.apply(ActivityCompleted("web", "Reviewing sources…"))
+
+    assert [text for text, _buttons in rich.edits] == [
+        "> ✦ _Searching the web…_",
+        "> ✦ _Running tests…_",
+        "> ✦ _Searching the web…_",
+        "> ✦ _Reviewing sources…_",
+    ]
 
 
 async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:

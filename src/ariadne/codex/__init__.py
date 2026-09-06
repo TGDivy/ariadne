@@ -6,6 +6,7 @@ from .conversation import (
     _mcp_config_overrides,
 )
 from .events import (
+    ActivityCompleted,
     ActivityUpdated,
     AgentMessageCompleted,
     AgentMessageStarted,
@@ -28,6 +29,7 @@ __all__ = [
     "CodexModel",
     "CodexTurnSettings",
     "ConversationEvent",
+    "ActivityCompleted",
     "ActivityUpdated",
     "CapabilityCallCompleted",
     "AgentMessageCompleted",
