@@ -178,10 +178,10 @@ timeout_seconds = 30
 
 The token stays in the private file and is sent only as an authorization header. It is redacted by `ariadne config show`. The configured hostname is added to Codex's network allowlist so the installed CLI can reach a private deployment; the full URL and token are not model instructions or MCP environment values.
 
-Search returns compact newest-first workouts and a stable `next_cursor`. Summarize uses the same half-open period and filters:
+List returns compact newest-first workouts and a stable `next_cursor`. Summarize uses the same half-open period and filters:
 
 ```bash
-ariadne health workouts search \
+ariadne health workouts list \
   --start 2026-08-01 --end 2026-09-01 --activity running --limit 20
 ariadne health workouts summarize \
   --start 2026-08-01 --end 2026-09-01 --activity running
@@ -191,7 +191,7 @@ Date-only and offset-free bounds use `[health].timezone`; explicit ISO offsets a
 
 The CLI validates Ithaca's complete response shape, then removes transport details, snapshot identifiers, null metrics, and the non-actionable detailed-series catalogue before emitting JSON. It retains unit-bearing field names, workout IDs, readable source names, cursors, freshness and quality flags, and `period_data_coverage`; those coverage counts describe the requested period before optional activity filters.
 
-Use a UUID returned by search to retrieve compact detail. `show` includes selection and projection quality, metrics, splits, heart-rate zones, components, and route availability:
+Use a workout ID returned by list to retrieve compact detail. `show` includes selection and projection quality, metrics, splits, heart-rate zones, components, and route availability:
 
 ```bash
 ariadne health workouts show '00000000-0000-0000-0000-000000000101'

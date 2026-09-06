@@ -140,7 +140,7 @@ class CalendarCommands(Protocol):
 
 
 class WorkoutCommands(Protocol):
-    def search_workouts(
+    def list_workouts(
         self,
         *,
         start: str,
@@ -436,11 +436,11 @@ def _calendar_respond(args: argparse.Namespace, backend: CliBackend) -> dict[str
         )
 
 
-def _health_workouts_search(
+def _health_workouts_list(
     args: argparse.Namespace, backend: CliBackend
 ) -> dict[str, Any]:
     with backend.health() as health:
-        return health.search_workouts(
+        return health.list_workouts(
             start=args.start,
             end=args.end,
             activity_types=args.activity_types or (),
@@ -464,7 +464,7 @@ def _health_workouts_show(
     args: argparse.Namespace, backend: CliBackend
 ) -> dict[str, Any]:
     with backend.health() as health:
-        return health.show_workout(args.workout_uuid)
+        return health.show_workout(args.workout_id)
 
 
 def _add_calendar_selection(parser: argparse.ArgumentParser) -> None:
@@ -582,11 +582,13 @@ def _bounded_text(maximum: int, label: str) -> Callable[[str], str]:
     return parse
 
 
-def _uuid(value: str) -> UUID:
+def _workout_id(value: str) -> UUID:
     try:
         return UUID(value)
     except ValueError as error:
-        raise argparse.ArgumentTypeError("must be a UUID") from error
+        raise argparse.ArgumentTypeError(
+            "must be a workout ID returned by list"
+        ) from error
 
 
 def _workout_activity(value: str) -> WorkoutActivityType:
@@ -862,38 +864,45 @@ def build_parser() -> AriadneArgumentParser:
     health_actions = health.add_subparsers(dest="health_action", required=True)
     workouts = health_actions.add_parser(
         "workouts",
-        help="search and inspect workout history",
+        help="list and inspect workout history",
         description="Read compact, factual workout metrics from Ithaca.",
+        epilog=(
+            "List and summarize require --start and --end. Show accepts a "
+            "WORKOUT_ID returned by list. Run 'ariadne health workouts <command> "
+            "--help' for full options."
+        ),
     )
     workout_actions = workouts.add_subparsers(dest="workout_action", required=True)
     activity_epilog = "Valid activity types:\n  " + ", ".join(
         activity.value for activity in WorkoutActivityType
     )
 
-    workout_search = workout_actions.add_parser(
-        "search",
-        help="find workouts in a bounded period",
-        description="Find newest-first compact workouts and return UUIDs for show.",
+    workout_list = workout_actions.add_parser(
+        "list",
+        help="browse a bounded period newest first",
+        description=(
+            "List newest-first compact workouts and return workout IDs for show."
+        ),
         epilog=activity_epilog,
     )
-    _add_workout_period(workout_search)
-    workout_search.add_argument(
+    _add_workout_period(workout_list)
+    workout_list.add_argument(
         "--limit",
         type=_bounded_integer(1, 50),
         default=20,
         metavar="N",
         help="maximum workouts, 1-50 (default: 20)",
     )
-    workout_search.add_argument(
+    workout_list.add_argument(
         "--cursor",
         type=_bounded_text(2048, "cursor"),
-        help="opaque next_cursor from a matching earlier search",
+        help="opaque next_cursor from a matching earlier list",
     )
-    workout_search.set_defaults(_handler=_health_workouts_search)
+    workout_list.set_defaults(_handler=_health_workouts_list)
 
     workout_summarize = workout_actions.add_parser(
         "summarize",
-        help="aggregate workouts in a bounded period",
+        help="calculate factual totals for a bounded period",
         description=(
             "Return factual period totals and complete activity-specific metrics."
         ),
@@ -904,17 +913,17 @@ def build_parser() -> AriadneArgumentParser:
 
     workout_show = workout_actions.add_parser(
         "show",
-        help="show one compact workout",
+        help="inspect one compact workout",
         description=(
             "Show metrics, splits, zones, components, route availability, quality, "
             "and data freshness for one workout."
         ),
     )
     workout_show.add_argument(
-        "workout_uuid",
-        type=_uuid,
-        metavar="WORKOUT_UUID",
-        help="UUID returned by workout search",
+        "workout_id",
+        type=_workout_id,
+        metavar="WORKOUT_ID",
+        help="workout ID returned by list",
     )
     workout_show.set_defaults(_handler=_health_workouts_show)
     return parser

@@ -72,9 +72,9 @@ The agent can schedule a single future wake-up with a self-contained reason and 
 
 ### Health reads and future activations
 
-Health follows the CLI data-plane pattern as `ariadne health workouts search|summarize|show`. Ariadne calls Ithaca's bearer-authenticated Workout Metrics Read v1 surface through a typed HTTP client. PostgreSQL credentials and tables do not cross that boundary, so Ithaca can change its storage or deployment without changing Iris's command contract.
+Health follows the CLI data-plane pattern: list workouts in a bounded period, summarize period totals, or show one returned workout ID under `ariadne health workouts`. Ariadne calls Ithaca's bearer-authenticated Workout Metrics Read v1 surface through a typed HTTP client. PostgreSQL credentials and tables do not cross that boundary, so Ithaca can change its storage or deployment without changing Iris's command contract.
 
-Search and show return bounded compact domain records, while summarize returns deterministic server-computed aggregates. The API reports projection coverage, snapshot selection, availability, and quality rather than manufacturing missing values. Canonical raw snapshots, route points, and detailed series are not exposed by the Iris-facing client.
+List and show return bounded compact domain records, while summarize returns deterministic server-computed aggregates. The API reports projection coverage, snapshot selection, availability, and quality rather than manufacturing missing values. Canonical raw snapshots, route points, and detailed series are not exposed by the Iris-facing client.
 
 The typed client validates Ithaca's complete response shape before a small presentation layer shapes it for Iris. That layer omits API schema and snapshot identifiers, null metrics, and non-actionable series catalogues; it keeps fixed-unit numbers, readable source names, workout identifiers, pagination, period projection coverage, freshness, and quality issues. This is intentionally a semantic reduction rather than preformatted prose, so Iris can still compare and calculate from the result.
 

@@ -33,7 +33,7 @@ def _coverage(value: PeriodProjectionCoverage) -> dict[str, int]:
     }
 
 
-def search_view(response: WorkoutSearchResponse) -> dict[str, Any]:
+def list_view(response: WorkoutSearchResponse) -> dict[str, Any]:
     workouts: list[dict[str, Any]] = []
     for item in response.items:
         workout = _json(item)
@@ -98,7 +98,7 @@ class WorkoutQueries:
     def __init__(self, client: IthacaClient) -> None:
         self.client = client
 
-    def search_workouts(
+    def list_workouts(
         self,
         *,
         start: str,
@@ -107,7 +107,7 @@ class WorkoutQueries:
         limit: int = 20,
         cursor: str | None = None,
     ) -> dict[str, Any]:
-        return search_view(
+        return list_view(
             self.client.search_workouts(
                 start=start,
                 end=end,

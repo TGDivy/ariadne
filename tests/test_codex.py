@@ -548,8 +548,8 @@ def _command_item(command: str) -> CommandExecutionThreadItem:
             "Reviewing availability…",
         ),
         (
-            "ariadne health workouts search --start private --end private",
-            "Searching workout history…",
+            "ariadne health workouts list --start private --end private",
+            "Listing workout history…",
             "Reviewing workouts…",
         ),
         (

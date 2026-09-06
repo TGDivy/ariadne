@@ -128,7 +128,7 @@ class RecordingHealth:
         self.calls.append((operation, arguments))
         return {"operation": operation}
 
-    def search_workouts(
+    def list_workouts(
         self,
         *,
         start: str,
@@ -138,7 +138,7 @@ class RecordingHealth:
         cursor: str | None = None,
     ) -> Any:
         return self._result(
-            "health.workouts.search",
+            "health.workouts.list",
             {
                 "start": start,
                 "end": end,
@@ -508,7 +508,7 @@ def test_health_workout_commands_map_typed_bounded_arguments(
         [
             "health",
             "workouts",
-            "search",
+            "list",
             "--start",
             "2026-08-01",
             "--end",
@@ -524,7 +524,7 @@ def test_health_workout_commands_map_typed_bounded_arguments(
         ],
         backend=backend,
     )
-    assert _json_stdout(capsys)["operation"] == "health.workouts.search"
+    assert _json_stdout(capsys)["operation"] == "health.workouts.list"
     main(
         [
             "health",
@@ -548,7 +548,7 @@ def test_health_workout_commands_map_typed_bounded_arguments(
 
     assert backend.calls == [
         (
-            "health.workouts.search",
+            "health.workouts.list",
             {
                 "start": "2026-08-01",
                 "end": "2026-09-01",
@@ -589,12 +589,16 @@ def test_health_help_is_lazy_and_lists_only_the_useful_commands(
         main(["health", "workouts", "--help"])
     captured = capsys.readouterr()
     assert raised.value.code == 0
-    assert "{search,summarize,show}" in captured.out
+    assert "{list,summarize,show}" in captured.out
+    assert "search" not in captured.out
+    assert "List and summarize require --start and --end" in captured.out
+    assert "WORKOUT_ID" in captured.out
+    assert "returned by list" in captured.out
     assert "series" not in captured.out
     assert captured.err == ""
 
     with pytest.raises(SystemExit) as raised:
-        main(["health", "workouts", "search", "--help"])
+        main(["health", "workouts", "list", "--help"])
     captured = capsys.readouterr()
     assert raised.value.code == 0
     assert "--activity TYPE" in captured.out
@@ -606,7 +610,7 @@ def test_health_help_is_lazy_and_lists_only_the_useful_commands(
         main(["health", "workouts", "show", "--help"])
     captured = capsys.readouterr()
     assert raised.value.code == 0
-    assert "WORKOUT_UUID" in captured.out
+    assert "WORKOUT_ID" in captured.out
     assert "snapshot" not in captured.out
     assert captured.err == ""
 
@@ -640,7 +644,7 @@ def test_config_and_serve_dispatch_without_mixing_output(
         [
             "health",
             "workouts",
-            "search",
+            "list",
             "--start",
             "2026-09-01",
             "--end",
@@ -955,7 +959,7 @@ timeout_seconds = 19
             str(config),
             "health",
             "workouts",
-            "search",
+            "list",
             "--start",
             "2026-09-01",
             "--end",

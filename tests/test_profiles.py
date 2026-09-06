@@ -112,9 +112,8 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
         assert "ariadne calendar list|search|read|availability" in (
             resolved.base_instructions
         )
-        assert "ariadne health workouts search|summarize|show" in (
-            resolved.base_instructions
-        )
+        assert "ariadne health workouts --help" in resolved.base_instructions
+        assert "list workouts in a bounded period" in resolved.base_instructions
         assert "ariadne --help" in resolved.base_instructions
 
 

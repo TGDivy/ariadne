@@ -102,8 +102,8 @@ _ARIADNE_COMMAND_ACTIVITY: dict[tuple[str, ...], ActivityDescription] = {
     ("calendar", "respond"): _activity(
         "Responding to a calendar invitation…", "Checking the response…"
     ),
-    ("health", "workouts", "search"): _activity(
-        "Searching workout history…", "Reviewing workouts…"
+    ("health", "workouts", "list"): _activity(
+        "Listing workout history…", "Reviewing workouts…"
     ),
     ("health", "workouts", "summarize"): _activity(
         "Summarising workouts…", "Reviewing workout totals…"

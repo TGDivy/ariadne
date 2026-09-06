@@ -25,7 +25,7 @@ from ariadne.health.models import (
     WorkoutShowResponse,
     WorkoutSummarizeResponse,
 )
-from ariadne.health.presentation import search_view, show_view, summarize_view
+from ariadne.health.presentation import list_view, show_view, summarize_view
 
 WORKOUT_UUID = UUID("00000000-0000-0000-0000-000000000101")
 SNAPSHOT_UUID = UUID("00000000-0000-0000-0000-000000000001")
@@ -240,22 +240,22 @@ def test_summary_and_show_use_the_typed_v1_contract() -> None:
 
 
 def test_iris_views_remove_transport_plumbing_and_absent_metrics() -> None:
-    search = search_view(WorkoutSearchResponse.model_validate(search_payload()))
+    listed = list_view(WorkoutSearchResponse.model_validate(search_payload()))
     summary = summarize_view(WorkoutSummarizeResponse.model_validate(summary_payload()))
     shown = show_view(WorkoutShowResponse.model_validate(show_payload()))
 
-    assert search["period_data_coverage"] == {
+    assert listed["period_data_coverage"] == {
         "canonical_workouts": 1,
         "queryable_workouts": 1,
         "unqueryable_workouts": 0,
         "workouts_with_newer_unqueryable_data": 0,
     }
-    first = search["workouts"][0]
+    first = listed["workouts"][0]
     assert first["workout_id"] == str(WORKOUT_UUID)
     assert first["activity"] == "Running"
     assert first["source"] == "Apple Watch"
     assert "snapshot_id" not in first
-    assert "schema_version" not in search
+    assert "schema_version" not in listed
 
     assert summary["period"] == {
         "start_at": "2026-08-31T23:00:00Z",
