@@ -114,6 +114,13 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
         )
         assert "ariadne health --help" in resolved.base_instructions
         assert "workout and sleep history" in resolved.base_instructions
+        assert (
+            "retry the exact bounded command once with elevated network permission"
+            in resolved.base_instructions
+        )
+        assert "do not infer that data is absent from a failed request" in (
+            resolved.base_instructions
+        )
         assert "For workout history" in resolved.base_instructions
         assert "For sleep, use `latest`" in resolved.base_instructions
         assert "ariadne --help" in resolved.base_instructions
