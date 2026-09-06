@@ -157,12 +157,16 @@ def test_markdown_round_trip_has_minimal_front_matter(tmp_path: Path) -> None:
     assert "kind:" not in rendered
 
 
-def test_v1_front_matter_is_rejected_instead_of_silently_supported(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "old.md"
+def test_unknown_front_matter_fields_are_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "example.md"
     path.write_text(
-        "---\nschema: 1\nid: note:old\nkind: note\n---\n\n# Old\n\nOld summary.\n",
+        "---\n"
+        "schema: 1\n"
+        "id: example\n"
+        "kind: note\n"
+        "---\n\n"
+        "# Example\n\n"
+        "Example summary.\n",
         encoding="utf-8",
     )
 
@@ -379,7 +383,7 @@ def test_search_and_read_return_compact_untyped_links(
     assert "relation" not in result.links[0].model_dump()
 
 
-def test_profile_resolution_injects_now_without_taxonomy_orientation(
+def test_profile_resolution_injects_root_overview_and_now_without_taxonomy(
     knowledge_repository: Path,
 ) -> None:
     enriched = resolve_profile(
@@ -390,7 +394,13 @@ def test_profile_resolution_injects_now_without_taxonomy_orientation(
     )
 
     assert enriched.base_instruction_sources[-1] == "ariadne.prompts/knowledge.md"
-    assert enriched.developer_instruction_sources[-1] == "generated/current-context"
+    assert enriched.developer_instruction_sources[-2:] == (
+        "generated/thread-overview",
+        "generated/current-context",
+    )
+    assert "## Thread overview" in enriched.developer_instructions
+    assert "Active records: 4." in enriched.developer_instructions
+    assert "`event` (2), `goal` (1)" in enriched.developer_instructions
     assert "## Current context" in enriched.developer_instructions
     assert "Transport and breakfast still need attention." in (
         enriched.developer_instructions
@@ -481,12 +491,12 @@ def test_nested_semantic_folders_are_valid(
     assert report.records == 5
 
 
-def test_legacy_records_wrapper_is_rejected(knowledge_repository: Path) -> None:
+def test_reserved_records_wrapper_is_rejected(knowledge_repository: Path) -> None:
     write_record(
         knowledge_repository,
         "records/example.md",
         metadata("example", "Example"),
-        "This wrapper no longer belongs in Thread v2.",
+        "This folder is reserved by the Thread.",
     )
 
     with pytest.raises(KnowledgeValidationError, match="reserved"):

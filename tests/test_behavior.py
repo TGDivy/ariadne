@@ -71,7 +71,7 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert SCENARIOS[7].telegram_prompt is not None
 
 
-def test_scenario_knowledge_is_a_valid_v2_collection(
+def test_scenario_knowledge_is_a_valid_collection(
     tmp_path: Path,
 ) -> None:
     for scenario in SCENARIOS:

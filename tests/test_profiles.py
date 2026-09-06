@@ -191,7 +191,12 @@ def test_shared_instructions_keep_knowledge_storage_out_of_iriss_workflow(
             profile.base_instructions
         )
         assert profile.base_instruction_sources[-1] == "ariadne.prompts/knowledge.md"
-        assert "manipulating their backing storage" in profile.developer_instructions
+        assert "All access to Thread knowledge records must use" in (
+            profile.developer_instructions
+        )
+        assert "A polished message is not a substitute" in (
+            profile.developer_instructions
+        )
         assert "Git commit" not in profile.developer_instructions
         assert "implementation mechanics" in profile.developer_instructions
         assert "schedule one wake-up" in profile.developer_instructions

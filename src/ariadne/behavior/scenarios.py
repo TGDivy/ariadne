@@ -106,7 +106,7 @@ instructions and the course guide are available on the event website.
         ScenarioKnowledge(
             id="running",
             title="Running",
-            folder="goal/goals",
+            folder="goal",
             summary="Build consistency and complete a half marathon comfortably.",
             body=(
                 "Divy is building consistency and wants to complete a half marathon "
@@ -183,7 +183,7 @@ selected itinerary, not a booked-train restriction.
         ScenarioKnowledge(
             id="running",
             title="Running",
-            folder="goal/goals",
+            folder="goal",
             summary="Complete the Windsor half marathon comfortably.",
             body="Complete the Windsor half marathon comfortably.",
         ),
@@ -262,7 +262,7 @@ RACE_EVENING_REVISIT = BehaviorScenario(
         ScenarioKnowledge(
             id="running",
             title="Running",
-            folder="goal/goals",
+            folder="goal",
             summary="Complete the Windsor half marathon comfortably.",
             body="Complete the Windsor half marathon comfortably.",
         ),
@@ -344,7 +344,7 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
         ScenarioKnowledge(
             id="running",
             title="Running",
-            folder="goal/goals",
+            folder="goal",
             summary="Complete the Windsor half marathon comfortably.",
             body="Complete the Windsor half marathon comfortably.",
         ),

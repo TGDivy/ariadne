@@ -1,4 +1,4 @@
-"""Disposable v2 knowledge used only by manual behaviour scenarios."""
+"""Disposable knowledge used only by manual behaviour scenarios."""
 
 from __future__ import annotations
 
@@ -308,7 +308,7 @@ def archive_knowledge(id: str, reason: str) -> dict[str, object]:
 
 
 def register_tools(server: FastMCP, annotations: dict[str, bool]) -> None:
-    """Register every disposable v2 knowledge operation."""
+    """Register every disposable knowledge operation."""
     server.tool(search_knowledge, annotations=annotations)
     server.tool(list_knowledge, annotations=annotations)
     server.tool(read_knowledge, annotations=annotations)

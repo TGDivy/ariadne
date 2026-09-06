@@ -1,4 +1,4 @@
-"""Transparent ranked search over compact v2 knowledge records."""
+"""Transparent ranked search over compact knowledge records."""
 
 from __future__ import annotations
 

@@ -22,9 +22,6 @@ and can always be rebuilt. Ariadne owns physical paths, filenames, locking,
 validation, Git, and recovery. Iris sees only stable record identities and
 semantic relative folders, never repository paths or filenames.
 
-Thread v2 is a clean cutover. There is no legacy reader or parallel
-representation.
-
 ## Records
 
 The repository itself is the Thread. Active records live at its root or in
@@ -33,7 +30,7 @@ meaningful lowercase kebab-case folders such as `people/friends` or
 hierarchy below the reserved `archive/` namespace. Archive state and a record's
 semantic folder derive from that location.
 
-A document has only a stable neutral id and optional aliases and links in front
+A document has only a stable untyped id and optional aliases and links in front
 matter:
 
 ```yaml
@@ -63,8 +60,9 @@ do not encode a type. Titles and folders may change without changing identity.
 
 The reserved `now` record stays at the repository root and is a concise
 present-tense view of active priorities, constraints, near-term commitments,
-and unresolved tensions. Ariadne includes it in applicable turn instructions.
-Iris rewrites it as focus changes instead of appending a diary to it.
+and unresolved tensions. Applicable turn instructions include a bounded list
+of active top-level folders with recursive record counts followed by `now`.
+Iris rewrites `now` as focus changes instead of appending a diary to it.
 
 ## Model-facing operations
 
@@ -99,10 +97,11 @@ the linked body.
 ### `create_knowledge`
 
 Create accepts a title, summary, body, semantic folder, and optional aliases and
-links. Ariadne generates a collision-safe neutral id and lowercase title-derived
-filename, validates links and the folder, writes atomically, commits, and
-pushes. Iris searches first and can list nearby folders when unsure where the
-subject belongs.
+links. Ariadne generates a collision-safe title-derived id once and a lowercase
+title-derived filename. Later title or folder changes preserve the id. Ariadne
+validates links and the folder, writes atomically, commits, and pushes. Iris
+searches first and can list nearby folders when unsure where the subject
+belongs.
 
 ### `update_knowledge`
 
@@ -169,7 +168,7 @@ contract small.
 ## Runtime boundary
 
 Production Telegram, Mail, and revisit profiles expose all six semantic
-operations. The resolved instructions include `now` when it exists, while all
-other record bodies remain on-demand through search and read. The private store
-path is forwarded only to Ariadne's local capability process and does not appear
-in model-visible instructions or results.
+operations. The resolved instructions include the bounded root overview and
+`now` when it exists, while all other record bodies remain on-demand through
+search and read. The private store path is forwarded only to Ariadne's local
+capability process and does not appear in model-visible instructions or results.

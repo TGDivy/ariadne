@@ -78,7 +78,7 @@ def _location(path: Path, root: Path) -> tuple[str, bool]:
 
 
 def parse_document(path: Path, *, root: Path | None = None) -> StoredKnowledge:
-    """Load one v2 record and derive title and summary from its Markdown."""
+    """Load one record and derive title and summary from its Markdown."""
     try:
         text = path.read_bytes().decode("utf-8")
     except (OSError, UnicodeDecodeError) as error:
@@ -98,7 +98,7 @@ def parse_document(path: Path, *, root: Path | None = None) -> StoredKnowledge:
 
 
 def render_document(metadata: KnowledgeMetadata, body: str) -> bytes:
-    """Render deterministic v2 Markdown with minimal front matter."""
+    """Render deterministic Markdown with minimal front matter."""
     values: dict[str, object] = {"id": metadata.id}
     if metadata.aliases:
         values["aliases"] = list(metadata.aliases)

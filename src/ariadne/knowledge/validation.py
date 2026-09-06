@@ -1,4 +1,4 @@
-"""Read-only validation of a complete v2 knowledge collection."""
+"""Read-only validation of a complete knowledge collection."""
 
 from __future__ import annotations
 
@@ -17,8 +17,7 @@ from .paths import filename_matches_title
 
 _KEBAB_FILE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*\.md$")
 _KEBAB_FOLDER = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
-_LEGACY_WRAPPER = "records"
-_RESERVED_FOLDER_ROOTS = {ARCHIVE_DIRECTORY, _LEGACY_WRAPPER}
+_RESERVED_FOLDER_ROOTS = {ARCHIVE_DIRECTORY, "records"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +30,7 @@ class KnowledgeValidationReport:
 
 
 def validate_records(root: Path, records: tuple[StoredKnowledge, ...]) -> None:
-    """Validate the few collection-wide invariants v2 retains."""
+    """Validate the collection-wide invariants."""
     by_id: dict[str, StoredKnowledge] = {}
     names: dict[str, str] = {}
     for record in records:
@@ -104,7 +103,7 @@ def validate_records(root: Path, records: tuple[StoredKnowledge, ...]) -> None:
 
 
 def validate_repository(root: Path) -> KnowledgeValidationReport:
-    """Validate every v2 record and link without changing the repository."""
+    """Validate every record and link without changing the repository."""
     resolved = root.resolve()
     if not resolved.is_dir():
         raise KnowledgeValidationError(
