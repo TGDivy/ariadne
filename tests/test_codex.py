@@ -16,17 +16,21 @@ from openai_codex import (
 )
 from openai_codex.generated.v2_all import (
     AgentMessageThreadItem,
+    CommandExecutionThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
+    ListFilesCommandAction,
     McpToolCallError,
     McpToolCallStatus,
     McpToolCallThreadItem,
     MessagePhase,
     PlanThreadItem,
+    ReadCommandAction,
     ReasoningEffort,
     ReasoningSummary,
     ReasoningSummaryTextDeltaNotification,
     ReasoningThreadItem,
+    SearchCommandAction,
     ThreadItem,
     ThreadTokenUsage,
     ThreadTokenUsageUpdatedNotification,
@@ -34,6 +38,7 @@ from openai_codex.generated.v2_all import (
     Turn,
     TurnCompletedNotification,
     TurnStatus,
+    UnknownCommandAction,
     WebSearchThreadItem,
 )
 from openai_codex.models import AgentMessageDeltaNotification
@@ -42,6 +47,7 @@ from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 import ariadne.codex.conversation as conversation_module
 from ariadne.codex import (
+    ActivityCompleted,
     ActivityUpdated,
     AgentMessageCompleted,
     AgentMessageUpdated,
@@ -53,6 +59,7 @@ from ariadne.codex import (
     WorkSummaryUpdated,
     _mcp_config_overrides,
 )
+from ariadne.codex.activity import describe_activity
 from ariadne.codex.resolver import resolve_profile
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
 from ariadne.telemetry import Telemetry
@@ -518,6 +525,137 @@ async def test_codex_conversation_reports_only_safe_activity_messages(
 
     assert activities == ["Searching the web…"]
     assert "private" not in activities[0]
+
+
+def _command_item(command: str) -> CommandExecutionThreadItem:
+    return CommandExecutionThreadItem(
+        id="command",
+        command=command,
+        commandActions=[UnknownCommandAction(command=command, type="unknown")],
+        cwd="/private/workspace",
+        status="inProgress",
+        type="commandExecution",
+    )
+
+
+@pytest.mark.parametrize(
+    ("command", "started", "completed"),
+    [
+        ("ariadne mail search private-topic", "Searching mail…", "Reviewing mail…"),
+        (
+            "ariadne --pretty calendar availability --start private",
+            "Checking calendar availability…",
+            "Reviewing availability…",
+        ),
+        ("uv run --no-sync pytest", "Running tests…", "Reviewing test results…"),
+        ("npm run test", "Running tests…", "Reviewing test results…"),
+        ("python3 -m mypy src", "Checking types…", "Reviewing type-check results…"),
+        ("git push origin main", "Pushing changes…", "Checking the repository…"),
+        (
+            "GH_HOST=github.com gh pr create --title private",
+            "Opening a pull request…",
+            "Checking the pull request…",
+        ),
+    ],
+)
+def test_command_activity_uses_safe_semantic_labels(
+    command: str, started: str, completed: str
+) -> None:
+    description = describe_activity(_command_item(command))
+
+    assert description is not None
+    assert description.started == started
+    assert description.completed == completed
+    assert "private" not in description.started
+    assert "private" not in description.completed
+
+
+def test_compound_or_unrecognized_command_does_not_expose_its_text() -> None:
+    private_command = "echo private-secret && ariadne mail search private-topic"
+
+    description = describe_activity(_command_item(private_command))
+
+    assert description is not None
+    assert description.started == "Running a command…"
+    assert description.completed == "Reviewing command results…"
+    assert "private" not in description.started
+
+
+@pytest.mark.parametrize(
+    ("action", "started"),
+    [
+        (
+            ReadCommandAction(
+                command="read private",
+                name="private",
+                path="/private/file",
+                type="read",
+            ),
+            "Reading files…",
+        ),
+        (
+            ListFilesCommandAction(
+                command="list private", path="/private/folder", type="listFiles"
+            ),
+            "Browsing files…",
+        ),
+        (
+            SearchCommandAction(
+                command="search private",
+                path="/private/folder",
+                query="private query",
+                type="search",
+            ),
+            "Searching files…",
+        ),
+    ],
+)
+def test_structured_command_actions_are_described_without_private_details(
+    action: object, started: str
+) -> None:
+    item = CommandExecutionThreadItem(
+        id="command",
+        command="opaque private command",
+        commandActions=[action],
+        cwd="/private/workspace",
+        status="inProgress",
+        type="commandExecution",
+    )
+
+    description = describe_activity(item)
+
+    assert description is not None
+    assert description.started == started
+    assert "private" not in description.started
+
+
+async def test_command_activity_reports_start_and_completion(tmp_path: Path) -> None:
+    started = _command_item("uv run pytest")
+    completed = started.model_copy(
+        update={"duration_ms": 1250, "exit_code": 0, "status": "completed"}
+    )
+    conversation = make_conversation(
+        tmp_path,
+        DEFAULT_SETTINGS,
+        human=HUMAN,
+        client=cast(
+            AsyncCodex,
+            FakeCodex(
+                FakeThread(
+                    turn=FakeTurn(
+                        ["Answer"],
+                        started_items=[ThreadItem(root=started)],
+                        completed_items=[ThreadItem(root=completed)],
+                    )
+                )
+            ),
+        ),
+    )
+
+    events = [event async for event in conversation.stream_turn("Run the tests")]
+
+    assert ActivityUpdated("Running tests…", "command") in events
+    assert ActivityCompleted("command", "Reviewing test results…") in events
 
 
 @pytest.mark.parametrize(

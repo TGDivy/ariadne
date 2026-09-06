@@ -11,6 +11,7 @@ from telegram import Message
 from telegram.error import TelegramError
 
 from ..codex import (
+    ActivityCompleted,
     ActivityUpdated,
     AgentMessageCompleted,
     AgentMessageStarted,
@@ -312,6 +313,7 @@ class LiveTurn:
         self._history = history
         self._bubble: _LiveBubble | None = None
         self._active_message: tuple[str, MessagePhase] | None = None
+        self._activities: dict[str, str] = {}
         self._partial_message = ""
         self._delivered_messages = 0
         self._phase: Literal["running", "stopping", "terminal"] = "running"
@@ -325,18 +327,36 @@ class LiveTurn:
 
     async def apply(self, event: ConversationEvent) -> None:
         if isinstance(event, WorkStarted):
+            self._activities.clear()
             bubble = await self._ensure_bubble()
             await bubble.begin_work(event.activity)
         elif isinstance(event, WorkSummaryUpdated):
             bubble = await self._ensure_bubble()
             await bubble.show_work_summary(event.text)
         elif isinstance(event, ActivityUpdated):
+            if event.item_id is not None:
+                self._activities.pop(event.item_id, None)
+                self._activities[event.item_id] = event.text
             bubble = await self._ensure_bubble()
             await bubble.show_activity(event.text)
+        elif isinstance(event, ActivityCompleted):
+            if event.item_id not in self._activities:
+                return
+            was_current = next(reversed(self._activities)) == event.item_id
+            self._activities.pop(event.item_id)
+            if was_current:
+                activity = (
+                    next(reversed(self._activities.values()))
+                    if self._activities
+                    else event.text
+                )
+                bubble = await self._ensure_bubble()
+                await bubble.show_activity(activity)
         elif isinstance(event, AgentMessageStarted):
             if self._active_message is not None:
                 raise RuntimeError("Codex started overlapping speech items.")
             self._active_message = (event.item_id, event.phase)
+            self._activities.clear()
             self._partial_message = ""
             bubble = await self._ensure_bubble()
             await bubble.begin_message()

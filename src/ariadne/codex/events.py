@@ -27,6 +27,15 @@ class ActivityUpdated:
     """A concrete tool or execution activity became current."""
 
     text: str
+    item_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ActivityCompleted:
+    """A concrete activity finished and its result is being considered."""
+
+    item_id: str
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +78,7 @@ type ConversationEvent = (
     WorkStarted
     | WorkSummaryUpdated
     | ActivityUpdated
+    | ActivityCompleted
     | CapabilityCallCompleted
     | AgentMessageStarted
     | AgentMessageUpdated

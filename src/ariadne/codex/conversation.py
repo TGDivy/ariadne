@@ -21,13 +21,7 @@ from openai_codex import (
 from openai_codex.generated.v2_all import (
     AgentMessageDeltaNotification,
     AgentMessageThreadItem,
-    CollabAgentToolCallThreadItem,
-    CommandExecutionThreadItem,
     ContextCompactedNotification,
-    DynamicToolCallThreadItem,
-    FileChangeThreadItem,
-    ImageGenerationThreadItem,
-    ImageViewThreadItem,
     ItemCompletedNotification,
     ItemStartedNotification,
     McpToolCallStatus,
@@ -41,12 +35,13 @@ from openai_codex.generated.v2_all import (
     TokenUsageBreakdown,
     TurnCompletedNotification,
     TurnStatus,
-    WebSearchThreadItem,
 )
 from openai_codex.models import JsonObject
 
 from ..telemetry import Telemetry
+from .activity import ActivityDescription, describe_activity
 from .events import (
+    ActivityCompleted,
     ActivityUpdated,
     AgentMessageCompleted,
     AgentMessageStarted,
@@ -66,26 +61,6 @@ WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_TOOL_TIMEOUT_SECONDS = 16 * 60
 MCP_SERVER_NAME = "ariadne"
 TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
-TELEGRAM_TOOLS = (TELEGRAM_MESSAGE_TOOL, "ask_telegram_question")
-KNOWLEDGE_ACTIVITY = {
-    "search_knowledge": "Searching memory…",
-    "list_knowledge": "Browsing memory…",
-    "read_knowledge": "Reading memory…",
-    "create_knowledge": "Remembering…",
-    "update_knowledge": "Updating memory…",
-    "archive_knowledge": "Organising memory…",
-}
-REVISIT_ACTIVITY = {
-    "schedule_wakeup": "Scheduling a future wake-up…",
-    "list_wakeups": "Checking scheduled wake-ups…",
-    "update_wakeup": "Updating a scheduled wake-up…",
-    "cancel_wakeup": "Cancelling a scheduled wake-up…",
-}
-LOCAL_ACTIVITY = {
-    "read_recent_telegram_messages": "Reading recent messages…",
-    "request_telegram_file_delivery": "Preparing files…",
-    "record_current_mail_decision": "Triaging mail…",
-}
 
 
 class TurnInterrupted(Exception):
@@ -98,32 +73,8 @@ def _activity_message(item: object) -> str | None:
         return "Analysing…"
     if isinstance(item, PlanThreadItem):
         return "Planning…"
-    if isinstance(item, WebSearchThreadItem):
-        return "Searching the web…"
-    if isinstance(item, McpToolCallThreadItem):
-        if item.server == MCP_SERVER_NAME and item.tool in TELEGRAM_TOOLS:
-            # Iris is speaking for herself; what she sends is the status.
-            return None
-        if item.server == MCP_SERVER_NAME and item.tool in KNOWLEDGE_ACTIVITY:
-            return KNOWLEDGE_ACTIVITY[item.tool]
-        if item.server == MCP_SERVER_NAME and item.tool in REVISIT_ACTIVITY:
-            return REVISIT_ACTIVITY[item.tool]
-        if item.server == MCP_SERVER_NAME and item.tool in LOCAL_ACTIVITY:
-            return LOCAL_ACTIVITY[item.tool]
-        return "Using Ariadne's local capability…"
-    if isinstance(item, CommandExecutionThreadItem):
-        return "Running a command…"
-    if isinstance(item, FileChangeThreadItem):
-        return "Editing files…"
-    if isinstance(item, ImageViewThreadItem):
-        return "Inspecting an image…"
-    if isinstance(item, ImageGenerationThreadItem):
-        return "Creating an image…"
-    if isinstance(item, DynamicToolCallThreadItem):
-        return "Using a capability…"
-    if isinstance(item, CollabAgentToolCallThreadItem):
-        return "Coordinating work…"
-    return None
+    description = describe_activity(item)
+    return description.started if description is not None else None
 
 
 def _log_mcp_started(item: object, source: str) -> float | None:
@@ -362,6 +313,7 @@ class CodexConversation:
         status: Literal["success", "failure", "cancelled"] = "failure"
         error: BaseException | None = None
         mcp_started_at: dict[str, float] = {}
+        activity_by_item: dict[str, ActivityDescription] = {}
 
         try:
             thread = await self._thread_for_conversation()
@@ -424,16 +376,24 @@ class CodexConversation:
                         message_text[item.id] = ""
                         yield AgentMessageStarted(item.id, item.phase)
                     else:
-                        activity_message = _activity_message(item)
-                        if activity_message is not None:
+                        if isinstance(item, (ReasoningThreadItem, PlanThreadItem)):
+                            activity_message = _activity_message(item)
+                            assert activity_message is not None
                             LOGGER.info("Codex activity: %s", activity_message)
-                            if isinstance(item, (ReasoningThreadItem, PlanThreadItem)):
-                                yield WorkStarted(item.id, activity_message)
-                            else:
-                                yield ActivityUpdated(activity_message)
+                            yield WorkStarted(item.id, activity_message)
+                        else:
+                            description = describe_activity(item)
+                            if description is not None:
+                                item_id = str(getattr(item, "id"))
+                                activity_by_item[item_id] = description
+                                LOGGER.info("Codex activity: %s", description.started)
+                                yield ActivityUpdated(description.started, item_id)
                 elif isinstance(event.payload, ItemCompletedNotification):
                     item = event.payload.item.root
                     observation.tool_completed(item)
+                    item_id = str(getattr(item, "id"))
+                    if description := activity_by_item.pop(item_id, None):
+                        yield ActivityCompleted(item_id, description.completed)
                     if isinstance(item, McpToolCallThreadItem):
                         _log_mcp_finished(
                             item,
