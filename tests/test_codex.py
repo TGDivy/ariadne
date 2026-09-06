@@ -119,6 +119,25 @@ def test_mcp_config_forwards_its_required_environment(
     assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
 
 
+def test_sandbox_config_enables_profile_network_access(tmp_path: Path) -> None:
+    overrides = conversation_module._sandbox_config_overrides(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            vault=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        )
+    )
+
+    assert "features.network_proxy=true" in overrides
+    assert 'default_permissions="ariadne"' in overrides
+    assert "permissions.ariadne.network.enabled=true" in overrides
+    domains = next(value for value in overrides if ".network.domains=" in value)
+    assert '"github.com"="allow"' in domains
+    assert '"imap.mail.me.com"="allow"' in domains
+    assert '"caldav.icloud.com"="allow"' in domains
+
+
 class FakeTurn:
     def __init__(
         self,

@@ -223,6 +223,7 @@ def _sandbox_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
     return (
         "features.network_proxy=true",
         f"default_permissions={json.dumps(profile.permission_profile)}",
+        f"{permission}.network.enabled=true",
         f"{permission}.filesystem={{{writable_roots}}}",
         f"{permission}.network.domains={{{domains}}}",
         f"{permission}.network.allow_local_binding="
