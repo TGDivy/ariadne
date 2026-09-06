@@ -34,7 +34,7 @@ You talk to Iris in a private Telegram conversation. Ariadne runs on your machin
 | Surface | What it enables |
 | --- | --- |
 | **Private conversation** | Rich Telegram messages, reply context, attachment handling, questions, reactions, and conversation continuity. |
-| **Durable context** | Searchable personal knowledge with explicit records, relationships, and Git-backed change history. |
+| **Durable context** | Searchable, linked personal records with Git-backed change history. |
 | **Follow-through** | One-off scheduled revisits that can re-check a concrete open loop at an appropriate level of attention. |
 | **Optional life integrations** | iCloud Mail routing and Calendar operations, each separately configured and scoped. |
 | **Evaluation and observability** | Reproducible companion-behaviour scenarios plus optional OpenTelemetry/Grafana telemetry. |

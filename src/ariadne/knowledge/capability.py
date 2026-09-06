@@ -4,7 +4,7 @@ ROOT_ENVIRONMENT = "ARIADNE_KNOWLEDGE_ROOT"
 
 TOOLS = (
     "search_knowledge",
-    "browse_knowledge",
+    "list_knowledge",
     "read_knowledge",
     "create_knowledge",
     "update_knowledge",

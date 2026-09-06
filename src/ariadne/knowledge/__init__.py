@@ -1,12 +1,15 @@
 """First-class private knowledge storage and retrieval."""
 
 from .models import (
+    Folder,
     KnowledgeConflict,
     KnowledgeError,
+    KnowledgeFolderSummary,
+    KnowledgeLinkSummary,
+    KnowledgeListing,
+    KnowledgeListRecord,
     KnowledgeMetadata,
     KnowledgeRecord,
-    KnowledgeRelation,
-    KnowledgeRelationshipSummary,
     KnowledgeSearchError,
     KnowledgeSearchResult,
     KnowledgeSyncError,
@@ -14,12 +17,15 @@ from .models import (
 )
 
 __all__ = [
+    "Folder",
     "KnowledgeConflict",
     "KnowledgeError",
+    "KnowledgeFolderSummary",
+    "KnowledgeLinkSummary",
+    "KnowledgeListing",
+    "KnowledgeListRecord",
     "KnowledgeMetadata",
     "KnowledgeRecord",
-    "KnowledgeRelation",
-    "KnowledgeRelationshipSummary",
     "KnowledgeSearchError",
     "KnowledgeSearchResult",
     "KnowledgeSyncError",

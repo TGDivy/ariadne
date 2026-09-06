@@ -15,6 +15,16 @@ def slug(value: str) -> str:
     return result[:80].rstrip("-") or "record"
 
 
+def title_collision_message(title: str, identifier: str) -> str:
+    """Ask for a human-recognizable title when its generated id is occupied."""
+    return (
+        f"The title {title!r} would generate the id {identifier!r}, which is already "
+        "used by another knowledge record or alias. Choose a more distinctive "
+        "human-readable title, such as a full name, stable context, or relevant "
+        "date, then try again."
+    )
+
+
 def filename_matches_title(filename: str, title: str) -> bool:
     """Accept the generated title filename and deterministic collision suffixes."""
     base = slug(title)

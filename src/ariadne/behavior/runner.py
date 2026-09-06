@@ -11,7 +11,6 @@ import tempfile
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +30,7 @@ from ariadne.codex.conversation import (
 )
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
-from ariadne.knowledge import KnowledgeMetadata, KnowledgeRelation
+from ariadne.knowledge import KnowledgeMetadata
 from ariadne.knowledge.documents import render_document
 from ariadne.knowledge.paths import slug
 from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE, profile_for_attention
@@ -145,28 +144,17 @@ def _write_scenario(scenario: BehaviorScenario, workspace: Path) -> None:
             raise ValueError(f"Scenario file escapes its workspace: {fixture.path}")
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(fixture.content, encoding="utf-8")
-    recorded_at = datetime(2026, 8, 29, 10, tzinfo=UTC)
+    (workspace / "archive").mkdir(exist_ok=True)
     for record in scenario.knowledge:
         metadata = KnowledgeMetadata(
             id=record.id,
             title=record.title,
             summary=record.summary,
-            kind=record.kind,
-            collection=record.collection,
-            tags=record.tags,
             aliases=record.aliases,
-            starts_at=record.starts_at,
-            ends_at=record.ends_at,
-            related=tuple(
-                KnowledgeRelation(record=target, relation=relation)
-                for target, relation in record.related
-            ),
-            created_at=recorded_at,
-            updated_at=recorded_at,
+            links=record.links,
         )
-        destination = (
-            workspace / record.kind / record.collection / f"{slug(record.title)}.md"
-        )
+        destination = workspace.joinpath(*record.folder.split("/"))
+        destination = destination / f"{slug(record.title)}.md"
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(render_document(metadata, record.body))
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 from ariadne.behavior import (
     SCENARIOS,
@@ -71,7 +72,7 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert SCENARIOS[7].telegram_prompt is not None
 
 
-def test_scenario_knowledge_is_also_valid_generated_orientation(
+def test_scenario_knowledge_is_a_valid_collection(
     tmp_path: Path,
 ) -> None:
     for scenario in SCENARIOS:
@@ -145,7 +146,7 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "request_telegram_file_delivery",
         "record_current_mail_decision",
         "search_knowledge",
-        "browse_knowledge",
+        "list_knowledge",
         "read_knowledge",
         "create_knowledge",
         "update_knowledge",
@@ -234,18 +235,46 @@ async def test_fake_knowledge_is_seeded_and_mutable(
     monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
     monkeypatch.setenv(fake_knowledge.KNOWLEDGE_ENVIRONMENT, str(knowledge))
 
-    found = fake_knowledge.search_knowledge("Windsor")
+    listing = fake_knowledge.list_knowledge()
+    found = fake_knowledge.search_knowledge("Windsor", folder="event")
     result = found["results"][0]
     updated = fake_knowledge.update_knowledge(
-        result["id"], body="Transport is arranged."
+        result["id"], body="Transport is arranged.", folder="event/travel"
     )
 
+    assert listing["folders"] == [{"folder": "event", "record_count": 1}]
     assert found["count"] == 1
     assert updated["record"]["body"] == "Transport is arranged."
+    assert updated["record"]["folder"] == "event/travel"
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
+        "list_knowledge",
         "search_knowledge",
         "update_knowledge",
     ]
+
+
+def test_fake_knowledge_rejects_generated_id_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = tmp_path / "calls.jsonl"
+    knowledge = tmp_path / "knowledge.json"
+    existing = SCENARIOS[0].knowledge[1]
+    knowledge.write_text(
+        json.dumps({"records": [existing.payload()]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
+    monkeypatch.setenv(fake_knowledge.KNOWLEDGE_ENVIRONMENT, str(knowledge))
+
+    with pytest.raises(
+        ToolError,
+        match="Choose a more distinctive human-readable title",
+    ):
+        fake_knowledge.create_knowledge(
+            title=existing.title,
+            summary="A duplicate subject.",
+            body="A duplicate subject.",
+        )
 
 
 async def test_fake_calendar_is_seeded_and_mutable(

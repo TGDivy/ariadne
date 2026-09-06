@@ -8,7 +8,8 @@ from pathlib import Path
 from ..codex.models import TurnProfile
 from ..knowledge.store import KnowledgeStore
 from . import render
-from .orientation import render_knowledge_orientation
+
+_THREAD_OVERVIEW_FOLDER_LIMIT = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,29 @@ def _render_documents(
     sources = tuple(f"ariadne.prompts/{document}.md" for document in documents)
     rendered = tuple(render(document, human=human) for document in documents)
     return sources, "\n\n".join(rendered)
+
+
+def _render_thread_overview(store: KnowledgeStore) -> str:
+    """Render bounded root orientation without recreating a taxonomy."""
+    listing = store.list_folder(limit=_THREAD_OVERVIEW_FOLDER_LIMIT)
+    folders = ", ".join(
+        f"`{item.folder}` ({item.record_count})" for item in listing.folders
+    )
+    if listing.folders_truncated:
+        label = (
+            "Top-level folders with recursive active-record counts "
+            f"(showing {_THREAD_OVERVIEW_FOLDER_LIMIT} of {listing.folder_count})"
+        )
+    else:
+        label = "Top-level folders with recursive active-record counts"
+    lines = ["## Thread overview", ""]
+    if not listing.folders_truncated:
+        active_records = listing.record_count + sum(
+            item.record_count for item in listing.folders
+        )
+        lines.extend((f"Active records: {active_records}.", ""))
+    lines.append(f"{label}: {folders or 'none'}.")
+    return "\n".join(lines)
 
 
 def assemble_prompts(
@@ -57,7 +81,15 @@ def assemble_prompts(
         )
     if knowledge_root is not None:
         root = knowledge_root.resolve()
-        orientation = render_knowledge_orientation(**KnowledgeStore(root).orientation())
-        developer_sources += ("generated/knowledge-orientation",)
-        developer = f"{developer}\n\n{orientation}"
+        store = KnowledgeStore(root)
+        overview = _render_thread_overview(store)
+        developer_sources += ("generated/thread-overview",)
+        developer = f"{developer}\n\n{overview}"
+        context = store.current_context()
+        if context is not None:
+            current = f"## Current context\n\n{context.metadata.summary}"
+            if context.body:
+                current = f"{current}\n\n{context.body}"
+            developer_sources += ("generated/current-context",)
+            developer = f"{developer}\n\n{current}"
     return PromptAssembly(base_sources, developer_sources, base, developer)

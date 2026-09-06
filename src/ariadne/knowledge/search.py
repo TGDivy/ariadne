@@ -1,17 +1,16 @@
-"""Transparent ranked search over canonical knowledge records."""
+"""Transparent ranked search over compact knowledge records."""
 
 from __future__ import annotations
 
 import re
 import sqlite3
-from collections.abc import Iterable, Sequence
-from datetime import date
+from collections.abc import Sequence
 from difflib import SequenceMatcher
 from threading import Lock
 
 from .documents import StoredKnowledge
 from .models import (
-    KnowledgeRelationshipSummary,
+    KnowledgeLinkSummary,
     KnowledgeSearchError,
     KnowledgeSearchResult,
     KnowledgeValidationError,
@@ -24,38 +23,15 @@ def _words(value: str) -> tuple[str, ...]:
     return tuple(word.casefold() for word in _WORD.findall(value))
 
 
+def _query_words(value: str) -> tuple[str, ...]:
+    words = _words(value)
+    substantive = tuple(word for word in words if len(word) > 1)
+    return substantive or words
+
+
 def _search_expression(query: str) -> str:
     return " OR ".join(
-        f'"{word.replace(chr(34), chr(34) * 2)}"*' for word in _words(query)
-    )
-
-
-def _validate_date_bounds(date_from: str | None, date_through: str | None) -> None:
-    try:
-        for value in (date_from, date_through):
-            if value is not None:
-                date.fromisoformat(value)
-    except ValueError as error:
-        raise KnowledgeValidationError(
-            "Knowledge search date bounds must be ISO dates."
-        ) from error
-    if date_from is not None and date_through is not None and date_from > date_through:
-        raise KnowledgeValidationError(
-            "Knowledge search date_from must not be after date_through."
-        )
-
-
-def _overlaps(
-    record: StoredKnowledge, date_from: str | None, date_through: str | None
-) -> bool:
-    starts = record.metadata.starts_at
-    ends = record.metadata.ends_at or starts
-    if (date_from is not None or date_through is not None) and starts is None:
-        return False
-    if date_from is not None and ends is not None and ends[:10] < date_from:
-        return False
-    return not (
-        date_through is not None and starts is not None and starts[:10] > date_through
+        f'"{word.replace(chr(34), chr(34) * 2)}"*' for word in _query_words(query)
     )
 
 
@@ -103,7 +79,6 @@ def _field_matches(
         for term in query_terms
         if any(
             _stem(token).startswith(_stem(term))
-            or _stem(term).startswith(_stem(token))
             or (fuzzy and _close_enough(term, token))
             for token in tokens
         )
@@ -115,18 +90,16 @@ class KnowledgeIndex:
 
     def __init__(self, records: Sequence[StoredKnowledge]) -> None:
         self._records = {record.metadata.id: record for record in records}
-        self._incoming: dict[str, list[tuple[str, str]]] = {}
+        self._incoming: dict[str, set[str]] = {}
         for record in records:
-            for relation in record.metadata.related:
-                self._incoming.setdefault(relation.record, []).append(
-                    (record.metadata.id, relation.relation)
-                )
+            for target in record.metadata.links:
+                self._incoming.setdefault(target, set()).add(record.metadata.id)
         self._database_lock = Lock()
         self._database = sqlite3.connect(":memory:", check_same_thread=False)
         try:
             self._database.execute(
                 "CREATE VIRTUAL TABLE records USING fts5("
-                "id UNINDEXED, title, aliases, summary, tags, metadata, body, "
+                "id UNINDEXED, title, aliases, folder, summary, body, "
                 "tokenize='porter unicode61 remove_diacritics 2')"
             )
         except sqlite3.OperationalError as error:
@@ -134,25 +107,15 @@ class KnowledgeIndex:
                 "This Python SQLite build does not provide the required FTS5 support."
             ) from error
         self._database.executemany(
-            "INSERT INTO records(id, title, aliases, summary, tags, metadata, body) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO records(id, title, aliases, folder, summary, body) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 (
                     record.metadata.id,
                     record.metadata.title,
                     " ".join(record.metadata.aliases),
+                    record.folder,
                     record.metadata.summary,
-                    " ".join(record.metadata.tags),
-                    " ".join(
-                        value
-                        for value in (
-                            record.metadata.kind,
-                            record.metadata.collection,
-                            record.metadata.starts_at,
-                            record.metadata.ends_at,
-                        )
-                        if value is not None
-                    ),
                     record.body,
                 )
                 for record in records
@@ -163,52 +126,40 @@ class KnowledgeIndex:
     def records(self) -> dict[str, StoredKnowledge]:
         return self._records
 
-    def relationships(
-        self, identifier: str
-    ) -> tuple[KnowledgeRelationshipSummary, ...]:
+    def links(self, identifier: str) -> tuple[KnowledgeLinkSummary, ...]:
+        """Return active direct links and backlinks without invented semantics."""
         record = self._records[identifier]
-        relationships = [
-            KnowledgeRelationshipSummary(
+        identifiers = set(record.metadata.links) | self._incoming.get(identifier, set())
+        linked = (
+            target
+            for target_id in identifiers
+            if (target := self._records.get(target_id)) is not None
+            and not target.archived
+        )
+        return tuple(
+            KnowledgeLinkSummary(
                 id=target.metadata.id,
                 title=target.metadata.title,
                 summary=target.metadata.summary,
-                kind=target.metadata.kind,
-                relation=relation.relation,
-                direction="outgoing",
+                folder=target.folder,
             )
-            for relation in record.metadata.related
-            if (target := self._records.get(relation.record)) is not None
-        ]
-        relationships.extend(
-            KnowledgeRelationshipSummary(
-                id=source.metadata.id,
-                title=source.metadata.title,
-                summary=source.metadata.summary,
-                kind=source.metadata.kind,
-                relation=relation,
-                direction="incoming",
-            )
-            for source_id, relation in self._incoming.get(identifier, ())
-            if (source := self._records.get(source_id)) is not None
-        )
-        return tuple(
-            sorted(
-                relationships,
-                key=lambda item: (item.direction, item.title.casefold(), item.id),
+            for target in sorted(
+                linked,
+                key=lambda item: (item.metadata.title.casefold(), item.metadata.id),
             )
         )
 
     def _lexical_evidence(
         self, record: StoredKnowledge, query: str
     ) -> tuple[set[str], tuple[str, ...], float]:
-        terms = _words(query)
+        terms = _query_words(query)
         metadata = record.metadata
         fields = {
+            "id": _field_matches(terms, metadata.id, fuzzy=False),
             "title": _field_matches(terms, metadata.title),
             "alias": _field_matches(terms, " ".join(metadata.aliases)),
+            "folder": _field_matches(terms, record.folder, fuzzy=False),
             "summary": _field_matches(terms, metadata.summary),
-            "tag": _field_matches(terms, " ".join(metadata.tags)),
-            "collection": _field_matches(terms, metadata.collection),
             "body": _field_matches(terms, record.body, fuzzy=False),
         }
         matched = set().union(*fields.values())
@@ -216,11 +167,11 @@ class KnowledgeIndex:
         boost = -sum(
             len(fields[name]) * weight
             for name, weight in {
+                "id": 1_000.0,
                 "title": 1_000.0,
                 "alias": 800.0,
+                "folder": 150.0,
                 "summary": 120.0,
-                "tag": 300.0,
-                "collection": 100.0,
                 "body": 10.0,
             }.items()
         )
@@ -242,97 +193,48 @@ class KnowledgeIndex:
 
     def search(
         self,
-        query: str = "",
+        query: str,
         *,
-        kinds: Iterable[str] = (),
-        collections: Iterable[str] = (),
-        tags: Iterable[str] = (),
-        date_from: str | None = None,
-        date_through: str | None = None,
-        related_to: str | None = None,
+        folder: str | None = None,
         include_archived: bool = False,
         limit: int = 10,
     ) -> tuple[KnowledgeSearchResult, ...]:
-        """Return transparent ranked records satisfying exact filters."""
+        """Return transparent ranked candidates for a concrete text query."""
         if not 1 <= limit <= 50:
             raise KnowledgeValidationError("Knowledge search limit must be 1 to 50.")
-        _validate_date_bounds(date_from, date_through)
-        if query.strip() and not _words(query):
+        if not query.strip() or not _query_words(query):
             raise KnowledgeValidationError(
-                "Knowledge search query needs at least one searchable word."
-            )
-        kind_filter = {value.casefold() for value in kinds}
-        collection_filter = {value.casefold() for value in collections}
-        tag_filter = {value.casefold() for value in tags}
-        if not query.strip() and not any(
-            (
-                kind_filter,
-                collection_filter,
-                tag_filter,
-                date_from,
-                date_through,
-                related_to,
-            )
-        ):
-            raise KnowledgeValidationError(
-                "Knowledge search needs query text or at least one filter."
+                "Knowledge search needs at least one searchable word."
             )
 
-        scores: dict[str, float] = {}
-        expression = _search_expression(query)
-        if expression:
-            try:
-                with self._database_lock:
-                    rows = self._database.execute(
-                        "SELECT id, "
-                        "bm25(records, 0.0, 10.0, 8.0, 6.0, 5.0, 2.0, 1.0) "
-                        "FROM records WHERE records MATCH ? ORDER BY 2",
-                        (expression,),
-                    ).fetchall()
-            except sqlite3.Error as error:
-                raise KnowledgeSearchError(
-                    "Private knowledge search is temporarily unavailable. "
-                    "Retry the search once."
-                ) from error
-            scores.update((identifier, float(score)) for identifier, score in rows)
-            for identifier, record in self._records.items():
-                matched, _, _ = self._lexical_evidence(record, query)
-                if matched and identifier not in scores:
-                    scores[identifier] = 1.0
-        else:
-            scores.update((identifier, 0.0) for identifier in self._records)
+        try:
+            with self._database_lock:
+                rows = self._database.execute(
+                    "SELECT id, bm25(records, 0.0, 10.0, 8.0, 4.0, 6.0, 1.0) "
+                    "FROM records WHERE records MATCH ? ORDER BY 2",
+                    (_search_expression(query),),
+                ).fetchall()
+        except sqlite3.Error as error:
+            raise KnowledgeSearchError(
+                "Private knowledge search is temporarily unavailable. "
+                "Retry the search once."
+            ) from error
 
-        related_ids: set[str] | None = None
-        if related_to is not None:
-            if related_to not in self._records:
-                raise KnowledgeValidationError(
-                    f"Related knowledge record {related_to!r} does not exist."
-                )
-            related_ids = {
-                relationship.id for relationship in self.relationships(related_to)
-            }
+        scores = {identifier: float(score) for identifier, score in rows}
+        for identifier, record in self._records.items():
+            matched, _, _ = self._lexical_evidence(record, query)
+            if matched and identifier not in scores:
+                scores[identifier] = 1.0
 
         matches: list[tuple[float, StoredKnowledge, set[str], tuple[str, ...]]] = []
-        query_terms = _words(query)
+        query_terms = _query_words(query)
         for identifier, score in scores.items():
             record = self._records[identifier]
-            metadata = record.metadata
-            if not include_archived and metadata.archived_at is not None:
+            if record.archived and not include_archived:
                 continue
-            if kind_filter and metadata.kind.casefold() not in kind_filter:
-                continue
-            if (
-                collection_filter
-                and metadata.collection.casefold() not in collection_filter
+            if folder not in (None, "") and not (
+                record.folder == folder or record.folder.startswith(f"{folder}/")
             ):
-                continue
-            if tag_filter and not tag_filter.issubset(
-                {tag.casefold() for tag in metadata.tags}
-            ):
-                continue
-            if not _overlaps(record, date_from, date_through):
-                continue
-            if related_ids is not None and identifier not in related_ids:
                 continue
             matched_terms, matched_by, boost = self._lexical_evidence(record, query)
             matches.append((score + boost, record, matched_terms, matched_by))
@@ -343,13 +245,10 @@ class KnowledgeIndex:
                 id=record.metadata.id,
                 title=record.metadata.title,
                 summary=record.metadata.summary,
-                kind=record.metadata.kind,
-                collection=record.metadata.collection,
-                tags=record.metadata.tags,
-                starts_at=record.metadata.starts_at,
-                ends_at=record.metadata.ends_at,
-                archived=record.metadata.archived_at is not None,
-                relationships=self.relationships(record.metadata.id),
+                aliases=record.metadata.aliases,
+                folder=record.folder,
+                archived=record.archived,
+                links=self.links(record.metadata.id),
                 excerpt=_excerpt(record.body, tuple(matched_terms)),
                 matched_terms=tuple(
                     term for term in query_terms if term in matched_terms
@@ -357,7 +256,7 @@ class KnowledgeIndex:
                 unmatched_terms=tuple(
                     term for term in query_terms if term not in matched_terms
                 ),
-                matched_by=matched_by or ("filters",),
+                matched_by=matched_by or ("full_text",),
             )
             for _, record, matched_terms, matched_by in matches[:limit]
         )

@@ -94,24 +94,20 @@ instructions and the course guide are available on the event website.
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="people:divy",
+            id="divy",
             title="Divy",
+            folder="people/self",
             summary="Divy's practical personal preferences and standing context.",
-            kind="people",
-            collection="self",
-            tags=("profile",),
             body=(
                 "Lives near Southwark in London. Likes M&S for practical "
                 "breakfast food."
             ),
         ),
         ScenarioKnowledge(
-            id="goal:running",
+            id="running",
             title="Running",
+            folder="goal",
             summary="Build consistency and complete a half marathon comfortably.",
-            kind="goal",
-            collection="health",
-            tags=("running", "health"),
             body=(
                 "Divy is building consistency and wants to complete a half marathon "
                 "comfortably. No race is currently recorded."
@@ -169,31 +165,26 @@ selected itinerary, not a booked-train restriction.
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="plan:windsor-trail-run-2026-08",
+            id="windsor-trail-run-2026-08",
             title="Windsor Trail Run — 30 August 2026",
+            folder="event/running",
             summary=(
                 "Confirmed Windsor half marathon with preparation and transport "
                 "being organised."
             ),
-            kind="plan",
-            collection="running",
-            tags=("running", "travel"),
-            starts_at="2026-08-30T09:20:00+01:00",
             body=(
                 "The half marathon starts at 09:20 at Alexandra Gardens, Windsor. "
                 "Collect the bib before the race. Transport is not arranged yet. "
                 "Breakfast, fuel, packing, and recovery remain open."
             ),
             aliases=("Windsor half marathon",),
-            related=(("goal:running", "supports"),),
+            links=("running",),
         ),
         ScenarioKnowledge(
-            id="goal:running",
+            id="running",
             title="Running",
+            folder="goal",
             summary="Complete the Windsor half marathon comfortably.",
-            kind="goal",
-            collection="health",
-            tags=("running", "health"),
             body="Complete the Windsor half marathon comfortably.",
         ),
     ),
@@ -241,16 +232,13 @@ RACE_EVENING_REVISIT = BehaviorScenario(
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="plan:windsor-trail-run-2026-08",
+            id="windsor-trail-run-2026-08",
             title="Windsor Trail Run — 30 August 2026",
+            folder="event/running",
             summary=(
                 "Tomorrow's Windsor half marathon; transport is confirmed and "
                 "final preparation remains."
             ),
-            kind="plan",
-            collection="running",
-            tags=("running", "travel"),
-            starts_at="2026-08-30T09:20:00+01:00",
             body=(
                 "Race starts at 09:20 at Alexandra Gardens. Outbound train leaves "
                 "Waterloo at 07:27 and arrives Windsor at 08:44 after changing at "
@@ -259,27 +247,23 @@ RACE_EVENING_REVISIT = BehaviorScenario(
                 "packing, and the tight station-to-registration window remain open."
             ),
             aliases=("Windsor half marathon",),
-            related=(("goal:running", "supports"),),
+            links=("running",),
         ),
         ScenarioKnowledge(
-            id="people:divy",
+            id="divy",
             title="Divy",
+            folder="people/self",
             summary="Divy's practical personal preferences and standing context.",
-            kind="people",
-            collection="self",
-            tags=("profile",),
             body=(
                 "Lives near Southwark in London. Likes M&S for practical breakfast "
                 "food."
             ),
         ),
         ScenarioKnowledge(
-            id="goal:running",
+            id="running",
             title="Running",
+            folder="goal",
             summary="Complete the Windsor half marathon comfortably.",
-            kind="goal",
-            collection="health",
-            tags=("running", "health"),
             body="Complete the Windsor half marathon comfortably.",
         ),
     ),
@@ -346,27 +330,22 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="plan:windsor-trail-run-2026-08",
+            id="windsor-trail-run-2026-08",
             title="Windsor Trail Run — 30 August 2026",
+            folder="event/running",
             summary="Tomorrow's race is arranged; final packing was still open.",
-            kind="plan",
-            collection="running",
-            tags=("running",),
-            starts_at="2026-08-30T09:20:00+01:00",
             body=(
                 "Race starts at 09:20. Transport is confirmed. Check tonight "
                 "whether Divy has packed gels and breakfast and found the bib email."
             ),
             aliases=("Windsor half marathon",),
-            related=(("goal:running", "supports"),),
+            links=("running",),
         ),
         ScenarioKnowledge(
-            id="goal:running",
+            id="running",
             title="Running",
+            folder="goal",
             summary="Complete the Windsor half marathon comfortably.",
-            kind="goal",
-            collection="health",
-            tags=("running", "health"),
             body="Complete the Windsor half marathon comfortably.",
         ),
     ),
@@ -426,15 +405,13 @@ CONFLICTING_NEEDS = BehaviorScenario(
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="people:divy-bramhecha",
+            id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary=(
                 "Divy's own profile, including how his energy and working style "
                 "can vary with context."
             ),
-            kind="people",
-            collection="self",
-            tags=("self", "profile"),
             aliases=("Divy", "me", "myself"),
             body=(
                 "Divy genuinely enjoys ambitious, intense building sprints when "
@@ -445,21 +422,19 @@ CONFLICTING_NEEDS = BehaviorScenario(
             ),
         ),
         ScenarioKnowledge(
-            id="people:watching-preferences",
+            id="watching-preferences",
             title="Watching Preferences",
+            folder="preference/entertainment",
             summary=(
                 "Divy likes reflective, humane stories with quiet wonder and "
                 "emotional intelligence."
             ),
-            kind="people",
-            collection="self",
-            tags=("preference", "entertainment"),
             body=(
                 "Perfect Days and Frieren are established taste anchors. Prefer "
                 "one thoughtful recommendation over a large menu when one is "
                 "actually requested."
             ),
-            related=(("people:divy-bramhecha", "describes"),),
+            links=("divy-bramhecha",),
         ),
     ),
     calendar=(),
@@ -491,15 +466,13 @@ KNOWN_PERSON_NEWS = BehaviorScenario(
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="people:lily",
+            id="lily",
             title="Lily",
+            folder="people/friends",
             summary=(
                 "A close friend of Divy's who was anxious about the final interview "
                 "for a role she really wanted."
             ),
-            kind="people",
-            collection="friends",
-            tags=("friend",),
             aliases=("Lil",),
             body=(
                 "Lily is a close friend. She recently reached the final interview "
@@ -508,12 +481,10 @@ KNOWN_PERSON_NEWS = BehaviorScenario(
             ),
         ),
         ScenarioKnowledge(
-            id="people:divy-bramhecha",
+            id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary="Divy's own stable personal context.",
-            kind="people",
-            collection="self",
-            tags=("self", "profile"),
             aliases=("Divy", "me", "myself"),
             body="Divy values close friendships and shows up for his friends.",
         ),
@@ -544,12 +515,10 @@ TENTATIVE_AMBITION = BehaviorScenario(
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="people:divy-bramhecha",
+            id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary="Divy's own stable personal context and developing direction.",
-            kind="people",
-            collection="self",
-            tags=("self", "profile"),
             aliases=("Divy", "me", "myself"),
             body=(
                 "Divy is training for a half marathon. No full-marathon goal has "
@@ -584,12 +553,10 @@ NEW_PERSON_DAY = BehaviorScenario(
     files=(ScenarioFile("mail-routes.yaml", ROUTES),),
     knowledge=(
         ScenarioKnowledge(
-            id="people:divy-bramhecha",
+            id="divy-bramhecha",
             title="Divy Bramhecha",
+            folder="people/self",
             summary="Divy's own stable personal context.",
-            kind="people",
-            collection="self",
-            tags=("self", "profile"),
             aliases=("Divy", "me", "myself"),
             body="Divy values warm friendships and enjoys getting to know people.",
         ),

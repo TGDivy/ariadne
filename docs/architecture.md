@@ -30,7 +30,7 @@ Telegram is the ordinary conversational surface. Mail and one-off revisits can a
 
 | Store | What it contains | Ownership boundary |
 | --- | --- | --- |
-| **Thread** | Durable personal records, relationships, plans, and reflections | A private Git-backed repository controlled by the owner. It is not part of this public source repository. |
+| **Thread** | Durable personal records, links, plans, and reflections | A private Git-backed repository controlled by the owner. It is not part of this public source repository. |
 | **Private configuration** | Telegram credentials, integration credentials, paths, and optional telemetry settings | A local TOML file outside the checkout, with secrets redacted from inspection output. |
 | **Runtime state** | Telegram continuity, mail/revisit queues, and other operational state | Local SQLite state under owner-selected paths. |
 | **This repository** | Source code, safe example configuration, tests, and public documentation | Public implementation and design material only. |
