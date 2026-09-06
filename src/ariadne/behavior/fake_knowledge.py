@@ -12,6 +12,7 @@ from typing import Any, Literal
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
+from ariadne.knowledge.paths import slug, title_collision_message
 from ariadne.mcp.knowledge import archive_knowledge as real_archive_knowledge
 from ariadne.mcp.knowledge import create_knowledge as real_create_knowledge
 from ariadne.mcp.knowledge import list_knowledge as real_list_knowledge
@@ -229,12 +230,14 @@ def create_knowledge(
     }
     record_call("create_knowledge", arguments)
     path, records = _state()
-    base = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-") or "record"
-    identifier = base
-    suffix = 2
-    while identifier in records:
-        identifier = f"{base}-{suffix}"
-        suffix += 1
+    identifier = slug(title)
+    occupied = {
+        name.casefold()
+        for record in records.values()
+        for name in (str(record["id"]), *map(str, record.get("aliases", [])))
+    }
+    if identifier.casefold() in occupied:
+        raise ToolError(title_collision_message(title, identifier))
     record = {
         "id": identifier,
         "title": title,

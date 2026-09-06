@@ -32,7 +32,7 @@ from .models import (
     KnowledgeSyncError,
     KnowledgeValidationError,
 )
-from .paths import slug
+from .paths import slug, title_collision_message
 from .search import KnowledgeIndex
 from .validation import validate_records
 
@@ -270,16 +270,6 @@ class KnowledgeStore:
         return self._record(index, record)
 
     @staticmethod
-    def _available_identifier(title: str, occupied_names: set[str]) -> str:
-        base = slug(title)
-        candidate = base
-        suffix = 2
-        while candidate.casefold() in occupied_names:
-            candidate = f"{base}-{suffix}"
-            suffix += 1
-        return candidate
-
-    @staticmethod
     def _folder(value: str) -> str:
         try:
             normalized = _FOLDER_ADAPTER.validate_python(value)
@@ -421,7 +411,9 @@ class KnowledgeStore:
                 for record in index.records.values()
                 for name in (record.metadata.id, *record.metadata.aliases)
             }
-            identifier = self._available_identifier(title, occupied)
+            identifier = slug(title)
+            if identifier.casefold() in occupied:
+                raise KnowledgeConflict(title_collision_message(title, identifier))
             normalized_folder = self._folder(folder)
             if identifier == CURRENT_CONTEXT_ID and normalized_folder:
                 raise KnowledgeValidationError(

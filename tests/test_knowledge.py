@@ -9,6 +9,7 @@ from threading import Barrier
 
 import pytest
 from fastmcp import Client
+from fastmcp.exceptions import ToolError
 
 from ariadne.codex.resolver import resolve_profile
 from ariadne.knowledge import (
@@ -625,7 +626,7 @@ def test_archive_moves_record_and_hides_it_without_deleting(
         store.archive("trainline-windsor", "Do not archive twice.")
 
 
-def test_create_avoids_ids_that_are_already_an_alias(
+def test_create_rejects_generated_id_collisions_with_actionable_guidance(
     knowledge_repository: Path,
 ) -> None:
     store = KnowledgeStore(knowledge_repository)
@@ -634,13 +635,44 @@ def test_create_avoids_ids_that_are_already_an_alias(
         aliases=("half marathon", "race-breakfast"),
     )
 
+    with pytest.raises(
+        KnowledgeConflict,
+        match="Choose a more distinctive human-readable title",
+    ) as raised:
+        store.create(
+            title="Race breakfast",
+            summary="An incomplete food thought.",
+            body="An incomplete food thought.",
+        )
+
+    assert "'race-breakfast'" in str(raised.value)
+    assert not (knowledge_repository / "race-breakfast.md").exists()
     created = store.create(
-        title="Race breakfast",
+        title="Race breakfast for Windsor",
         summary="An incomplete food thought.",
         body="An incomplete food thought.",
     )
+    assert created.metadata.id == "race-breakfast-for-windsor"
 
-    assert created.metadata.id == "race-breakfast-2"
+
+def test_create_tool_exposes_distinctive_title_guidance(
+    knowledge_repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ROOT_ENVIRONMENT, str(knowledge_repository))
+    knowledge_tools._STORES.clear()
+
+    try:
+        with pytest.raises(
+            ToolError,
+            match="full name, stable context, or relevant date",
+        ):
+            knowledge_tools.create_knowledge(
+                title="Running",
+                summary="A duplicate subject.",
+                body="A duplicate subject.",
+            )
+    finally:
+        knowledge_tools._STORES.clear()
 
 
 def test_update_rejects_contradictory_patch_instead_of_guessing(

@@ -112,7 +112,9 @@ def create_knowledge(
     retrieval summary, one current canonical account, and a concise semantic
     folder. Use an empty folder only for genuinely root-level context. Optional
     links are untyped stable ids; explain their actual meaning in the body.
-    Identity and durable storage are handled automatically.
+    Identity and durable storage are handled automatically. If the title would
+    collide with an existing id or alias, retry with a distinguishing full name,
+    stable context, or relevant date rather than adding an arbitrary number.
     """
     try:
         record = _store().create(

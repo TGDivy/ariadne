@@ -97,8 +97,10 @@ the linked body.
 ### `create_knowledge`
 
 Create accepts a title, summary, body, semantic folder, and optional aliases and
-links. Ariadne generates a collision-safe title-derived id once and a lowercase
-title-derived filename. Later title or folder changes preserve the id. Ariadne
+links. Ariadne derives an id from the title once and creates a lowercase
+title-derived filename. If that id is already used by a record or alias,
+creation asks Iris for a more distinctive human title rather than adding an
+order-dependent number. Later title or folder changes preserve the id. Ariadne
 validates links and the folder, writes atomically, commits, and pushes. Iris
 searches first and can list nearby folders when unsure where the subject
 belongs.

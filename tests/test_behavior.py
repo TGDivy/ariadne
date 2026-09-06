@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 from ariadne.behavior import (
     SCENARIOS,
@@ -250,6 +251,30 @@ async def test_fake_knowledge_is_seeded_and_mutable(
         "search_knowledge",
         "update_knowledge",
     ]
+
+
+def test_fake_knowledge_rejects_generated_id_collisions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = tmp_path / "calls.jsonl"
+    knowledge = tmp_path / "knowledge.json"
+    existing = SCENARIOS[0].knowledge[1]
+    knowledge.write_text(
+        json.dumps({"records": [existing.payload()]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
+    monkeypatch.setenv(fake_knowledge.KNOWLEDGE_ENVIRONMENT, str(knowledge))
+
+    with pytest.raises(
+        ToolError,
+        match="Choose a more distinctive human-readable title",
+    ):
+        fake_knowledge.create_knowledge(
+            title=existing.title,
+            summary="A duplicate subject.",
+            body="A duplicate subject.",
+        )
 
 
 async def test_fake_calendar_is_seeded_and_mutable(
