@@ -10,7 +10,7 @@ This is the operator-facing reference for optional services and routine inspecti
 uv run ariadne --help
 uv run ariadne mail --help
 uv run ariadne calendar update --help
-uv run ariadne health workouts --help
+uv run ariadne health --help
 ```
 
 The usual production service command is `ariadne serve`; `uv run ariadne serve` is convenient from a source checkout. Global options precede the command, for example `ariadne --config /private/config.toml --pretty calendar list`. Help and argument validation do not load configuration or contact a provider.
@@ -163,7 +163,7 @@ Repeated `--attendee`, `--alarm-minutes-before`, and `--calendar-id` flags follo
 
 The model-facing CLI is distinct from the operator maintenance scripts below and in the Mail section. Those scripts may perform bulk work or produce private files and are not advertised to Iris as personal-data commands.
 
-## Health workouts
+## Health workouts and sleep
 
 Health access is opt-in and read-only. Configure Ithaca's HTTPS API root and separate read token in the private TOML file; use the timezone in which date-only and offset-free CLI bounds should be interpreted:
 
@@ -198,6 +198,19 @@ ariadne health workouts show '00000000-0000-0000-0000-000000000101'
 ```
 
 Ithaca returns facts and deterministic arithmetic, not coaching or diagnoses. Missing metrics remain absent from CLI output, while explicit availability, projection, and quality warnings remain visible for Iris's interpretation. Ithaca's lower-level detailed-series endpoint is deliberately not exposed to Iris; a purpose-shaped trend command can be added later if real questions justify the extra data and complexity.
+
+Sleep uses derived local dates rather than workout timestamps. A sleep date is the local date on which the episode ended, using the timezone recorded with that episode; `[health].timezone` does not rewrite it. List and summarize use an inclusive start and exclusive end date:
+
+```bash
+ariadne health sleep list \
+  --start 2026-09-01 --end 2026-09-08 --limit 20
+ariadne health sleep summarize \
+  --start 2026-09-01 --end 2026-09-08
+ariadne health sleep latest
+ariadne health sleep show 2026-09-06
+```
+
+List and latest return compact daily duration, stage, timing, source, and timezone facts. Latest omits the interval timeline; pass its `sleep_date` to show when ordered stage intervals are useful. Summaries average only days with observed sleep data and report that count explicitly. Missing stage values remain JSON `null`. Ariadne omits Ithaca's sleep projection and issue metadata from model-facing results, and it never exposes raw HealthKit samples or invents a sleep-quality score.
 
 ## One-off revisits
 

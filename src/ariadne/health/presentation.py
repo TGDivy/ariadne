@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import date
 from typing import Any
 from uuid import UUID
 
@@ -11,6 +12,13 @@ from pydantic import BaseModel
 from .client import IthacaClient
 from .models import (
     PeriodProjectionCoverage,
+    SleepDayDetail,
+    SleepDaySummary,
+    SleepEpisodeDetail,
+    SleepLatestResponse,
+    SleepSearchResponse,
+    SleepShowResponse,
+    SleepSummarizeResponse,
     WorkoutActivityType,
     WorkoutSearchResponse,
     WorkoutShowResponse,
@@ -92,8 +100,89 @@ def show_view(response: WorkoutShowResponse) -> dict[str, Any]:
     return workout
 
 
-class WorkoutQueries:
-    """Expose only compact workout queries that are useful in an Iris turn."""
+def _sleep_day_summary(day: SleepDaySummary) -> dict[str, Any]:
+    return day.model_dump(mode="json", exclude={"issue_codes"})
+
+
+def _sleep_episode_detail(episode: SleepEpisodeDetail) -> dict[str, Any]:
+    return episode.model_dump(mode="json", exclude={"issue_codes"})
+
+
+def _sleep_day_detail(day: SleepDayDetail) -> dict[str, Any]:
+    return {
+        "sleep_date": day.sleep_date.isoformat(),
+        "time_zone_identifier": day.time_zone_identifier,
+        "source_names": day.source_names,
+        "total_asleep_seconds": day.total_asleep_seconds,
+        "main_sleep": _sleep_episode_detail(day.main_sleep),
+        "additional_sleep": [
+            _sleep_episode_detail(episode) for episode in day.additional_sleep
+        ],
+    }
+
+
+def _compact_sleep_day(day: SleepDayDetail) -> dict[str, Any]:
+    main_sleep = day.main_sleep.model_dump(
+        mode="json",
+        exclude={
+            "time_zone_identifier",
+            "source_names",
+            "stage_intervals",
+            "issue_codes",
+        },
+    )
+    return {
+        "sleep_date": day.sleep_date.isoformat(),
+        "time_zone_identifier": day.time_zone_identifier,
+        "source_names": day.source_names,
+        "main_sleep": main_sleep,
+        "additional_sleep": {
+            "episode_count": len(day.additional_sleep),
+            "total_asleep_seconds": sum(
+                episode.total_asleep_seconds for episode in day.additional_sleep
+            ),
+        },
+        "total_asleep_seconds": day.total_asleep_seconds,
+    }
+
+
+def sleep_list_view(response: SleepSearchResponse) -> dict[str, Any]:
+    return {
+        "sleep_days": [_sleep_day_summary(day) for day in response.sleep_days],
+        "next_cursor": response.next_cursor,
+    }
+
+
+def sleep_summarize_view(response: SleepSummarizeResponse) -> dict[str, Any]:
+    summary = response.model_dump(
+        mode="json",
+        exclude={"schema_version", "projection", "start_date", "end_date"},
+    )
+    return {
+        "period": {
+            "start_date": response.start_date.isoformat(),
+            "end_date": response.end_date.isoformat(),
+        },
+        **summary,
+    }
+
+
+def sleep_show_view(response: SleepShowResponse) -> dict[str, Any]:
+    return _sleep_day_detail(response.sleep_day)
+
+
+def sleep_latest_view(response: SleepLatestResponse) -> dict[str, Any]:
+    return {
+        "sleep_day": (
+            _compact_sleep_day(response.sleep_day)
+            if response.sleep_day is not None
+            else None
+        )
+    }
+
+
+class HealthQueries:
+    """Expose only compact health queries that are useful in an Iris turn."""
 
     def __init__(self, client: IthacaClient) -> None:
         self.client = client
@@ -134,3 +223,31 @@ class WorkoutQueries:
 
     def show_workout(self, workout_uuid: UUID) -> dict[str, Any]:
         return show_view(self.client.show_workout(workout_uuid))
+
+    def list_sleep(
+        self,
+        *,
+        start_date: date,
+        end_date: date,
+        limit: int = 20,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        return sleep_list_view(
+            self.client.search_sleep(
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                cursor=cursor,
+            )
+        )
+
+    def summarize_sleep(self, *, start_date: date, end_date: date) -> dict[str, Any]:
+        return sleep_summarize_view(
+            self.client.summarize_sleep(start_date=start_date, end_date=end_date)
+        )
+
+    def show_sleep(self, sleep_date: date) -> dict[str, Any]:
+        return sleep_show_view(self.client.show_sleep(sleep_date))
+
+    def latest_sleep(self) -> dict[str, Any]:
+        return sleep_latest_view(self.client.latest_sleep())
