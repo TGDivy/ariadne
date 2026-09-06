@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from openai_codex import ApprovalMode, Sandbox
+from openai_codex import ApprovalMode
 from openai_codex.generated.v2_all import ReasoningEffort
 
 from ariadne.codex.models import CodexTurnSettings
@@ -114,11 +114,8 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
         )
         assert "ariadne health --help" in resolved.base_instructions
         assert "workout and sleep history" in resolved.base_instructions
-        assert (
-            "retry the exact bounded command once with elevated network permission"
-            in resolved.base_instructions
-        )
-        assert "do not infer that data is absent from a failed request" in (
+        assert "use its error code to distinguish" in resolved.base_instructions
+        assert "Do not infer that data is absent from a failed request" in (
             resolved.base_instructions
         )
         assert "For workout history" in resolved.base_instructions
@@ -140,7 +137,6 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert profile.settings == TELEGRAM_SETTINGS
     assert profile.thread_policy == "shared"
     assert profile.cwd == tmp_path
-    assert profile.sandbox == Sandbox.workspace_write
     assert profile.approval_mode == ApprovalMode.auto_review
     assert profile.writable_roots == (Path.home(),)
     assert "github.com" in profile.network_domains
@@ -327,5 +323,6 @@ def test_profile_inspection_never_contains_environment_values(
     assert "secret-state.sqlite3" not in serialized
     assert "Profile: mail" in rendered
     assert '"permission_profile": "ariadne"' in serialized
+    assert "sandbox" not in profile_payload(profile)
     assert '"allow_local_binding": true' in serialized
     assert '"instruction_documents": ["base", "mail", "knowledge"]' in serialized

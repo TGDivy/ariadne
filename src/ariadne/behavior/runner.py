@@ -26,7 +26,7 @@ from ariadne.codex import (
 from ariadne.codex.conversation import (
     MCP_SERVER_NAME,
     MCP_TOOL_TIMEOUT_SECONDS,
-    _sandbox_config_overrides,
+    _permission_config_overrides,
 )
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
@@ -334,7 +334,7 @@ async def run_scenario(
         )
         client = AsyncCodex(
             CodexConfig(
-                config_overrides=_sandbox_config_overrides(profile)
+                config_overrides=_permission_config_overrides(profile)
                 + _fake_mcp_overrides(
                     profile.name,
                     profile.enabled_tools,
