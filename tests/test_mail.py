@@ -1011,7 +1011,7 @@ def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) 
     normal = _mcp_config_overrides(
         resolve_profile(
             TELEGRAM_PROFILE,
-            vault=tmp_path,
+            workspace=tmp_path,
             settings=TURN_SETTINGS,
             human="Example User",
         )
@@ -1019,7 +1019,7 @@ def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) 
     mail = _mcp_config_overrides(
         resolve_profile(
             MAIL_PROFILE,
-            vault=tmp_path,
+            workspace=tmp_path,
             settings=TURN_SETTINGS,
             human="Example User",
             mcp_environment={

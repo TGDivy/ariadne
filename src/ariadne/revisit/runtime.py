@@ -30,7 +30,8 @@ class RevisitLoop:
     def __init__(
         self,
         settings: RevisitSettings,
-        vault: Path,
+        workspace: Path,
+        knowledge_root: Path,
         turn_settings: SettingsResolver,
         *,
         human: str,
@@ -43,7 +44,8 @@ class RevisitLoop:
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.settings = settings
-        self.vault = vault
+        self.workspace = workspace
+        self.knowledge_root = knowledge_root
         self.turn_settings = turn_settings
         self.human = human
         self.personality = personality
@@ -66,11 +68,11 @@ class RevisitLoop:
         return CodexConversation(
             resolve_profile(
                 declaration,
-                vault=self.vault,
+                workspace=self.workspace,
                 settings=self.turn_settings(revisit.attention),
                 human=self.human,
                 personality=self.personality,
-                knowledge_root=self.vault,
+                knowledge_root=self.knowledge_root,
                 mcp_environment=self.mcp_environment,
                 network_domains=self.network_domains,
             ),

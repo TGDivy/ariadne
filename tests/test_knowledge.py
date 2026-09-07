@@ -389,7 +389,7 @@ def test_profile_resolution_injects_root_overview_and_now_without_taxonomy(
 ) -> None:
     enriched = resolve_profile(
         MAIL_PROFILE,
-        vault=knowledge_repository,
+        workspace=knowledge_repository,
         human="Divy",
         knowledge_root=knowledge_repository,
     )

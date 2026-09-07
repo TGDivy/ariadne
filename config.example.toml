@@ -1,6 +1,8 @@
 version = 1
 human_name = "Your Name"
 vault = "~/ariadne-thread"
+# Optional: where Codex starts shell and file work. Defaults to `vault`.
+# workspace = "~/ariadne-workspace"
 
 [telegram]
 bot_token = ""

@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 from openai_codex import ApprovalMode
@@ -104,7 +105,7 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
     ):
         resolved = resolve_profile(
             declaration,
-            vault=tmp_path,
+            workspace=tmp_path,
             human="Example User",
         )
 
@@ -128,7 +129,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
 ) -> None:
     profile = resolve_profile(
         TELEGRAM_PROFILE,
-        vault=tmp_path,
+        workspace=tmp_path,
         settings=TELEGRAM_SETTINGS,
         human="Example User",
     )
@@ -161,12 +162,47 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert "Live web search is enabled." in profile.developer_instructions
 
 
+def test_workspace_and_knowledge_root_are_independent(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (tmp_path / "archive").mkdir()
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Ariadne Test",
+            "-c",
+            "user.email=test@ariadne.local",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "Initialize knowledge root",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    profile = resolve_profile(
+        TELEGRAM_PROFILE,
+        workspace=workspace,
+        human="Example User",
+        knowledge_root=tmp_path,
+    )
+
+    assert profile.cwd == workspace
+    assert dict(profile.mcp_environment_values)[ROOT_ENVIRONMENT] == str(
+        tmp_path.resolve()
+    )
+
+
 def test_configured_health_host_extends_the_runtime_network_allowlist(
     tmp_path: Path,
 ) -> None:
     profile = resolve_profile(
         TELEGRAM_PROFILE,
-        vault=tmp_path,
+        workspace=tmp_path,
         human="Example User",
         network_domains=("ithaca.example", "github.com"),
     )
@@ -186,7 +222,7 @@ def test_shared_personality_is_applied_to_every_resolved_profile(
     for surface in (TELEGRAM_PROFILE, MAIL_PROFILE):
         profile = resolve_profile(
             surface,
-            vault=tmp_path,
+            workspace=tmp_path,
             human="Example User",
             personality=personality,
         )
@@ -201,7 +237,7 @@ def test_shared_instructions_keep_knowledge_storage_out_of_iriss_workflow(
     tmp_path: Path,
 ) -> None:
     for surface in (TELEGRAM_PROFILE, MAIL_PROFILE):
-        profile = resolve_profile(surface, vault=tmp_path, human="Example User")
+        profile = resolve_profile(surface, workspace=tmp_path, human="Example User")
 
         assert "private-memory capabilities" in profile.developer_instructions
         assert "The trigger is not the task" in profile.developer_instructions
@@ -228,7 +264,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
 ) -> None:
     profile = resolve_profile(
         MAIL_PROFILE,
-        vault=tmp_path,
+        workspace=tmp_path,
         settings=MAIL_SETTINGS,
         human="Example User",
         mcp_environment={
@@ -246,7 +282,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
         "record_current_mail_decision"
         not in resolve_profile(
             TELEGRAM_PROFILE,
-            vault=tmp_path,
+            workspace=tmp_path,
             settings=TELEGRAM_SETTINGS,
             human="Example User",
         ).enabled_tools
@@ -270,7 +306,7 @@ def test_revisit_profile_has_fresh_context_and_background_delivery(
     declaration = REVISIT_PROFILES[Attention.focused]
     profile = resolve_profile(
         declaration,
-        vault=tmp_path,
+        workspace=tmp_path,
         human="Example User",
         mcp_environment={
             "TELEGRAM_BOT_TOKEN": "secret",
@@ -302,7 +338,7 @@ def test_profile_inspection_never_contains_environment_values(
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "super-secret-token")
     profile = resolve_profile(
         MAIL_PROFILE,
-        vault=tmp_path,
+        workspace=tmp_path,
         settings=MAIL_SETTINGS,
         human="Example User",
         mcp_environment={

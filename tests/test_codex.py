@@ -88,7 +88,7 @@ def make_conversation(
     return CodexConversation(
         resolve_profile(
             TELEGRAM_PROFILE,
-            vault=vault,
+            workspace=vault,
             settings=settings,
             human=human,
         ),
@@ -106,7 +106,7 @@ def test_mcp_config_forwards_its_required_environment(
     overrides = _mcp_config_overrides(
         resolve_profile(
             TELEGRAM_PROFILE,
-            vault=tmp_path,
+            workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
             mcp_environment={
@@ -134,7 +134,7 @@ def test_permission_config_enables_profile_network_access(tmp_path: Path) -> Non
     overrides = conversation_module._permission_config_overrides(
         resolve_profile(
             TELEGRAM_PROFILE,
-            vault=tmp_path,
+            workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
         )
@@ -158,7 +158,7 @@ def test_default_permission_profile_controls_the_effective_runtime_sandbox(
         network_domains=("ithaca.example",),
         allow_local_binding=False,
     )
-    profile = resolve_profile(declaration, vault=tmp_path, human=HUMAN)
+    profile = resolve_profile(declaration, workspace=tmp_path, human=HUMAN)
     config = CodexConfig(
         config_overrides=conversation_module._permission_config_overrides(profile),
         cwd=str(tmp_path),
@@ -1078,7 +1078,7 @@ async def test_fresh_per_event_profile_starts_a_new_thread_after_each_turn(
     conversation = CodexConversation(
         resolve_profile(
             MAIL_PROFILE,
-            vault=tmp_path,
+            workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
             mcp_environment={

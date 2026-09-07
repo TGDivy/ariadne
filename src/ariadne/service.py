@@ -94,7 +94,7 @@ def run(path: Path | None = None) -> None:
     conversation = CodexConversation(
         resolve_profile(
             TELEGRAM_PROFILE,
-            vault=settings.vault,
+            workspace=settings.agent_workspace,
             settings=settings.codex_turn_settings,
             human=settings.human_name,
             personality=settings.personality,
@@ -114,6 +114,7 @@ def run(path: Path | None = None) -> None:
         mail_loop = (
             MailLoop(
                 mail_settings,
+                settings.agent_workspace,
                 settings.vault,
                 settings.mail_turn_settings,
                 human=settings.human_name,
@@ -127,6 +128,7 @@ def run(path: Path | None = None) -> None:
         )
         revisit_loop = RevisitLoop(
             settings.revisit_settings,
+            settings.agent_workspace,
             settings.vault,
             settings.revisit_turn_settings,
             human=settings.human_name,

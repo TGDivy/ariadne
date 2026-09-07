@@ -1026,7 +1026,8 @@ class MailLoop:
     def __init__(
         self,
         settings: MailSettings,
-        vault: Path,
+        workspace: Path,
+        knowledge_root: Path,
         turn_settings: CodexTurnSettings,
         *,
         human: str,
@@ -1037,7 +1038,8 @@ class MailLoop:
         telemetry: Telemetry | None = None,
     ) -> None:
         self.settings = settings
-        self.vault = vault
+        self.workspace = workspace
+        self.knowledge_root = knowledge_root
         self.turn_settings = turn_settings
         self.human = human
         self.personality = personality
@@ -1059,11 +1061,11 @@ class MailLoop:
         return CodexConversation(
             resolve_profile(
                 MAIL_PROFILE,
-                vault=self.vault,
+                workspace=self.workspace,
                 settings=self.turn_settings,
                 human=self.human,
                 personality=self.personality,
-                knowledge_root=self.vault,
+                knowledge_root=self.knowledge_root,
                 mcp_environment={
                     **self.mcp_environment,
                     "ARIADNE_MAIL_JOB_ID": job_id,

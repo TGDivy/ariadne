@@ -53,7 +53,7 @@ uv sync --locked
 mkdir -p ~/.config/ariadne
 cp config.example.toml ~/.config/ariadne/config.toml
 chmod 600 ~/.config/ariadne/config.toml
-# Edit the private config: bot token, allowed Telegram user, and Thread path.
+# Edit the private config: bot token, allowed Telegram user, Thread path, and optional agent workspace.
 
 uv run ariadne config check
 uv run ariadne serve

@@ -326,7 +326,7 @@ async def run_scenario(
         )
         profile = resolve_profile(
             declaration,
-            vault=workspace,
+            workspace=workspace,
             human=run_profile.human_name,
             personality=run_profile.personality,
             settings=run_profile.settings,

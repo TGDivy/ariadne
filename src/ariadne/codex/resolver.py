@@ -14,7 +14,7 @@ from .models import CodexTurnSettings, ResolvedTurnProfile, TurnProfile
 def resolve_profile(
     profile: TurnProfile,
     *,
-    vault: Path,
+    workspace: Path,
     human: str,
     personality: Path | None = None,
     settings: CodexTurnSettings | None = None,
@@ -50,7 +50,7 @@ def resolve_profile(
     return ResolvedTurnProfile(
         profile=profile,
         settings=settings or profile.settings,
-        cwd=vault,
+        cwd=workspace,
         base_instruction_sources=prompts.base_sources,
         developer_instruction_sources=prompts.developer_sources,
         base_instructions=prompts.base,
