@@ -22,12 +22,12 @@ def main() -> None:
     settings = load_settings(args.config)
     profile = resolve_profile(
         PROFILES[args.profile],
-        vault=settings.vault,
+        vault=settings.codex_root,
         settings=settings.turn_settings(args.profile),
         human=settings.human_name,
         personality=settings.personality,
         mcp_environment=settings.mcp_environment,
-        knowledge_root=settings.vault,
+        knowledge_root=settings.knowledge_root,
         network_domains=settings.health_network_domains,
     )
 

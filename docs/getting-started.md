@@ -36,14 +36,15 @@ Set, at minimum:
 
 ```toml
 human_name = "Your Name"
-vault = "~/path/to/your/private-thread"
+codex_root = "~/ariadne-codex"
+knowledge_root = "~/ariadne-thread"
 
 [telegram]
 bot_token = "from BotFather"
 allowed_user_id = 123456789
 ```
 
-`vault` must point to the canonical private Thread clone. Ariadne keeps it as the agent's working directory and uses its semantic knowledge model to retrieve and update durable context.
+`codex_root` is the working directory for Ariadne's agent processes (Telegram, mail, revisit loops). `knowledge_root` must point to the canonical private Thread clone. Ariadne uses it as the semantic knowledge model to retrieve and update durable context.
 
 > [!IMPORTANT]
 > Do not commit `config.toml`, credentials, or your Thread repository. `config.toml` and `mail-routes.yaml` are ignored by default, but keeping them outside the source checkout is a useful second line of defence.
@@ -68,7 +69,7 @@ Mail, Calendar, health, and telemetry are off in `config.example.toml`. Enable o
 - **Health:** enable `[health]` with Ithaca's HTTPS API URL, distinct read token, and your IANA timezone. The CLI is read-only and exposes compact workout and sleep facts, never canonical raw health records.
 - **Telemetry:** enable `[telemetry]` only after adding an OTLP endpoint and authorization to the private configuration. The included Grafana dashboard is at `docs/grafana/ariadne-observability.json`.
 
-The implementation details and operational contracts for Mail, Calendar, and health live in the source and their nearby documentation. They are intentionally not required for a first private conversation.
+The implementation details and operational contracts for Mail, Calendar, and health live in the source and their nearby documentation. They are intentionally not required for a first private conversation with Codex.
 
 ## Optional: give the bot a public identity
 

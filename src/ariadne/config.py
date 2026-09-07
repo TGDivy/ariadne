@@ -352,7 +352,8 @@ class Settings(BaseModel):
 
     version: Literal[1]
     human_name: str = Field(min_length=1)
-    vault: DirectoryPath
+    codex_root: DirectoryPath
+    knowledge_root: DirectoryPath
     personality: Path | None = None
     telegram: TelegramConfig
     icloud: ICloudConfig = Field(default_factory=ICloudConfig)
@@ -368,23 +369,41 @@ class Settings(BaseModel):
     def require_human_name(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
-    @field_validator("vault", mode="before")
+    @field_validator("codex_root", mode="before")
     @classmethod
-    def expand_vault(cls, value: object) -> object:
+    def expand_codex_root(cls, value: object) -> object:
         if isinstance(value, str):
             value = value.strip()
             if not value:
-                raise ValueError("Vault path must not be empty.")
+                raise ValueError("Codex root path must not be empty.")
             return Path(value).expanduser()
         return value
 
-    @field_validator("vault")
+    @field_validator("codex_root")
     @classmethod
-    def validate_vault(cls, value: Path) -> Path:
-        vault = value.resolve()
-        if not (vault / ".git").exists():
-            raise ValueError("Vault must point to a Git repository.")
-        return vault
+    def validate_codex_root(cls, value: Path) -> Path:
+        codex_root = value.resolve()
+        if not (codex_root / ".git").exists():
+            raise ValueError("Codex root must point to a Git repository.")
+        return codex_root
+
+    @field_validator("knowledge_root", mode="before")
+    @classmethod
+    def expand_knowledge_root(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("Knowledge root path must not be empty.")
+            return Path(value).expanduser()
+        return value
+
+    @field_validator("knowledge_root")
+    @classmethod
+    def validate_knowledge_root(cls, value: Path) -> Path:
+        knowledge_root = value.resolve()
+        if not (knowledge_root / ".git").exists():
+            raise ValueError("Knowledge root must point to a Git repository.")
+        return knowledge_root
 
     @field_validator("personality", mode="before")
     @classmethod
@@ -538,7 +557,8 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
     return {
         "version": settings.version,
         "human_name": settings.human_name,
-        "vault": str(settings.vault),
+        "codex_root": str(settings.codex_root),
+        "knowledge_root": str(settings.knowledge_root),
         "personality": str(settings.personality) if settings.personality else None,
         "telegram": {
             "bot_token": "<redacted>",

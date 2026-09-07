@@ -1,4 +1,6 @@
-"""Run Ariadne's Telegram conversation and optional background loops."""
+"""Ariadne's primary entry point and service loop."""
+
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -6,64 +8,42 @@ import os
 import sys
 from contextlib import suppress
 from pathlib import Path
-from typing import Any
 
-from pydantic import ValidationError
-from telegram import BotCommand, Update
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    CallbackQueryHandler,
-    CommandHandler,
-    MessageHandler,
-    TypeHandler,
-    filters,
-)
-
-from .codex import CodexConversation
+from .bot import AriadneApplication, AriadneBot
 from .codex.resolver import resolve_profile
-from .config import CONFIG_PATH_ENVIRONMENT, Settings, config_path, load_settings
+from .config import load_settings
 from .mail import MailLoop
-from .profile import TELEGRAM_PROFILE
-from .revisit.runtime import RevisitLoop
-from .telegram.bot import AriadneBot
-from .telemetry import configure_telemetry
+from .profile import PROFILES, TELEGRAM_PROFILE
+from .revisit import RevisitLoop
+from .terminal import Codex, CodexConversation
+from .telemetry import TelemetryClient, configure_telemetry
 
-LOGGER = logging.getLogger(__name__)
-
-AriadneApplication = Application[Any, Any, Any, Any, Any, Any]
-
-COMMANDS = (
-    BotCommand("new", "Start a fresh conversation"),
-    BotCommand("stop", "Interrupt the turn Ariadne is working on"),
-    BotCommand("settings", "Model, reasoning effort, and web research"),
-)
-
-
-async def publish_commands(application: AriadneApplication) -> None:
-    """Put Ariadne's commands in Telegram's menu so they can be found."""
-    try:
-        await application.bot.set_my_commands(COMMANDS)
-    except Exception:
-        LOGGER.exception("Telegram command menu could not be published")
+LOGGER = logging.getLogger("ariadne")
 
 
 def configure_logging() -> None:
-    """Configure Ariadne logs without exposing Telegram request URLs."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    """Suppress verbose HTTP client logs and configure the root logger."""
+    httpx_logger = logging.getLogger("httpx")
+    httpcore_logger = logging.getLogger("httpcore")
+    httpx_logger.setLevel(logging.WARNING)
+    httpcore_logger.setLevel(logging.WARNING)
+
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    root.addHandler(handler)
 
 
-def _load_configuration(path: Path | None) -> Settings:
+def _load_configuration(path: Path | None = None) -> object:
+    """Load validated configuration, showing errors on failure."""
     try:
         return load_settings(path)
-    except ValidationError as error:
-        LOGGER.error("Configuration error: %s", error)
-        raise SystemExit(2) from error
     except ValueError as error:
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
@@ -71,7 +51,8 @@ def _load_configuration(path: Path | None) -> Settings:
 
 def _configure_cli_environment(path: Path | None) -> None:
     """Make the selected config and sibling console script visible to Codex."""
-    os.environ[CONFIG_PATH_ENVIRONMENT] = str(config_path(path))
+    from .config import config_path
+    os.environ["ARIADNE_CONFIG"] = str(config_path(path))
     # Resolve the directory, not the Python symlink, so a virtualenv's sibling
     # `ariadne` console script is not accidentally replaced by /usr/bin.
     executable_directory = str(Path(sys.executable).parent.resolve())
@@ -94,12 +75,12 @@ def run(path: Path | None = None) -> None:
     conversation = CodexConversation(
         resolve_profile(
             TELEGRAM_PROFILE,
-            vault=settings.vault,
+            vault=settings.codex_root,
             settings=settings.codex_turn_settings,
             human=settings.human_name,
             personality=settings.personality,
             mcp_environment=settings.mcp_environment,
-            knowledge_root=settings.vault,
+            knowledge_root=settings.knowledge_root,
             network_domains=settings.health_network_domains,
         ),
         telemetry=telemetry,
@@ -114,11 +95,12 @@ def run(path: Path | None = None) -> None:
         mail_loop = (
             MailLoop(
                 mail_settings,
-                settings.vault,
+                settings.codex_root,
                 settings.mail_turn_settings,
                 human=settings.human_name,
                 personality=settings.personality,
                 mcp_environment=settings.mcp_environment,
+                knowledge_root=settings.knowledge_root,
                 network_domains=settings.health_network_domains,
                 telemetry=telemetry,
             )
@@ -127,11 +109,12 @@ def run(path: Path | None = None) -> None:
         )
         revisit_loop = RevisitLoop(
             settings.revisit_settings,
-            settings.vault,
+            settings.codex_root,
             settings.revisit_turn_settings,
             human=settings.human_name,
             personality=settings.personality,
             mcp_environment=settings.mcp_environment,
+            knowledge_root=settings.knowledge_root,
             network_domains=settings.health_network_domains,
             telemetry=telemetry,
         )
@@ -165,50 +148,24 @@ def run(path: Path | None = None) -> None:
             revisit_task.cancel()
             with suppress(asyncio.CancelledError):
                 await revisit_task
-        try:
-            await conversation.close()
-        except Exception:
-            LOGGER.exception("Failed to close Codex client")
-        await asyncio.to_thread(telemetry.shutdown)
+        await ariadne.close()
+        telemetry.shutdown()
 
-    application = (
-        ApplicationBuilder()
-        .token(settings.telegram_bot_token)
-        .concurrent_updates(True)
-        .post_init(start_services)
-        .post_shutdown(close_services)
-        .build()
+    application = AriadneApplication(
+        start_services=start_services, close_services=close_services
     )
-    application.add_handler(CommandHandler("start", ariadne.start))
-    application.add_handler(CommandHandler("new", ariadne.new))
-    application.add_handler(CommandHandler("stop", ariadne.stop))
-    application.add_handler(CommandHandler("settings", ariadne.settings))
-    application.add_handler(
-        CallbackQueryHandler(ariadne.settings_callback, pattern=r"^settings:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(ariadne.file_delivery_callback, pattern=r"^file-delivery:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(ariadne.question_callback, pattern=r"^question:")
-    )
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
-    )
-    application.add_handler(
-        MessageHandler(filters.PHOTO | filters.Document.IMAGE, ariadne.image)
-    )
-    application.add_handler(
-        MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE, ariadne.document)
-    )
-    # PTB 22.8 predates Rich Messages, but retains the raw field in
-    # Message.api_kwargs. A second handler group lets us inspect those updates
-    # without competing with the native text/media handlers above.
-    application.add_handler(TypeHandler(Update, ariadne.rich_message), group=1)
+    application.run_polling()
 
-    LOGGER.info("Starting Ariadne with private knowledge at %s", settings.vault)
-    try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception:
-        LOGGER.exception("Telegram polling stopped unexpectedly")
-        raise
+
+async def publish_commands(application: AriadneApplication) -> None:
+    """Register Telegram bot commands for the default help text."""
+    from telegram import BotCommand, BotCommandScope
+
+    await application.bot.set_my_commands(
+        [
+            BotCommand("new", "Start a fresh Codex conversation"),
+            BotCommand("settings", "Configure model, reasoning, and research"),
+            BotCommand("stop", "Ask the active turn to interrupt"),
+        ],
+        scope=BotCommandScope(),
+    )

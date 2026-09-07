@@ -1,6 +1,7 @@
 version = 1
 human_name = "Your Name"
-vault = "~/ariadne-thread"
+codex_root = "~/ariadne-codex"
+knowledge_root = "~/ariadne-thread"
 
 [telegram]
 bot_token = ""
