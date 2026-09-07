@@ -253,6 +253,7 @@ def revisit_loop(
     return RevisitLoop(
         RevisitSettings(state.path, 15),
         tmp_path,
+        tmp_path,
         lambda attention: ATTENTION_SETTINGS[attention],
         human="Divy",
         state=state,

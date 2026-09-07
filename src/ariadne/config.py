@@ -353,6 +353,7 @@ class Settings(BaseModel):
     version: Literal[1]
     human_name: str = Field(min_length=1)
     vault: DirectoryPath
+    workspace: DirectoryPath | None = None
     personality: Path | None = None
     telegram: TelegramConfig
     icloud: ICloudConfig = Field(default_factory=ICloudConfig)
@@ -385,6 +386,21 @@ class Settings(BaseModel):
         if not (vault / ".git").exists():
             raise ValueError("Vault must point to a Git repository.")
         return vault
+
+    @field_validator("workspace", mode="before")
+    @classmethod
+    def expand_workspace(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("Workspace path must not be empty.")
+            return Path(value).expanduser()
+        return value
+
+    @property
+    def agent_workspace(self) -> Path:
+        """Return the launch directory, preserving the historical vault default."""
+        return self.workspace.resolve() if self.workspace is not None else self.vault
 
     @field_validator("personality", mode="before")
     @classmethod
@@ -539,6 +555,7 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "version": settings.version,
         "human_name": settings.human_name,
         "vault": str(settings.vault),
+        "workspace": str(settings.agent_workspace),
         "personality": str(settings.personality) if settings.personality else None,
         "telegram": {
             "bot_token": "<redacted>",

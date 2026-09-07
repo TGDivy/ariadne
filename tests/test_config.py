@@ -50,6 +50,7 @@ web_search = "live"
     settings = load_settings(config, environ={})
 
     assert settings.human_name == "Example User"
+    assert settings.agent_workspace == settings.vault
     assert settings.codex_turn_settings == CodexTurnSettings(
         model="gpt-5.6-luna",
         effort=ReasoningEffort.high,
@@ -514,3 +515,21 @@ def test_settings_requires_a_git_vault(tmp_path: Path) -> None:
 
     with pytest.raises(ValidationError, match="Git repository"):
         load_settings(config, environ={})
+
+
+def test_workspace_is_an_optional_existing_launch_directory(tmp_path: Path) -> None:
+    config = write_config(tmp_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "\n[telegram]", f'\nworkspace = "{workspace}"\n\n[telegram]'
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.vault == (tmp_path / "vault").resolve()
+    assert settings.agent_workspace == workspace.resolve()
+    assert settings_payload(settings)["workspace"] == str(workspace.resolve())

@@ -37,13 +37,15 @@ Set, at minimum:
 ```toml
 human_name = "Your Name"
 vault = "~/path/to/your/private-thread"
+# Optional: where Codex starts shell and file work. Defaults to `vault`.
+workspace = "~/path/to/your/ariadne-workspace"
 
 [telegram]
 bot_token = "from BotFather"
 allowed_user_id = 123456789
 ```
 
-`vault` must point to the canonical private Thread clone. Ariadne keeps it as the agent's working directory and uses its semantic knowledge model to retrieve and update durable context.
+`vault` must point to the canonical private Thread clone. Ariadne uses it only as the semantic knowledge root. `workspace` is the directory where Codex starts shell and file work; set it to a separate, existing private directory to avoid treating the Thread checkout as a general workspace. Existing configurations that omit `workspace` retain the historical behaviour and start in `vault`.
 
 > [!IMPORTANT]
 > Do not commit `config.toml`, credentials, or your Thread repository. `config.toml` and `mail-routes.yaml` are ignored by default, but keeping them outside the source checkout is a useful second line of defence.

@@ -22,7 +22,7 @@ def main() -> None:
     settings = load_settings(args.config)
     profile = resolve_profile(
         PROFILES[args.profile],
-        vault=settings.vault,
+        workspace=settings.agent_workspace,
         settings=settings.turn_settings(args.profile),
         human=settings.human_name,
         personality=settings.personality,
