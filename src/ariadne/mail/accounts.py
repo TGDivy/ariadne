@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import math
 import os
 import tempfile
 import time
@@ -257,8 +258,10 @@ class OutlookOAuth:
             or not isinstance(verification_uri, str)
             or not verification_uri
             or not isinstance(expires_in, int)
+            or isinstance(expires_in, bool)
             or expires_in <= 0
             or not isinstance(interval, int)
+            or isinstance(interval, bool)
             or interval <= 0
         ):
             raise RuntimeError("Microsoft device authorization could not be started.")
@@ -324,6 +327,8 @@ class OutlookOAuth:
             or not isinstance(refresh, str)
             or not refresh
             or not isinstance(expires_in, (int, float))
+            or isinstance(expires_in, bool)
+            or not math.isfinite(expires_in)
             or expires_in <= 0
         ):
             raise RuntimeError("Microsoft authorization returned an invalid token.")

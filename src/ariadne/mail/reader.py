@@ -81,7 +81,13 @@ def decode_mail_id(value: str) -> MailReference:
         if isinstance(payload, list) and len(payload) == 3:
             account_key = "icloud"
             folder, validity, uid = payload
-        elif isinstance(payload, list) and len(payload) == 5 and payload[0] == 1:
+        elif (
+            isinstance(payload, list)
+            and len(payload) == 5
+            and isinstance(payload[0], int)
+            and not isinstance(payload[0], bool)
+            and payload[0] == 1
+        ):
             _version, account_key, folder, validity, uid = payload
         else:
             raise ValueError

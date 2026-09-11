@@ -5,6 +5,8 @@ import base64
 import json
 import sqlite3
 import stat
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -170,6 +172,22 @@ def test_versioned_ids_bind_account_and_legacy_ids_resolve_to_icloud() -> None:
     assert decode_mail_id(legacy) == MailReference("INBOX", 3, 9, "icloud")
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "mail:",
+        "mail:A",
+        "mail:not-valid-base64!",
+        "mail:eyJmb2xkZXIiOiJJTkJPWCJ9",
+        "mail:W3RydWUsIm91dGxvb2siLCJJTkJPWCIsMSwxXQ",
+    ],
+)
+def test_malformed_mail_ids_have_one_safe_decode_error(value: str) -> None:
+    with pytest.raises(ValueError, match="mail id is not valid"):
+        decode_mail_id(value)
+
+
 def test_bulk_operator_selection_refuses_an_ambiguous_account(tmp_path: Path) -> None:
     accounts = (_icloud(), _outlook(tmp_path))
 
@@ -293,6 +311,87 @@ def test_expired_cache_refreshes_after_restart_without_leaking_tokens(
     with pytest.raises(OutlookAuthorizationRequired) as raised:
         OutlookOAuth(account, poster=revoked, clock=lambda: 100.0).access_token()
     assert "never-print-refresh-secret" not in str(raised.value)
+
+
+def test_concurrent_expired_cache_refreshes_once_and_preserves_rotation(
+    tmp_path: Path,
+) -> None:
+    account = _outlook(tmp_path)
+    assert account.token_cache is not None
+    account.token_cache.parent.mkdir()
+    account.token_cache.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "access_token": "expired-access-secret",
+                "refresh_token": "old-refresh-secret",
+                "expires_at": 10,
+            }
+        ),
+        encoding="utf-8",
+    )
+    refresh_entered = threading.Event()
+    release_refresh = threading.Event()
+    second_started = threading.Event()
+    posted: list[str] = []
+
+    def refresh(_url: str, values: dict[str, str]) -> dict[str, Any]:
+        posted.append(values["refresh_token"])
+        refresh_entered.set()
+        assert release_refresh.wait(timeout=2)
+        return {
+            "access_token": "fresh-access-secret",
+            "refresh_token": "rotated-refresh-secret",
+            "expires_in": 3600,
+        }
+
+    first_oauth = OutlookOAuth(account, poster=refresh, clock=lambda: 100.0)
+    second_oauth = OutlookOAuth(account, poster=refresh, clock=lambda: 100.0)
+
+    def second_access() -> str:
+        second_started.set()
+        return second_oauth.access_token()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(first_oauth.access_token)
+        assert refresh_entered.wait(timeout=2)
+        second = executor.submit(second_access)
+        assert second_started.wait(timeout=2)
+        release_refresh.set()
+        assert first.result(timeout=2) == "fresh-access-secret"
+        assert second.result(timeout=2) == "fresh-access-secret"
+
+    assert posted == ["old-refresh-secret"]
+    cached = json.loads(account.token_cache.read_text(encoding="utf-8"))
+    assert cached["refresh_token"] == "rotated-refresh-secret"
+
+
+@pytest.mark.parametrize("expires_in", [True, float("nan"), float("inf")])
+def test_oauth_rejects_invalid_token_expiry(tmp_path: Path, expires_in: float) -> None:
+    account = _outlook(tmp_path)
+    assert account.token_cache is not None
+    account.token_cache.parent.mkdir()
+    account.token_cache.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "access_token": "expired-access-secret",
+                "refresh_token": "refresh-secret",
+                "expires_at": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def invalid(_url: str, _values: dict[str, str]) -> dict[str, Any]:
+        return {
+            "access_token": "new-access-secret",
+            "refresh_token": "new-refresh-secret",
+            "expires_in": expires_in,
+        }
+
+    with pytest.raises(RuntimeError, match="invalid token"):
+        OutlookOAuth(account, poster=invalid, clock=lambda: 100.0).access_token()
 
 
 def test_xoauth2_authenticates_with_access_token_not_a_client_secret(
@@ -539,6 +638,22 @@ def _create_legacy_state(path: Path) -> None:
                 'route', 'travel', 'important', 'flag', 'draft', 'flag',
                 NULL, NULL, 1.0, 2.0
             );
+            INSERT INTO mail_jobs VALUES (
+                'INBOX:9:5', 'INBOX', 9, 5, '<pending>', 'pending', 3,
+                'pending-route', 'receipts', 'routine', 'move_to_receipts',
+                NULL, 'move', 'Receipts', 'retry detail', 3.0, 4.0
+            );
+            INSERT INTO mail_jobs VALUES (
+                'INBOX:9:6', 'INBOX', 9, 6, '<failed>', 'failed', 4,
+                NULL, 'travel', 'important', 'flag', 'follow up', 'flag',
+                NULL, 'temporary failure', 5.0, 6.0
+            );
+            INSERT INTO mail_jobs VALUES (
+                'INBOX:9:7', 'INBOX', 9, 7, '<running>', 'running', 5,
+                'running-route', 'notifications', 'routine',
+                'move_to_notifications', NULL, 'move', 'Notifications',
+                NULL, 7.0, 8.0
+            );
             INSERT INTO mail_checkpoints VALUES ('INBOX', 9, 4, 2.0);
             """
         )
@@ -559,12 +674,65 @@ def test_state_migration_preserves_legacy_jobs_and_qualifies_them_as_icloud(
     assert job.status == "done"
     assert job.attempts == 2
     assert job.draft_reply == "draft"
+    pending = state.get("INBOX:9:5")
+    assert pending is not None
+    assert pending.account_key == "icloud"
+    assert pending.status == "pending"
+    assert pending.attempts == 3
+    assert pending.route_id == "pending-route"
+    assert pending.suggested_action == "move_to_receipts"
+    assert pending.action == "move"
+    assert pending.destination == "Receipts"
+    failed = state.get("INBOX:9:6")
+    assert failed is not None
+    assert failed.account_key == "icloud"
+    assert failed.status == "failed"
+    assert failed.attempts == 4
+    assert failed.draft_reply == "follow up"
+    recovered = state.get("INBOX:9:7")
+    assert recovered is not None
+    assert recovered.account_key == "icloud"
+    assert recovered.status == "pending"
+    assert recovered.attempts == 5
+    assert recovered.action == "move"
+    assert recovered.destination == "Notifications"
     with sqlite3.connect(path) as database:
         database.row_factory = sqlite3.Row
         checkpoint = database.execute("SELECT * FROM mail_checkpoints").fetchone()
         assert checkpoint is not None
         assert checkpoint["account_key"] == "icloud"
+        assert checkpoint["uidvalidity"] == 9
+        assert checkpoint["last_seen_uid"] == 4
+        assert checkpoint["updated_at"] == 2.0
+        failed_row = database.execute(
+            "SELECT error FROM mail_jobs WHERE job_id = 'INBOX:9:6'"
+        ).fetchone()
+        assert failed_row is not None
+        assert failed_row["error"] == "temporary failure"
         assert database.execute("PRAGMA user_version").fetchone()[0] == 2
+
+
+def test_state_migration_rolls_back_atomically_on_an_invalid_legacy_schema(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "mail.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute("CREATE TABLE mail_jobs (job_id TEXT PRIMARY KEY)")
+
+    with pytest.raises(sqlite3.OperationalError):
+        MailState(path).initialize()
+
+    with sqlite3.connect(path) as database:
+        tables = {
+            row[0]
+            for row in database.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        columns = {row[1] for row in database.execute("PRAGMA table_info(mail_jobs)")}
+    assert "mail_jobs" in tables
+    assert "mail_jobs_legacy" not in tables
+    assert columns == {"job_id"}
 
 
 def test_jobs_checkpoints_decisions_and_deduplication_are_account_scoped(
@@ -637,8 +805,13 @@ async def test_one_account_loop_failure_does_not_stop_another_provider(
     assert healthy_ran.is_set()
 
 
-async def test_current_event_flag_is_applied_only_in_its_source_account(
+@pytest.mark.parametrize(
+    ("action", "destination"), (("flag", None), ("move", "Travel"))
+)
+async def test_current_event_action_is_applied_only_in_its_source_account(
     tmp_path: Path,
+    action: str,
+    destination: str | None,
 ) -> None:
     state = MailState(tmp_path / "mail.sqlite3")
     state.initialize()
@@ -646,12 +819,13 @@ async def test_current_event_flag_is_applied_only_in_its_source_account(
     state.catch_up("INBOX", 10, [1], initial_baseline_uid=0, account_key="outlook")
     icloud_id = MailState.job_id("INBOX", 10, 1, "icloud")
     outlook_id = MailState.job_id("INBOX", 10, 1, "outlook")
-    state.set_action(icloud_id, "flag", None)
-    state.set_action(outlook_id, "flag", None)
+    state.set_action(icloud_id, action, destination)
+    state.set_action(outlook_id, action, destination)
 
     class Client:
         def __init__(self) -> None:
             self.flags: list[tuple[list[int], list[bytes]]] = []
+            self.moves: list[tuple[tuple[int, ...], str]] = []
 
         def fetch(
             self, uids: list[int], _query: list[bytes]
@@ -660,6 +834,12 @@ async def test_current_event_flag_is_applied_only_in_its_source_account(
 
         def add_flags(self, uids: list[int], flags: list[bytes]) -> None:
             self.flags.append((uids, flags))
+
+        def has_capability(self, capability: str) -> bool:
+            return capability == "MOVE"
+
+        def move(self, uids: tuple[int, ...], target: str) -> None:
+            self.moves.append((uids, target))
 
     routes = MailRoutes.model_validate(
         {
@@ -687,6 +867,11 @@ async def test_current_event_flag_is_applied_only_in_its_source_account(
 
     await processor.process_available()
 
-    assert client.flags == [([1], [b"\\Flagged"])]
+    if action == "flag":
+        assert client.flags == [([1], [b"\\Flagged"])]
+        assert client.moves == []
+    else:
+        assert client.flags == []
+        assert client.moves == [((1,), "Travel")]
     assert state.get(outlook_id).status == "done"  # type: ignore[union-attr]
     assert state.get(icloud_id).status == "pending"  # type: ignore[union-attr]
