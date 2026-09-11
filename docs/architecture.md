@@ -7,7 +7,7 @@ Ariadne is a local runtime for a private companion relationship. Its architectur
 ```mermaid
 sequenceDiagram
     participant Person
-    participant Surface as Telegram / Mail / Revisit
+    participant Surface as Telegram / Mail / Revisit / Stewardship
     participant Runtime as Ariadne runtime
     participant Agent as Iris agent turn
     participant Capabilities as MCP + Ariadne CLI
@@ -24,7 +24,7 @@ sequenceDiagram
     Runtime-->>Surface: Shared Telegram Iris delivers when warranted
 ```
 
-Telegram is the only conversational surface. Mail and one-off revisits can activate a fresh private turn when they have a useful, bounded reason, but those turns cannot send Telegram text or files. They may stage one free-form handoff; Ariadne releases it only after the originating job succeeds, then gives it to the continuing Telegram conversation with the next human message or after two quiet minutes.
+Telegram is the only conversational surface. Mail, one-off revisits, and the opt-in daily stewardship pulse can activate a fresh private turn, but those turns cannot send Telegram text or files. They may stage one free-form handoff; Ariadne releases it only after the originating job succeeds, then gives it to the continuing Telegram conversation with the next human message or after two quiet minutes.
 
 The Telegram profile owns one shared Codex thread. Ariadne stores only that thread's opaque versioned identifier in the private Telegram SQLite database and resumes it after an ordinary service restart. `/new` and conversation-resetting settings deliberately clear the identifier before another thread can start. Background profiles remain fresh per event, and Telegram history is never replayed to counterfeit a lost Codex thread.
 
@@ -34,7 +34,7 @@ The Telegram profile owns one shared Codex thread. Ariadne stores only that thre
 | --- | --- | --- |
 | **Thread** | Durable personal records, links, plans, and reflections | A private Git-backed repository controlled by the owner. It is not part of this public source repository. |
 | **Private configuration** | Telegram credentials, integration credentials, paths, and optional telemetry settings | A local TOML file outside the checkout, with secrets redacted from inspection output. |
-| **Runtime state** | Telegram history and handoffs, mail/revisit queues, and other operational state | Local SQLite state under owner-selected paths. |
+| **Runtime state** | Telegram history and handoffs, mail/revisit queues, daily-cycle status, bounded outcome orientation, and pause controls | Local SQLite state under owner-selected paths. |
 | **This repository** | Source code, safe example configuration, tests, and public documentation | Public implementation and design material only. |
 
 The architecture intentionally keeps the *meaningful data* separate from the runtime that can use it. A clone of this repository is not a clone of a person.
@@ -46,7 +46,7 @@ The agent does not receive a vague integration-level permission. Ariadne owns st
 | Surface | Current capability families | Why it belongs there |
 | --- | --- | --- |
 | **First-class MCP** | Telegram conversation controls, semantic knowledge, and one-off revisits | These are fundamental to Iris’s identity and follow-through, are commonly needed without prior discovery, and include interactive or stateful turn semantics. |
-| **Turn-scoped MCP** | `record_current_mail_decision` and `hand_off_to_telegram_conversation` | These operations are bound to the background job that activated the turn. A handoff stages internal context; it has no direct delivery authority and becomes ready only at the job's successful commit boundary. |
+| **Turn-scoped MCP** | `record_current_mail_decision`, `record_stewardship_outcome`, and `hand_off_to_telegram_conversation` | These operations are bound to the background job that activated the turn. A handoff stages internal context; it has no direct delivery authority and becomes ready only at the job's successful commit boundary. |
 | **Discoverable CLI** | Mail search/read/thread, all Calendar operations, and Ithaca health reads | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
 | **Operator commands** | Bulk mail backfill/export, profile inspection, bot-profile changes, and behaviour runs | These have operational or bulk effects and are intentionally not advertised as ordinary model capabilities. |
 
@@ -71,6 +71,14 @@ Calendar is opt-in. It supports bounded discovery and event operations, includin
 ### Revisit, do not nag
 
 The agent can schedule a single future wake-up with a self-contained reason and one of three attention levels. When due, it starts a fresh turn, re-checks present context, and either completes a useful bounded loop, hands useful context to the shared conversation, or finishes silently. There is no artificial recurring check-in.
+
+### One bounded daily stewardship opportunity
+
+Stewardship is disabled by default. When enabled, one fresh high-attention profile becomes eligible each local day inside a configured waking window. It follows one Reflect–Dream–Choose–Act–Learn loop, selectively retrieving current conversation, active goals, Calendar, mail, health, workouts, public research, and deeper knowledge only when they can change the choice. The cycle may complete already-authorized reversible private work, leave one precise revisit, stage context for Telegram, or deliberately do nothing.
+
+A singleton SQLite record prevents duplicate successful cycles, delays failed retries for 30 minutes, immediately releases cancelled/interrupted claims, and stores only bounded recent outcome and broad-attention notes. Missed dates are not replayed. Indefinite and pause-until controls persist across restarts; a forced owner-reviewed run bypasses recurrence gates without clearing a pause. Substantive life state remains in the Thread and source systems.
+
+This is initiative within explicit authority, not a general autonomous backlog. Payment, sending messages or email, applications, consequential accounts, high-stakes actions, and ambiguous interpersonal choices still require confirmation. The profile cannot directly speak into Telegram; successful handoff release is the same commit boundary used by Mail and revisits.
 
 ### One conversational voice
 
@@ -97,7 +105,7 @@ Ithaca retains a bounded detailed-series endpoint for diagnostics and other clie
 ## What is deliberately out of scope
 
 - A multi-user hosted product, shared inbox, or cloud control plane.
-- Hidden background “autopilot” acting on broad categories of personal data.
+- Unbounded background “autopilot”, an autonomous backlog, or hidden high-stakes action.
 - Treating a private history as a dataset to optimise a person.
 - A claim that all judgement can be encoded into a workflow.
 
@@ -105,7 +113,7 @@ Those constraints are product choices, not missing polish. A personal companion 
 
 ## Inspectability and change safety
 
-The repository includes deterministic tests, static checks, and an isolated behaviour-scenario lab. The lab replays synthetic Telegram, mail, or revisit stories with harmless stand-ins for real Telegram, Mail, Calendar, file delivery, and knowledge stores. A real agent run is an explicit local action, never part of CI.
+The repository includes deterministic tests, static checks, and an isolated behaviour-scenario lab. The lab replays synthetic Telegram, mail, revisit, or stewardship stories with harmless stand-ins for real Telegram, Mail, Calendar, file delivery, and knowledge stores. A real agent run is an explicit local action, never part of CI.
 
 ```bash
 uv run python -m ariadne.scripts.behavior list

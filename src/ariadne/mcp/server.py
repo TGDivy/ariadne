@@ -7,6 +7,7 @@ from .handoff import register_tools as register_handoff_tools
 from .knowledge import register_tools as register_knowledge_tools
 from .mail import register_tools as register_mail_tools
 from .revisit import register_tools as register_revisit_tools
+from .stewardship import register_tools as register_stewardship_tools
 from .telegram import register_tools as register_telegram_tools
 
 
@@ -27,6 +28,7 @@ def create_server() -> FastMCP:
     register_mail_tools(server)
     register_knowledge_tools(server)
     register_revisit_tools(server)
+    register_stewardship_tools(server)
     return server
 
 

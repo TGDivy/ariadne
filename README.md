@@ -36,6 +36,7 @@ You talk to Iris in a private Telegram conversation. Ariadne runs on your machin
 | **Private conversation** | Rich Telegram messages, reply context, attachment handling, questions, reactions, and conversation continuity. |
 | **Durable context** | Searchable, linked personal records with Git-backed change history. |
 | **Follow-through** | One-off scheduled revisits that can re-check a concrete open loop at an appropriate level of attention. |
+| **Proactive stewardship** | An opt-in daily creative cycle that can reflect across current context, complete safe private work, or deliberately stay silent. |
 | **Optional life integrations** | Unified iCloud and Outlook.com Mail routing, iCloud Calendar operations, and read-only Ithaca health queries, each separately configured and scoped. |
 | **Evaluation and observability** | Reproducible companion-behaviour scenarios plus optional OpenTelemetry/Grafana telemetry. |
 
@@ -59,7 +60,7 @@ uv run ariadne config check
 uv run ariadne serve
 ```
 
-The example configuration starts with Mail, Calendar, health, and telemetry disabled. See the [getting-started guide](docs/getting-started.md) before enabling anything optional.
+The example configuration starts with Mail, Calendar, health, proactive stewardship, and telemetry disabled. See the [getting-started guide](docs/getting-started.md) before enabling anything optional.
 
 ## Guides
 
@@ -67,7 +68,7 @@ Start with the guide that matches what you need:
 
 - [Getting started](docs/getting-started.md) — prerequisites, private configuration, and a safe first run.
 - [Architecture and boundaries](docs/architecture.md) — turns, data ownership, capabilities, and integration authority.
-- [Operations reference](docs/operations.md) — optional Mail, Calendar, health, revisits, telemetry, and maintenance commands.
+- [Operations reference](docs/operations.md) — optional Mail, Calendar, health, revisits, proactive stewardship, telemetry, and maintenance commands.
 
 <details>
 <summary>Reference guides</summary>

@@ -169,7 +169,7 @@ contract small.
 
 ## Runtime boundary
 
-Production Telegram, Mail, and revisit profiles expose all six semantic
+Production Telegram, Mail, revisit, and stewardship profiles expose all six semantic
 operations. The resolved instructions include the bounded root overview and
 `now` when it exists, while all other record bodies remain on-demand through
 search and read. The private store path is forwarded only to Ariadne's local

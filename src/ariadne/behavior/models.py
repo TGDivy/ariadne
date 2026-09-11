@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ariadne.mail import MailRoute, parse_metadata
 from ariadne.prompts.activations import (
     build_mail_turn_prompt,
     build_revisit_turn_prompt,
+    build_stewardship_turn_prompt,
 )
 from ariadne.prompts.mail_evidence import render_mail_evidence
 from ariadne.revisit import Attention
+from ariadne.stewardship import (
+    StewardshipCycle,
+    StewardshipSnapshot,
+)
 from ariadne.telegram.history import (
     TelegramContentType,
     TelegramHistoryMessage,
@@ -106,6 +112,49 @@ class ScenarioRevisit:
 
 
 @dataclass(frozen=True, slots=True)
+class ScenarioStewardship:
+    """A deterministic daily-pulse activation for owner review."""
+
+    awakened_at: datetime
+    timezone: str = "Europe/London"
+    waking_start: time = time(9)
+    waking_end: time = time(21)
+    recent_summary: str = ""
+    last_broad_attention: str | None = None
+    last_broad_attention_at: datetime | None = None
+
+    def prompt(self) -> str:
+        cycle = StewardshipCycle(
+            id="stewardship_scenario",
+            local_day=self.awakened_at.astimezone(ZoneInfo(self.timezone)).date(),
+            attempted_at=self.awakened_at,
+        )
+        state = StewardshipSnapshot(
+            status="running",
+            active_cycle_id=cycle.id,
+            active_local_day=cycle.local_day,
+            last_attempted_at=self.awakened_at,
+            last_attempted_local_day=cycle.local_day,
+            last_completed_at=None,
+            last_completed_local_day=None,
+            recent_summary=self.recent_summary,
+            last_broad_attention_at=self.last_broad_attention_at,
+            last_broad_attention=self.last_broad_attention,
+            last_error=None,
+            paused=False,
+            paused_until=None,
+        )
+        return build_stewardship_turn_prompt(
+            cycle=cycle,
+            awakened_at=self.awakened_at,
+            timezone=self.timezone,
+            waking_start=self.waking_start,
+            waking_end=self.waking_end,
+            state=state,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ScenarioTelegramMessage:
     """One permanent Telegram message visible to a behaviour scenario."""
 
@@ -146,6 +195,7 @@ class BehaviorScenario:
     telegram: tuple[ScenarioTelegramMessage, ...] = ()
     revisit: ScenarioRevisit | None = None
     telegram_prompt: str | None = None
+    stewardship: ScenarioStewardship | None = None
 
     def __post_init__(self) -> None:
         if (self.email is None) != (self.route is None):
@@ -154,6 +204,7 @@ class BehaviorScenario:
             self.email is not None,
             self.revisit is not None,
             self.telegram_prompt is not None,
+            self.stewardship is not None,
         )
         if sum(triggers) != 1:
             raise ValueError("A behaviour scenario needs exactly one trigger.")
@@ -162,6 +213,8 @@ class BehaviorScenario:
     def profile_name(self) -> str:
         if self.telegram_prompt is not None:
             return "telegram"
+        if self.stewardship is not None:
+            return "stewardship"
         return (
             f"revisit-{self.revisit.attention.value}"
             if self.revisit is not None
@@ -172,6 +225,8 @@ class BehaviorScenario:
         """Render the same user input or Ariadne activation used in production."""
         if self.telegram_prompt is not None:
             return self.telegram_prompt
+        if self.stewardship is not None:
+            return self.stewardship.prompt()
         if self.revisit is not None:
             scheduled = self.revisit
             return build_revisit_turn_prompt(

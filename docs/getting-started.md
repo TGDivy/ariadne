@@ -63,14 +63,15 @@ Send `/new` in Telegram to start a fresh Codex conversation while retaining dura
 
 ## Add optional integrations deliberately
 
-Mail, Calendar, health, and telemetry are off in `config.example.toml`. Enable only the pieces you intend to operate:
+Mail, Calendar, health, proactive stewardship, and telemetry are off in `config.example.toml`. Enable only the pieces you intend to operate:
 
 - **Mail:** configure iCloud, personal Outlook.com, or both; point `[mail].routes` at a private routes file, then enable `[mail]`. Mail turns may triage, flag, or move messages under their configured route policy, but never send email. Outlook's one-time browser authorization is documented in the [operations reference](operations.md#personal-outlookcom-authorization).
 - **Calendar:** enable `[calendar]` and set an IANA timezone. Calendar writes and invitation responses can communicate externally, so keep it opt-in and review the [architecture notes](architecture.md#integration-boundaries).
 - **Health:** enable `[health]` with Ithaca's HTTPS API URL, distinct read token, and your IANA timezone. The CLI is read-only and exposes compact workout and sleep facts, never canonical raw health records.
+- **Proactive stewardship:** first run several manual owner-reviewed cycles, then enable one daily creative opportunity in a local waking window. It may read enabled private sources and complete already-authorized reversible work, but sends anything worth discussing through the continuing Telegram conversation and may remain silent.
 - **Telemetry:** enable `[telemetry]` only after adding an OTLP endpoint and authorization to the private configuration. The included Grafana dashboard is at `docs/grafana/ariadne-observability.json`.
 
-The implementation details and operational contracts for Mail, Calendar, and health live in the source and their nearby documentation. They are intentionally not required for a first private conversation.
+The implementation details and operational contracts for Mail, Calendar, health, and stewardship live in the source and their nearby documentation. They are intentionally not required for a first private conversation.
 
 ## Optional: give the bot a public identity
 

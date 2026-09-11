@@ -6,6 +6,7 @@ import os
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import time as daytime
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -27,6 +28,7 @@ from .codex.models import CodexTurnSettings, WebSearchSetting
 from .profile import PROFILES, profile_for_attention
 from .revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
 from .revisit import Attention
+from .stewardship import STATE_ENVIRONMENT as STEWARDSHIP_STATE_ENVIRONMENT
 from .telegram.questions import (
     QUESTION_STATE_ENVIRONMENT,
     default_question_state_path,
@@ -350,6 +352,61 @@ class RevisitConfig(BaseModel):
         return value.expanduser() if isinstance(value, Path) else value
 
 
+class StewardshipConfig(BaseModel):
+    """Opt-in daily creative cycle and its local waking window."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    timezone: str = "UTC"
+    waking_start: daytime = daytime(9, 0)
+    waking_end: daytime = daytime(21, 0)
+    state: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/stewardship.sqlite3"
+        ).expanduser()
+    )
+    poll_interval_seconds: PositiveInt = 60
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def strip_timezone(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("timezone")
+    @classmethod
+    def require_iana_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ValueError, ZoneInfoNotFoundError) as error:
+            raise ValueError(
+                "Stewardship timezone must be a valid IANA timezone."
+            ) from error
+        return value
+
+    @field_validator("waking_start", "waking_end")
+    @classmethod
+    def require_minute_precision(cls, value: daytime) -> daytime:
+        if value.tzinfo is not None or value.second or value.microsecond:
+            raise ValueError(
+                "Stewardship waking times use local HH:MM values without a timezone."
+            )
+        return value
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def expand_state_path(cls, value: object) -> object:
+        if isinstance(value, str):
+            return Path(value).expanduser()
+        return value.expanduser() if isinstance(value, Path) else value
+
+    @model_validator(mode="after")
+    def require_ordered_waking_window(self) -> StewardshipConfig:
+        if self.waking_end <= self.waking_start:
+            raise ValueError("Stewardship waking_end must be later than waking_start.")
+        return self
+
+
 class TelemetryConfig(BaseModel):
     """Opt-in OTLP/HTTP export configuration."""
 
@@ -409,6 +466,7 @@ class Settings(BaseModel):
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     revisits: RevisitConfig = Field(default_factory=RevisitConfig)
+    stewardship: StewardshipConfig = Field(default_factory=StewardshipConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
 
@@ -524,6 +582,10 @@ class Settings(BaseModel):
     def mail_turn_settings(self) -> CodexTurnSettings:
         return self.turn_settings("mail")
 
+    @property
+    def stewardship_turn_settings(self) -> CodexTurnSettings:
+        return self.turn_settings("stewardship")
+
     def revisit_turn_settings(self, attention: Attention) -> CodexTurnSettings:
         """Resolve the operator-configurable profile for one explicit level."""
         return self.turn_settings(profile_for_attention(attention).name)
@@ -535,6 +597,7 @@ class Settings(BaseModel):
             "TELEGRAM_ALLOWED_USER_ID": str(self.allowed_user_id),
             QUESTION_STATE_ENVIRONMENT: str(self.telegram.state.resolve()),
             REVISIT_STATE_ENVIRONMENT: str(self.revisits.state.resolve()),
+            STEWARDSHIP_STATE_ENVIRONMENT: str(self.stewardship.state.resolve()),
         }
 
     @property
@@ -587,6 +650,17 @@ class Settings(BaseModel):
             poll_interval_seconds=self.revisits.poll_interval_seconds,
         )
 
+    @property
+    def stewardship_settings(self) -> StewardshipSettings:
+        return StewardshipSettings(
+            enabled=self.stewardship.enabled,
+            timezone=self.stewardship.timezone,
+            waking_start=self.stewardship.waking_start,
+            waking_end=self.stewardship.waking_end,
+            state=self.stewardship.state.resolve(),
+            poll_interval_seconds=self.stewardship.poll_interval_seconds,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class MailSettings:
@@ -628,6 +702,18 @@ class MailAccountSettings:
 class RevisitSettings:
     """The complete always-on revisit runtime configuration."""
 
+    state: Path
+    poll_interval_seconds: int
+
+
+@dataclass(frozen=True, slots=True)
+class StewardshipSettings:
+    """Complete local runtime settings for the daily creative pulse."""
+
+    enabled: bool
+    timezone: str
+    waking_start: daytime
+    waking_end: daytime
     state: Path
     poll_interval_seconds: int
 
@@ -741,6 +827,16 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
         "revisits": {
             "state": str(settings.revisits.state),
             "poll_interval_seconds": settings.revisits.poll_interval_seconds,
+        },
+        "stewardship": {
+            "enabled": settings.stewardship.enabled,
+            "timezone": settings.stewardship.timezone,
+            "waking_start": settings.stewardship.waking_start.isoformat(
+                timespec="minutes"
+            ),
+            "waking_end": settings.stewardship.waking_end.isoformat(timespec="minutes"),
+            "state": str(settings.stewardship.state),
+            "poll_interval_seconds": settings.stewardship.poll_interval_seconds,
         },
         "telemetry": {
             "enabled": settings.telemetry.enabled,

@@ -27,6 +27,7 @@ from .handoff import HandoffCoordinator, HandoffState
 from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
 from .revisit.runtime import RevisitLoop
+from .stewardship.runtime import StewardshipLoop
 from .telegram.bot import AriadneBot
 from .telegram.continuity import TelegramConversationThreadStore
 from .telemetry import configure_telemetry
@@ -155,6 +156,17 @@ def run(path: Path | None = None) -> None:
             network_domains=settings.health_network_domains,
             telemetry=telemetry,
         )
+        stewardship_loop = StewardshipLoop(
+            settings.stewardship_settings,
+            settings.agent_workspace,
+            settings.vault,
+            settings.stewardship_turn_settings,
+            human=settings.human_name,
+            personality=settings.personality,
+            mcp_environment=settings.mcp_environment,
+            network_domains=settings.health_network_domains,
+            telemetry=telemetry,
+        )
     except ValueError as error:
         telemetry.shutdown()
         LOGGER.error("Configuration error: %s", error)
@@ -162,9 +174,10 @@ def run(path: Path | None = None) -> None:
     mail_tasks: list[asyncio.Task[None]] = []
     revisit_task: asyncio.Task[None] | None = None
     handoff_task: asyncio.Task[None] | None = None
+    stewardship_task: asyncio.Task[None] | None = None
 
     async def start_services(application: AriadneApplication) -> None:
-        nonlocal revisit_task, handoff_task
+        nonlocal revisit_task, handoff_task, stewardship_task
         ariadne.bind_bot(application.bot)
         await ariadne.recover_questions()
         await publish_commands(application)
@@ -175,12 +188,16 @@ def run(path: Path | None = None) -> None:
         LOGGER.info("Started one-off revisit source")
         handoff_task = asyncio.create_task(handoff_coordinator.run_forever(ariadne))
         LOGGER.info("Started conversational handoff coordinator")
+        if settings.stewardship.enabled:
+            stewardship_task = asyncio.create_task(stewardship_loop.run_forever())
+            LOGGER.info("Started daily proactive stewardship source")
 
     async def close_services(_: object) -> None:
         for mail_loop in mail_loops:
             mail_loop.stop()
         revisit_loop.stop()
         handoff_coordinator.stop()
+        stewardship_loop.stop()
         for mail_task in mail_tasks:
             mail_task.cancel()
         for mail_task in mail_tasks:
@@ -194,6 +211,10 @@ def run(path: Path | None = None) -> None:
             handoff_task.cancel()
             with suppress(asyncio.CancelledError):
                 await handoff_task
+        if stewardship_task is not None:
+            stewardship_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await stewardship_task
         try:
             await conversation.close()
         except Exception:

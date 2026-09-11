@@ -27,11 +27,12 @@ Provider credentials are read from the private TOML file only after the correspo
 
 ## Inspect the active turn profiles
 
-Telegram, Mail, and each revisit attention level have independent turn profiles. Inspect the exact model, prompts, tool set, thread behaviour, permissions, and forwarded environment-variable names for a surface with:
+Telegram, Mail, proactive stewardship, and each revisit attention level have independent turn profiles. Inspect the exact model, prompts, tool set, thread behaviour, permissions, and forwarded environment-variable names for a surface with:
 
 ```bash
 uv run python -m ariadne.scripts.profile telegram
 uv run python -m ariadne.scripts.profile mail
+uv run python -m ariadne.scripts.profile stewardship
 uv run python -m ariadne.scripts.profile revisit-focused
 ```
 
@@ -45,7 +46,7 @@ If the remote thread no longer exists or its saved state is incompatible, Ariadn
 
 ### Conversational background handoffs
 
-Mail and revisit profiles do not have `send_telegram_message` or Telegram file-delivery authority. They may instead stage one free-form `hand_off_to_telegram_conversation` result under their runtime-supplied activation key. The mail or revisit loop releases that row only after its own operation succeeds; failure or cancellation discards it. Repeating the capability before release replaces the same activation's staged body.
+Mail, revisit, and stewardship profiles do not have `send_telegram_message` or Telegram file-delivery authority. They may instead stage one free-form `hand_off_to_telegram_conversation` result under their runtime-supplied activation key. The originating loop releases that row only after its own operation succeeds; failure or cancellation discards it. Repeating the capability before release replaces the same activation's staged body.
 
 The handoff table is created additively in `[telegram].state`; there is no configuration migration or broker to operate. On startup, interrupted claims return to ready state. When a human message arrives, a bounded FIFO batch joins that next shared turn. With no message, the coordinator waits for two minutes without human or Iris conversational activity, then runs the same Telegram conversation without creating a fake incoming message or a premature thinking placeholder. A failed shared turn retains the batch for retry, and successful visible output is written to normal Telegram history.
 
@@ -292,6 +293,36 @@ Each wake-up has a timezone-aware due time, a self-contained reason, and one att
 | `deep` | Cross-source investigation, research, planning, or meaningful ambiguity. |
 
 The runtime does not start a model turn unless an item is due. A due item starts fresh, re-checks present context, and either stages useful context for the shared Telegram conversation or completes silently. There is no recurrence or heuristic escalation.
+
+## Proactive stewardship
+
+Stewardship is a separate opt-in daily opportunity for Iris to reflect across current goals, conversation, Calendar, mail, health, workouts, and private knowledge; imagine several grounded ways to help; complete one safe coherent loop; and learn from the result. It is not a compulsory briefing. Most cycles may remain silent, and anything worth discussing is staged for the continuing Telegram Iris through the same two-minute handoff coordinator.
+
+Start with recurrence disabled and configure the owner's IANA timezone and local waking window:
+
+```toml
+[stewardship]
+enabled = false
+timezone = "Europe/London"
+waking_start = "09:00"
+waking_end = "21:00"
+state = "~/.local/state/ariadne/stewardship.sqlite3"
+poll_interval_seconds = 60
+```
+
+Run several explicit trials against the private sources before enabling it:
+
+```bash
+uv run ariadne-stewardship --config ~/.config/ariadne/config.toml
+```
+
+The command forces one owner-requested cycle even while recurrence is disabled and emits one compact JSON result with `completed`, `failed`, or `not-run` status. Review the resulting private changes and any conversational handoff for usefulness, surprise, repetition, action correctness, and interruption quality. It is valid—and important—that a well-grounded cycle sometimes records “nothing worthwhile” and sends nothing.
+
+Only after those reviews, set `enabled = true` and restart the service. The runtime attempts at most one successful cycle for each local date inside the half-open waking window. Missed days are not replayed. A failed attempt waits 30 minutes before retrying; a cancelled or process-interrupted attempt is immediately eligible again. Outcome history and broad-attention hints are bounded operational orientation, not a second knowledge base.
+
+The SQLite state is created additively at the configured path with owner-only permissions. Indefinite and time-bounded pauses persist across service restarts; an expired pause clears atomically. Resuming does not manufacture a missed cycle. Explicit “run now” bypasses the waking window, disabled recurrence, and a pause without changing the stored pause. Status consumers receive the configured enablement, pause/running state, last completion, and next eligible instant in the configured local timezone.
+
+The stewardship profile can use the ordinary discoverable Mail, Calendar, and health CLI plus semantic knowledge and one-off-revisit capabilities. It cannot send Telegram messages/files or email, and it has no mail-ingestion decision authority. Payment, applications, outbound interpersonal communication, consequential accounts, high-stakes appointments, and ambiguous commitments still require owner confirmation. Browser control and direct sending are separate capabilities, not implied by enabling stewardship.
 
 ## Telemetry
 

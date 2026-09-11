@@ -9,6 +9,7 @@ from ariadne.codex import CodexTurnSettings
 from ariadne.config import load_settings, settings_payload
 from ariadne.revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
 from ariadne.revisit import Attention
+from ariadne.stewardship import STATE_ENVIRONMENT as STEWARDSHIP_STATE_ENVIRONMENT
 
 
 def write_config(
@@ -85,6 +86,78 @@ web_search = "live"
         effort=ReasoningEffort.medium,
         web_search="live",
     )
+
+
+def test_stewardship_configuration_is_typed_redacted_and_independently_tunable(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / "private" / "stewardship.sqlite3"
+    config = write_config(
+        tmp_path,
+        extra=f'''\
+
+[stewardship]
+enabled = true
+timezone = "Europe/London"
+waking_start = "08:30"
+waking_end = "20:45"
+state = "{state}"
+poll_interval_seconds = 30
+
+[profiles.stewardship]
+model = "gpt-steward"
+effort = "medium"
+web_search = "live"
+''',
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.stewardship_settings.enabled is True
+    assert settings.stewardship_settings.timezone == "Europe/London"
+    assert settings.stewardship_settings.waking_start.isoformat() == "08:30:00"
+    assert settings.stewardship_settings.waking_end.isoformat() == "20:45:00"
+    assert settings.stewardship_settings.state == state.resolve()
+    assert settings.stewardship_settings.poll_interval_seconds == 30
+    assert settings.stewardship_turn_settings == CodexTurnSettings(
+        model="gpt-steward",
+        effort=ReasoningEffort.medium,
+        web_search="live",
+    )
+    assert settings.mcp_environment[STEWARDSHIP_STATE_ENVIRONMENT] == str(
+        state.resolve()
+    )
+    payload = settings_payload(settings)["stewardship"]
+    assert payload == {
+        "enabled": True,
+        "timezone": "Europe/London",
+        "waking_start": "08:30",
+        "waking_end": "20:45",
+        "state": str(state),
+        "poll_interval_seconds": 30,
+    }
+
+
+@pytest.mark.parametrize(
+    ("section", "error"),
+    [
+        ('timezone = "Not/A_Zone"', "valid IANA timezone"),
+        ('waking_start = "21:00"\nwaking_end = "09:00"', "later than"),
+        ('waking_start = "09:00:01"', "HH:MM"),
+    ],
+)
+def test_stewardship_rejects_ambiguous_local_scheduling(
+    tmp_path: Path,
+    section: str,
+    error: str,
+) -> None:
+    config = write_config(
+        tmp_path,
+        extra=f"\n[stewardship]\n{section}\n",
+    )
+
+    with pytest.raises(ValidationError, match=error):
+        load_settings(config, environ={})
 
 
 def test_ariadne_config_selects_an_alternate_toml(tmp_path: Path) -> None:
@@ -223,6 +296,7 @@ default_calendar = "Personal"
         "TELEGRAM_ALLOWED_USER_ID": "12345",
         "ARIADNE_TELEGRAM_STATE": str(settings.telegram.state.resolve()),
         REVISIT_STATE_ENVIRONMENT: str(settings.revisits.state.resolve()),
+        STEWARDSHIP_STATE_ENVIRONMENT: str(settings.stewardship.state.resolve()),
     }
     assert settings.icloud_credentials is not None
     username, password = settings.icloud_credentials
@@ -363,6 +437,10 @@ def test_default_mail_state_expands_the_home_directory(
     assert (
         settings.revisits.state == fake_home / ".local/state/ariadne/revisits.sqlite3"
     )
+    assert (
+        settings.stewardship.state
+        == fake_home / ".local/state/ariadne/stewardship.sqlite3"
+    )
     assert settings.mcp_environment["ARIADNE_TELEGRAM_STATE"] == str(
         settings.telegram.state.resolve()
     )
@@ -387,6 +465,7 @@ def test_config_example_is_a_valid_disabled_mail_template(tmp_path: Path) -> Non
     assert settings.mail_settings is None
     assert settings.calendar.enabled is False
     assert settings.health.enabled is False
+    assert settings.stewardship.enabled is False
     assert settings.telemetry.enabled is False
 
 

@@ -13,11 +13,13 @@ from ariadne.profile import (
     MAIL_PROFILE,
     PROFILES,
     REVISIT_PROFILES,
+    STEWARDSHIP_PROFILE,
     TELEGRAM_PROFILE,
 )
 from ariadne.prompts.inspection import profile_payload, render_profile
 from ariadne.revisit import ATTENTION_SETTINGS, Attention
 from ariadne.revisit import TOOLS as REVISIT_TOOLS
+from ariadne.stewardship import TOOLS as STEWARDSHIP_TOOLS
 
 TELEGRAM_SETTINGS = CodexTurnSettings(
     model="gpt-telegram",
@@ -35,6 +37,7 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert PROFILES == {
         "telegram": TELEGRAM_PROFILE,
         "mail": MAIL_PROFILE,
+        "stewardship": STEWARDSHIP_PROFILE,
         **{profile.name: profile for profile in REVISIT_PROFILES.values()},
     }
     assert MAIL_PROFILE.name == "mail"
@@ -82,6 +85,33 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert TELEGRAM_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
     assert all(tool in TELEGRAM_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
 
+    assert STEWARDSHIP_PROFILE.name == "stewardship"
+    assert STEWARDSHIP_PROFILE.settings == CodexTurnSettings(
+        model="gpt-5.6-terra",
+        effort=ReasoningEffort.high,
+        web_search="live",
+    )
+    assert STEWARDSHIP_PROFILE.instruction_documents == (
+        "base",
+        "stewardship",
+        "knowledge",
+    )
+    assert STEWARDSHIP_PROFILE.thread_policy == "fresh-per-event"
+    assert "read_recent_telegram_messages" in STEWARDSHIP_PROFILE.enabled_tools
+    assert "hand_off_to_telegram_conversation" in STEWARDSHIP_PROFILE.enabled_tools
+    assert all(tool in STEWARDSHIP_PROFILE.enabled_tools for tool in STEWARDSHIP_TOOLS)
+    assert all(tool in STEWARDSHIP_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
+    assert STEWARDSHIP_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == (
+        KNOWLEDGE_TOOLS
+    )
+    assert "send_telegram_message" not in STEWARDSHIP_PROFILE.enabled_tools
+    assert "request_telegram_file_delivery" not in STEWARDSHIP_PROFILE.enabled_tools
+    assert "ask_telegram_question" not in STEWARDSHIP_PROFILE.enabled_tools
+    assert "record_current_mail_decision" not in STEWARDSHIP_PROFILE.enabled_tools
+    assert "ARIADNE_STEWARDSHIP_STATE" in (STEWARDSHIP_PROFILE.mcp_environment_names)
+    assert "ARIADNE_STEWARDSHIP_CYCLE" in (STEWARDSHIP_PROFILE.mcp_environment_names)
+    assert "ARIADNE_MAIL_STATE" not in STEWARDSHIP_PROFILE.mcp_environment_names
+
     for attention in Attention:
         revisit = REVISIT_PROFILES[attention]
         assert revisit.settings == ATTENTION_SETTINGS[attention]
@@ -105,6 +135,7 @@ def test_every_turn_profile_discovers_data_commands_through_concise_base_help(
     for declaration in (
         TELEGRAM_PROFILE,
         MAIL_PROFILE,
+        STEWARDSHIP_PROFILE,
         *REVISIT_PROFILES.values(),
     ):
         resolved = resolve_profile(
@@ -225,7 +256,7 @@ def test_shared_personality_is_applied_to_every_resolved_profile(
         "Remember durable personal context when it is useful.", encoding="utf-8"
     )
 
-    for surface in (TELEGRAM_PROFILE, MAIL_PROFILE):
+    for surface in (TELEGRAM_PROFILE, MAIL_PROFILE, STEWARDSHIP_PROFILE):
         profile = resolve_profile(
             surface,
             workspace=tmp_path,
@@ -242,7 +273,7 @@ def test_shared_personality_is_applied_to_every_resolved_profile(
 def test_shared_instructions_keep_knowledge_storage_out_of_iriss_workflow(
     tmp_path: Path,
 ) -> None:
-    for surface in (TELEGRAM_PROFILE, MAIL_PROFILE):
+    for surface in (TELEGRAM_PROFILE, MAIL_PROFILE, STEWARDSHIP_PROFILE):
         profile = resolve_profile(surface, workspace=tmp_path, human="Example User")
 
         assert "private-memory capabilities" in profile.developer_instructions
@@ -339,6 +370,42 @@ def test_revisit_profile_has_fresh_context_and_background_delivery(
     assert dict(profile.mcp_environment_values)["ARIADNE_REVISIT_STATE"] == str(
         tmp_path / "revisits.sqlite3"
     )
+
+
+def test_stewardship_profile_has_broad_reads_but_bounded_mutation_authority(
+    tmp_path: Path,
+) -> None:
+    profile = resolve_profile(
+        STEWARDSHIP_PROFILE,
+        workspace=tmp_path,
+        human="Example User",
+        mcp_environment={
+            "TELEGRAM_ALLOWED_USER_ID": "7",
+            "ARIADNE_TELEGRAM_STATE": str(tmp_path / "telegram.sqlite3"),
+            "ARIADNE_REVISIT_STATE": str(tmp_path / "revisits.sqlite3"),
+            "ARIADNE_STEWARDSHIP_STATE": str(tmp_path / "stewardship.sqlite3"),
+            "ARIADNE_STEWARDSHIP_CYCLE": "cycle-1",
+            "ARIADNE_ACTIVATION_KEY": "cycle-1",
+            "ARIADNE_ACTIVATION_SOURCE": "stewardship",
+            "ARIADNE_MAIL_STATE": str(tmp_path / "mail.sqlite3"),
+        },
+    )
+
+    assert profile.name == "stewardship"
+    assert profile.thread_policy == "fresh-per-event"
+    assert "ariadne.prompts/stewardship.md" in profile.base_instruction_sources
+    assert "Reflect" in profile.base_instructions
+    assert "select one coherent opportunity" in profile.base_instructions
+    assert "Do not send Telegram text or files" in profile.base_instructions
+    assert "hand_off_to_telegram_conversation" in profile.enabled_tools
+    assert "record_stewardship_outcome" in profile.enabled_tools
+    assert "send_telegram_message" not in profile.enabled_tools
+    assert "request_telegram_file_delivery" not in profile.enabled_tools
+    assert "record_current_mail_decision" not in profile.enabled_tools
+    environment = dict(profile.mcp_environment_values)
+    assert environment["ARIADNE_STEWARDSHIP_CYCLE"] == "cycle-1"
+    assert environment["ARIADNE_ACTIVATION_SOURCE"] == "stewardship"
+    assert "ARIADNE_MAIL_STATE" not in environment
 
 
 def test_profile_inspection_never_contains_environment_values(
