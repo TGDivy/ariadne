@@ -31,10 +31,13 @@ from ..codex import (
     TurnInterrupted,
     WebSearchSetting,
 )
+from ..handoff import ConversationHandoff, HandoffCoordinator, HandoffState
 from ..prompts.activations import (
     EMPTY_TELEGRAM_REPLY,
+    build_direct_turn_with_handoffs,
     build_document_turn_prompt,
     build_image_turn_prompt,
+    build_proactive_handoff_turn_prompt,
     build_telegram_turn_prompt,
 )
 from .file_delivery import FileDelivery, FileDeliveryError
@@ -49,6 +52,7 @@ from .live import (
     STOPPING_MESSAGE,
     LiveTurn,
 )
+from .proactive import ProactiveTurn
 from .questions import (
     QuestionSelection,
     TelegramQuestion,
@@ -199,6 +203,7 @@ class AriadneBot:
         *,
         bot_token: str,
         question_state: Path | None = None,
+        handoff_coordinator: HandoffCoordinator | None = None,
     ) -> None:
         self._allowed_user_id = allowed_user_id
         self._bot_token = bot_token
@@ -213,11 +218,19 @@ class AriadneBot:
         self._questions = TelegramQuestionStore(state_path)
         self._history = TelegramMessageStore(state_path)
         self._history.initialize()
+        self._handoffs = handoff_coordinator or HandoffCoordinator(
+            HandoffState(state_path)
+        )
         self._file_delivery = FileDelivery()
         self._albums: dict[str, _Album] = {}
         self._pending_messages: deque[_PendingMessage] = deque()
         self._pending_task: asyncio.Task[None] | None = None
         self._steer_lock = asyncio.Lock()
+
+    @property
+    def proactive_handoff_blocked(self) -> bool:
+        """Keep proactive work behind active or already-buffered human input."""
+        return self._busy or self._stopping or bool(self._pending_messages)
 
     def bind_bot(self, bot: Bot) -> None:
         """Bind PTB's initialized bot to the Bot API 10.3 compatibility layer."""
@@ -818,6 +831,7 @@ class AriadneBot:
         """Send one user message through Codex and stream its answer back."""
         if not self._is_allowed(user_id):
             return
+        self._handoffs.note_activity()
 
         reply_to = (
             message.reply_to_message.message_id
@@ -864,6 +878,10 @@ class AriadneBot:
             )
             return
 
+        if self._rich_api is None:
+            raise RuntimeError("Telegram Rich Messages are not initialized.")
+        claimed_handoffs = self._handoffs.claim_for_direct_turn()
+        prompt = build_direct_turn_with_handoffs(prompt, claimed_handoffs)
         started_at = time.monotonic()
         status = "cancelled"
         self._busy = True
@@ -873,8 +891,6 @@ class AriadneBot:
             self._conversation.settings.model,
             self._conversation.settings.effort.value,
         )
-        if self._rich_api is None:
-            raise RuntimeError("Telegram Rich Messages are not initialized.")
         live = LiveTurn(message, self._rich_api, self._history)
         self._live_response = live
         try:
@@ -909,15 +925,69 @@ class AriadneBot:
                     )
                     await live.fail()
         finally:
+            if claimed_handoffs:
+                if status == "success":
+                    self._handoffs.complete(claimed_handoffs)
+                else:
+                    self._handoffs.retry(
+                        claimed_handoffs,
+                        f"Direct shared turn ended with status {status}",
+                    )
             await self._cancel_pending_question()
             self._stop_notice = None
             self._stopping = False
             self._live_response = None
             self._busy = False
+            self._handoffs.note_activity()
             LOGGER.info(
                 "Telegram turn finished message_id=%s status=%s duration=%.2fs",
                 message.message_id,
                 status,
+                time.monotonic() - started_at,
+            )
+
+    async def present_handoffs(self, handoffs: tuple[ConversationHandoff, ...]) -> None:
+        """Run a quiet-window turn on the same conversation without fake input."""
+        if self.proactive_handoff_blocked:
+            raise RuntimeError("The Telegram conversation became busy.")
+        rich_api = self._rich_api
+        if rich_api is None:
+            raise RuntimeError("Telegram Rich Messages are not initialized.")
+        self._busy = True
+        started_at = time.monotonic()
+        renderer = ProactiveTurn(
+            rich_api,
+            self._history,
+            chat_id=self._allowed_user_id,
+            activity=self._handoffs.note_activity,
+        )
+        try:
+            prompt = build_proactive_handoff_turn_prompt(handoffs)
+            async for event in self._conversation.stream_turn(
+                prompt,
+                stop_requested=lambda: self._stopping,
+            ):
+                if not self._stopping:
+                    await renderer.apply(event)
+            if self._stopping:
+                raise TurnInterrupted()
+            renderer.complete()
+        except TurnInterrupted:
+            await self._send_stopped()
+            raise
+        except Exception:
+            if self._stopping:
+                await self._send_stopped()
+            raise
+        finally:
+            await self._cancel_pending_question()
+            self._stop_notice = None
+            self._stopping = False
+            self._busy = False
+            LOGGER.info(
+                "Proactive shared turn finished handoffs=%d messages=%d duration=%.2fs",
+                len(handoffs),
+                renderer.delivered_messages,
                 time.monotonic() - started_at,
             )
 

@@ -11,6 +11,7 @@ from fastmcp.exceptions import ToolError
 from openai_codex.generated.v2_all import ReasoningEffort
 
 from ariadne.config import RevisitSettings
+from ariadne.handoff import HandoffState
 from ariadne.mcp import revisit as revisit_tools
 from ariadne.profile import REVISIT_PROFILES
 from ariadne.prompts.activations import build_revisit_turn_prompt
@@ -249,6 +250,7 @@ def revisit_loop(
     tmp_path: Path,
     state: RevisitState,
     conversation: FakeConversation,
+    handoffs: HandoffState | None = None,
 ) -> RevisitLoop:
     return RevisitLoop(
         RevisitSettings(state.path, 15),
@@ -259,6 +261,7 @@ def revisit_loop(
         state=state,
         conversation_factory=lambda _revisit: conversation,  # type: ignore[return-value]
         clock=lambda: instant(3_000),
+        handoffs=handoffs,
     )
 
 
@@ -291,6 +294,26 @@ async def test_runtime_wakes_once_and_discards_native_output(tmp_path: Path) -> 
     assert "<earlier_iris_note>" in prompt
 
 
+async def test_successful_revisit_releases_its_staged_handoff(tmp_path: Path) -> None:
+    state = state_at(tmp_path)
+    scheduled = state.schedule(
+        due_at=instant(2_000), note="Check once", attention=Attention.light
+    )
+    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=lambda: 1_000)
+    handoffs.stage(
+        activation_key=scheduled.id,
+        source="revisit",
+        body="The useful result",
+    )
+    loop = revisit_loop(tmp_path, state, FakeConversation(), handoffs)
+
+    await loop.process_due()
+
+    retained = handoffs.for_activation(scheduled.id)
+    assert retained is not None
+    assert retained.status == "ready"
+
+
 async def test_runtime_retains_a_failed_execution_without_rerouting(
     tmp_path: Path,
 ) -> None:
@@ -309,6 +332,31 @@ async def test_runtime_retains_a_failed_execution_without_rerouting(
     assert failed.status == "failed"
     assert failed.attempts == 1
     assert failed.error == "model failed"
+
+
+async def test_failed_revisit_discards_its_staged_handoff(tmp_path: Path) -> None:
+    state = state_at(tmp_path)
+    scheduled = state.schedule(
+        due_at=instant(2_000), note="Check once", attention=Attention.light
+    )
+    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=lambda: 1_000)
+    handoffs.stage(
+        activation_key=scheduled.id,
+        source="revisit",
+        body="Uncommitted result",
+    )
+    loop = revisit_loop(
+        tmp_path,
+        state,
+        FakeConversation(error=RuntimeError("model failed")),
+        handoffs,
+    )
+
+    await loop.process_due()
+
+    retained = handoffs.for_activation(scheduled.id)
+    assert retained is not None
+    assert retained.status == "discarded"
 
 
 async def test_runtime_cancellation_returns_the_revisit_to_pending(
@@ -334,6 +382,33 @@ async def test_runtime_cancellation_returns_the_revisit_to_pending(
     assert pending is not None
     assert pending.status == "pending"
     assert conversation.closed is True
+
+
+async def test_cancelled_revisit_discards_its_staged_handoff(tmp_path: Path) -> None:
+    class CancelledConversation(FakeConversation):
+        async def stream_turn(self, prompt: str) -> Any:
+            self.prompts.append(prompt)
+            raise asyncio.CancelledError
+            yield
+
+    state = state_at(tmp_path)
+    scheduled = state.schedule(
+        due_at=instant(2_000), note="Check once", attention=Attention.light
+    )
+    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=lambda: 1_000)
+    handoffs.stage(
+        activation_key=scheduled.id,
+        source="revisit",
+        body="Uncommitted result",
+    )
+    loop = revisit_loop(tmp_path, state, CancelledConversation(), handoffs)
+
+    with pytest.raises(asyncio.CancelledError):
+        await loop.process_due()
+
+    retained = handoffs.for_activation(scheduled.id)
+    assert retained is not None
+    assert retained.status == "discarded"
 
 
 def test_activation_prompt_uses_the_configured_human_name(tmp_path: Path) -> None:

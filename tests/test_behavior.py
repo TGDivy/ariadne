@@ -144,6 +144,7 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "send_telegram_message",
         "read_recent_telegram_messages",
         "request_telegram_file_delivery",
+        "hand_off_to_telegram_conversation",
         "record_current_mail_decision",
         "search_knowledge",
         "list_knowledge",
@@ -190,6 +191,11 @@ async def test_fake_capabilities_record_calls(
     monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
 
     assert await fake_mcp.send_telegram_message("Race booked 😄") == [1001]
+    assert fake_mcp.hand_off_to_telegram_conversation("Internal context") == {
+        "status": "staged",
+        "handoff_id": "handoff_scenario",
+        "activation_key": "scenario",
+    }
     result = fake_mcp.record_current_mail_decision(
         "notifications", "important", "keep_in_inbox"
     )
@@ -197,6 +203,7 @@ async def test_fake_capabilities_record_calls(
     assert result["status"] == "recorded"
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
         "send_telegram_message",
+        "hand_off_to_telegram_conversation",
         "record_current_mail_decision",
     ]
 

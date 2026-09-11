@@ -43,6 +43,14 @@ The Telegram profile resumes its active Codex thread across normal service resta
 
 If the remote thread no longer exists or its saved state is incompatible, Ariadne invalidates only that reference, starts fresh, and tells the owner once. Logs contain the bounded failure class, never the saved identifier. Do not edit or transplant the row manually to resume an arbitrary Codex thread.
 
+### Conversational background handoffs
+
+Mail and revisit profiles do not have `send_telegram_message` or Telegram file-delivery authority. They may instead stage one free-form `hand_off_to_telegram_conversation` result under their runtime-supplied activation key. The mail or revisit loop releases that row only after its own operation succeeds; failure or cancellation discards it. Repeating the capability before release replaces the same activation's staged body.
+
+The handoff table is created additively in `[telegram].state`; there is no configuration migration or broker to operate. On startup, interrupted claims return to ready state. When a human message arrives, a bounded FIFO batch joins that next shared turn. With no message, the coordinator waits for two minutes without human or Iris conversational activity, then runs the same Telegram conversation without creating a fake incoming message or a premature thinking placeholder. A failed shared turn retains the batch for retry, and successful visible output is written to normal Telegram history.
+
+Operational logs expose only lifecycle identifiers, counts, statuses, and timings. To validate a deployment, trigger a harmless background handoff, confirm it stays invisible until its source job completes, then check both paths: send a human message before two minutes and later allow another handoff to cross the quiet window. Restart once with a ready handoff and once during a claimed test turn to verify conservative recovery. Do not inspect the private SQLite body in shared logs or a PR.
+
 ## Behaviour scenarios
 
 The behaviour lab replays synthetic stories without contacting a real Telegram chat, mailbox, Calendar, or private Thread. Listing and inspection are deterministic and CI-safe; a real run is an explicit local command and may incur model usage.
@@ -283,7 +291,7 @@ Each wake-up has a timezone-aware due time, a self-contained reason, and one att
 | `focused` | A bounded check using current Mail, Calendar, or knowledge. |
 | `deep` | Cross-source investigation, research, planning, or meaningful ambiguity. |
 
-The runtime does not start a model turn unless an item is due. A due item starts fresh, re-checks present context, and either sends a warranted message or completes silently. There is no recurrence or heuristic escalation.
+The runtime does not start a model turn unless an item is due. A due item starts fresh, re-checks present context, and either stages useful context for the shared Telegram conversation or completes silently. There is no recurrence or heuristic escalation.
 
 ## Telemetry
 

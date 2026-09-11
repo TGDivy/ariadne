@@ -16,6 +16,7 @@ from pypdf import PdfWriter
 from ariadne.codex import CodexConversation, _mcp_config_overrides
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
+from ariadne.handoff import HandoffState
 from ariadne.mail import (
     FULL_QUERY,
     HEADER_QUERY,
@@ -534,6 +535,28 @@ async def test_iris_then_move_honors_iris_flag_and_leaves_mail_in_inbox(
     assert "/config/mail-routes.yaml" not in conversations[0].prompts[0]
 
 
+async def test_successful_mail_job_releases_its_staged_handoff(tmp_path: Path) -> None:
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    state: MailState
+
+    def conversation(job_id: str) -> CodexConversation:
+        return cast(CodexConversation, DecidingConversation(state, job_id))
+
+    processor, state = queued_processor(tmp_path, client, conversation)
+    job_id = MailState.job_id("INBOX", 10, 1)
+    handoffs = HandoffState(tmp_path / "telegram.sqlite3")
+    handoffs.stage(activation_key=job_id, source="mail", body="Useful result")
+    processor.handoffs = handoffs
+
+    await processor.process_available()
+
+    retained = handoffs.for_activation(job_id)
+    assert retained is not None
+    assert retained.status == "ready"
+
+
 async def test_iris_then_move_honors_iris_destination_without_duplicate_move(
     tmp_path: Path,
 ) -> None:
@@ -611,6 +634,59 @@ async def test_iris_then_move_does_not_move_when_iris_fails(tmp_path: Path) -> N
     assert client.moves == []
     assert len(conversations) == 1
     assert conversations[0].closed
+
+
+async def test_failed_mail_job_discards_its_staged_handoff(tmp_path: Path) -> None:
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    processor, state = queued_processor(
+        tmp_path,
+        client,
+        lambda _job_id: cast(CodexConversation, FailingConversation()),
+    )
+    job_id = MailState.job_id("INBOX", 10, 1)
+    handoffs = HandoffState(tmp_path / "telegram.sqlite3")
+    handoffs.stage(activation_key=job_id, source="mail", body="Uncommitted result")
+    processor.handoffs = handoffs
+
+    await processor.process_available()
+
+    retained = handoffs.for_activation(job_id)
+    assert retained is not None
+    assert retained.status == "discarded"
+    job = state.get(job_id)
+    assert job is not None and job.status == "failed"
+
+
+async def test_cancelled_mail_job_discards_its_staged_handoff(tmp_path: Path) -> None:
+    class CancelledConversation:
+        async def stream_turn(self, _prompt: str):
+            raise asyncio.CancelledError
+            yield
+
+        async def close(self) -> None:
+            pass
+
+    client = FakeIMAP(
+        {1: message("review@example.com", "Trip review", message_id="<review>")}
+    )
+    processor, _state = queued_processor(
+        tmp_path,
+        client,
+        lambda _job_id: cast(CodexConversation, CancelledConversation()),
+    )
+    job_id = MailState.job_id("INBOX", 10, 1)
+    handoffs = HandoffState(tmp_path / "telegram.sqlite3")
+    handoffs.stage(activation_key=job_id, source="mail", body="Uncommitted result")
+    processor.handoffs = handoffs
+
+    with pytest.raises(asyncio.CancelledError):
+        await processor.process_available()
+
+    retained = handoffs.for_activation(job_id)
+    assert retained is not None
+    assert retained.status == "discarded"
 
 
 async def test_iris_then_move_retries_iris_after_iris_failure(tmp_path: Path) -> None:

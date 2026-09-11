@@ -10,6 +10,9 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
 from ariadne.mail import Importance, SuggestedAction
+from ariadne.mcp.handoff import (
+    hand_off_to_telegram_conversation as real_hand_off_to_telegram_conversation,
+)
 from ariadne.mcp.mail import (
     record_current_mail_decision as real_record_current_mail_decision,
 )
@@ -78,6 +81,18 @@ async def request_telegram_file_delivery(paths: list[str]) -> dict[str, Any]:
         "expires_in_seconds": 900,
         "approval_requested": True,
         "files": [{"path": path, "filename": Path(path).name} for path in paths],
+    }
+
+
+@wraps(real_hand_off_to_telegram_conversation)
+def hand_off_to_telegram_conversation(text: str) -> dict[str, str]:
+    if not text.strip():
+        raise ToolError("A handoff needs something to say.")
+    record_call("hand_off_to_telegram_conversation", {"text": text})
+    return {
+        "status": "staged",
+        "handoff_id": "handoff_scenario",
+        "activation_key": "scenario",
     }
 
 
@@ -186,6 +201,7 @@ def create_server() -> FastMCP:
     server.tool(send_telegram_message, annotations=harmless)
     server.tool(read_recent_telegram_messages, annotations=harmless)
     server.tool(request_telegram_file_delivery, annotations=harmless)
+    server.tool(hand_off_to_telegram_conversation, annotations=harmless)
     server.tool(record_current_mail_decision, annotations=harmless)
     register_knowledge_tools(server, harmless)
     server.tool(schedule_wakeup, annotations=harmless)

@@ -23,6 +23,7 @@ from telegram.ext import (
 from .codex import CodexConversation
 from .codex.resolver import resolve_profile
 from .config import CONFIG_PATH_ENVIRONMENT, Settings, config_path, load_settings
+from .handoff import HandoffCoordinator, HandoffState
 from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
 from .revisit.runtime import RevisitLoop
@@ -113,11 +114,15 @@ def run(path: Path | None = None) -> None:
             profile_name=telegram_profile.name,
         ),
     )
+    handoff_coordinator = HandoffCoordinator(
+        HandoffState(settings.telegram.state.resolve())
+    )
     ariadne = AriadneBot(
         settings.allowed_user_id,
         conversation,
         bot_token=settings.telegram_bot_token,
         question_state=telegram_state,
+        handoff_coordinator=handoff_coordinator,
     )
     try:
         mail_loops = (
@@ -156,9 +161,10 @@ def run(path: Path | None = None) -> None:
         raise SystemExit(2) from error
     mail_tasks: list[asyncio.Task[None]] = []
     revisit_task: asyncio.Task[None] | None = None
+    handoff_task: asyncio.Task[None] | None = None
 
     async def start_services(application: AriadneApplication) -> None:
-        nonlocal revisit_task
+        nonlocal revisit_task, handoff_task
         ariadne.bind_bot(application.bot)
         await ariadne.recover_questions()
         await publish_commands(application)
@@ -167,11 +173,14 @@ def run(path: Path | None = None) -> None:
             LOGGER.info("Started Mail source account=%s", mail_loop.account.key)
         revisit_task = asyncio.create_task(revisit_loop.run_forever())
         LOGGER.info("Started one-off revisit source")
+        handoff_task = asyncio.create_task(handoff_coordinator.run_forever(ariadne))
+        LOGGER.info("Started conversational handoff coordinator")
 
     async def close_services(_: object) -> None:
         for mail_loop in mail_loops:
             mail_loop.stop()
         revisit_loop.stop()
+        handoff_coordinator.stop()
         for mail_task in mail_tasks:
             mail_task.cancel()
         for mail_task in mail_tasks:
@@ -181,6 +190,10 @@ def run(path: Path | None = None) -> None:
             revisit_task.cancel()
             with suppress(asyncio.CancelledError):
                 await revisit_task
+        if handoff_task is not None:
+            handoff_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await handoff_task
         try:
             await conversation.close()
         except Exception:
