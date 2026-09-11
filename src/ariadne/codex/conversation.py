@@ -51,7 +51,13 @@ from .events import (
     WorkStarted,
     WorkSummaryUpdated,
 )
-from .models import CodexModel, CodexTurnSettings, ResolvedTurnProfile
+from .models import (
+    CodexModel,
+    CodexTurnSettings,
+    ConversationThreadStore,
+    PersistedConversationThread,
+    ResolvedTurnProfile,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -61,6 +67,8 @@ WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_TOOL_TIMEOUT_SECONDS = 16 * 60
 MCP_SERVER_NAME = "ariadne"
 TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
+THREAD_STATE_VERSION = 1
+MAX_PERSISTED_THREAD_ID_LENGTH = 512
 
 
 class TurnInterrupted(Exception):
@@ -207,7 +215,10 @@ class CodexConversation:
         *,
         client: AsyncCodex | None = None,
         telemetry: Telemetry | None = None,
+        thread_store: ConversationThreadStore | None = None,
     ) -> None:
+        if thread_store is not None and profile.thread_policy != "shared":
+            raise ValueError("Only shared conversations may persist a thread.")
         self._profile = profile
         self._telemetry = telemetry or Telemetry()
         self._client = (
@@ -226,6 +237,8 @@ class CodexConversation:
         self._last_turn_token_usage: TokenUsageBreakdown | None = None
         self._active_turn: AsyncTurnHandle | None = None
         self._interrupting_turn: AsyncTurnHandle | None = None
+        self._thread_store = thread_store
+        self._continuity_lost = False
 
     @property
     def settings(self) -> CodexTurnSettings:
@@ -261,8 +274,15 @@ class CodexConversation:
 
     def set_settings(self, settings: CodexTurnSettings) -> None:
         """Apply new process-local settings to subsequent turns."""
-        self._profile = self._profile.with_settings(settings)
         self.reset()
+        self._profile = self._profile.with_settings(settings)
+
+    async def prepare_thread(self) -> bool:
+        """Prepare the shared thread and report one recovered continuity loss."""
+        await self._thread_for_conversation()
+        continuity_lost = self._continuity_lost
+        self._continuity_lost = False
+        return continuity_lost
 
     async def interrupt(self) -> bool:
         """Ask Codex to interrupt the active turn, if one has started."""
@@ -454,13 +474,38 @@ class CodexConversation:
         await self._client.close()
 
     def reset(self) -> None:
-        """Discard the in-memory thread while retaining private knowledge."""
+        """Discard the shared thread while retaining private knowledge."""
+        if self._thread_store is not None:
+            self._thread_store.clear()
         self._thread = None
         self._thread_token_usage_total = None
 
     async def _thread_for_conversation(self) -> AsyncThread:
         if self._thread is None:
             self._thread_token_usage_total = None
+            saved = self._load_saved_thread()
+            if saved is not None:
+                try:
+                    self._thread = await self._client.thread_resume(
+                        saved.thread_id,
+                        approval_mode=self._profile.approval_mode,
+                        base_instructions=self._profile.base_instructions,
+                        config=self._thread_config(),
+                        cwd=str(self._profile.cwd),
+                        developer_instructions=self._profile.developer_instructions,
+                        model=self._profile.model,
+                    )
+                except Exception as error:
+                    LOGGER.warning(
+                        "Saved Codex thread could not be resumed source=%s error=%s",
+                        self._profile.name,
+                        type(error).__name__,
+                    )
+                    self._forget_unusable_saved_thread()
+                else:
+                    self._record_thread_attached()
+                    return self._thread
+
             self._thread = await self._client.thread_start(
                 approval_mode=self._profile.approval_mode,
                 base_instructions=self._profile.base_instructions,
@@ -469,12 +514,77 @@ class CodexConversation:
                 developer_instructions=self._profile.developer_instructions,
                 model=self._profile.model,
             )
-            self._telemetry.thread_started(
-                source=self._profile.name,
-                model=self._profile.model,
-                reasoning_effort=self._profile.effort.value,
-            )
+            if self._thread_store is not None:
+                try:
+                    self._thread_store.save(
+                        PersistedConversationThread(
+                            version=THREAD_STATE_VERSION,
+                            thread_id=self._thread.id,
+                        )
+                    )
+                except Exception:
+                    self._thread = None
+                    LOGGER.exception(
+                        "New shared Codex thread could not be persisted source=%s",
+                        self._profile.name,
+                    )
+                    raise
+            self._record_thread_attached()
         return self._thread
+
+    def _load_saved_thread(self) -> PersistedConversationThread | None:
+        if self._thread_store is None:
+            return None
+        try:
+            state = self._thread_store.load()
+        except Exception as error:
+            LOGGER.warning(
+                "Saved Codex thread state could not be read source=%s error=%s",
+                self._profile.name,
+                type(error).__name__,
+            )
+            raise
+        if state is None:
+            return None
+        if not self._valid_saved_thread(state):
+            LOGGER.warning(
+                "Saved Codex thread state is incompatible source=%s version=%s",
+                self._profile.name,
+                state.version,
+            )
+            self._forget_unusable_saved_thread()
+            return None
+        return state
+
+    @staticmethod
+    def _valid_saved_thread(state: PersistedConversationThread) -> bool:
+        identifier = state.thread_id
+        return (
+            state.version == THREAD_STATE_VERSION
+            and identifier == identifier.strip()
+            and 0 < len(identifier) <= MAX_PERSISTED_THREAD_ID_LENGTH
+            and identifier.isprintable()
+        )
+
+    def _forget_unusable_saved_thread(self) -> None:
+        self._continuity_lost = True
+        if self._thread_store is None:
+            return
+        try:
+            self._thread_store.clear()
+        except Exception as error:
+            LOGGER.warning(
+                "Unusable Codex thread state could not be cleared source=%s error=%s",
+                self._profile.name,
+                type(error).__name__,
+            )
+
+    def _record_thread_attached(self) -> None:
+        self._telemetry.thread_started(
+            source=self._profile.name,
+            model=self._profile.model,
+            reasoning_effort=self._profile.effort.value,
+        )
 
     def _thread_config(self) -> JsonObject:
         config: JsonObject = {

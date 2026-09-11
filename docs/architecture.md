@@ -26,6 +26,8 @@ sequenceDiagram
 
 Telegram is the ordinary conversational surface. Mail and one-off revisits can also activate a fresh turn when they have a useful, bounded reason to do so. Every surface has its own runtime profile, so a background follow-up is not silently treated as a normal chat message.
 
+The Telegram profile owns one shared Codex thread. Ariadne stores only that thread's opaque versioned identifier in the private Telegram SQLite database and resumes it after an ordinary service restart. `/new` and conversation-resetting settings deliberately clear the identifier before another thread can start. Background profiles remain fresh per event, and Telegram history is never replayed to counterfeit a lost Codex thread.
+
 ## Data ownership
 
 | Store | What it contains | Ownership boundary |

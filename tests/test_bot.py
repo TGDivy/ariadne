@@ -32,8 +32,10 @@ from ariadne.telegram import bot as telegram_bot
 from ariadne.telegram import live as telegram_live
 from ariadne.telegram.bot import (
     BUSY_MESSAGE,
+    CONTINUITY_LOST_MESSAGE,
     NEW_CONVERSATION_MESSAGE,
     NOTHING_TO_STOP_MESSAGE,
+    RESET_FAILED_MESSAGE,
     SETTINGS_BUSY_MESSAGE,
     STOPPED_MESSAGE,
     turn_text,
@@ -138,6 +140,7 @@ class FakeConversation:
         activities: list[str] | None = None,
         events: list[object] | None = None,
         models: tuple[CodexModel, ...] = DEFAULT_MODELS,
+        continuity_lost: bool = False,
     ) -> None:
         self._responses = responses
         self._failures = failures
@@ -149,6 +152,12 @@ class FakeConversation:
         self.reset_calls = 0
         self.set_settings_calls = 0
         self.interrupt_calls = 0
+        self.continuity_lost = continuity_lost
+
+    async def prepare_thread(self) -> bool:
+        continuity_lost = self.continuity_lost
+        self.continuity_lost = False
+        return continuity_lost
 
     async def stream_turn(
         self,
@@ -203,6 +212,9 @@ class BlockingConversation:
         self.steer_error: Exception | None = None
         self.steer_accepted = True
         self.failure_after_release: Exception | None = None
+
+    async def prepare_thread(self) -> bool:
+        return False
 
     async def stream_turn(
         self,
@@ -724,6 +736,39 @@ async def test_new_starts_a_fresh_codex_session(message: FakeMessage) -> None:
     assert message.replies == [NEW_CONVERSATION_MESSAGE]
 
 
+async def test_new_does_not_claim_success_when_durable_reset_fails(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation([])
+
+    def fail_reset() -> None:
+        raise OSError("read only")
+
+    conversation.reset = fail_reset  # type: ignore[method-assign]
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_new(cast(Message, message), 7)
+
+    assert message.replies == [RESET_FAILED_MESSAGE]
+
+
+async def test_resume_failure_notice_is_sent_once_before_fresh_answer(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation(["Recovered"], continuity_lost=True)
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_text(cast(Message, message), 7, "Hello again")
+
+    assert message.replies == [CONTINUITY_LOST_MESSAGE]
+    assert cast(FakeRichAPI, bot._rich_api).edits[-1][0] == "Recovered"
+
+    second = FakeMessage(message_id=12)
+    await bot.handle_text(cast(Message, second), 7, "And another thing")
+
+    assert second.replies == []
+
+
 async def test_message_during_an_active_turn_steers_it_instead_of_being_rejected() -> (
     None
 ):
@@ -1046,6 +1091,23 @@ async def test_settings_change_model_effort_and_web_mode(message: FakeMessage) -
     assert conversation.set_settings_calls == 3
     assert conversation.reset_calls == 3
     assert "Web research: Live" in message.edits[-1]
+
+
+async def test_settings_remain_unchanged_when_durable_reset_fails(
+    message: FakeMessage,
+) -> None:
+    conversation = FakeConversation([])
+
+    def fail_settings(_: CodexTurnSettings) -> None:
+        raise OSError("read only")
+
+    conversation.set_settings = fail_settings  # type: ignore[method-assign]
+    bot = AriadneBot(7, cast(CodexConversation, conversation))
+
+    await bot.handle_settings_callback(cast(Message, message), 7, "settings:web:live")
+
+    assert conversation.settings.web_search == "disabled"
+    assert message.edits == [RESET_FAILED_MESSAGE]
 
 
 async def test_settings_rejects_changes_during_an_active_turn() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Protocol
 
 from openai_codex import ApprovalMode
 from openai_codex.generated.v2_all import ReasoningEffort
@@ -12,6 +12,27 @@ from openai_codex.generated.v2_all import ReasoningEffort
 WebSearchSetting = Literal["disabled", "live"]
 ThreadPolicy = Literal["shared", "fresh-per-event"]
 ReasoningSummarySetting = Literal["none", "concise", "auto", "detailed"]
+
+
+@dataclass(frozen=True, slots=True)
+class PersistedConversationThread:
+    """Versioned reference to one remotely persisted Codex thread."""
+
+    version: int
+    thread_id: str
+
+
+class ConversationThreadStore(Protocol):
+    """Private persistence boundary for a shared conversation's thread."""
+
+    def load(self) -> PersistedConversationThread | None:
+        """Return the saved thread reference, if one exists."""
+
+    def save(self, state: PersistedConversationThread) -> None:
+        """Atomically replace the saved thread reference."""
+
+    def clear(self) -> None:
+        """Forget the saved thread reference."""
 
 
 @dataclass(frozen=True, slots=True)
