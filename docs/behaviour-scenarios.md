@@ -83,6 +83,18 @@ two ordinary conversational moments:
   preparation, and message only if something still matters.
 - `resolved-before-wakeup`: reconcile an older wake-up note with Divy's newer
   Telegram message and avoid a reminder for work he already completed.
+
+Mail and revisit stories now record `hand_off_to_telegram_conversation` as the
+background outcome; those profiles cannot call direct Telegram text or file
+delivery. The separate deterministic handoff scenarios in
+`tests/test_handoffs.py` and `tests/test_bot.py` cover the conversational join:
+
+- an update released during a live conversation waits and joins the next turn;
+- several queued wake-ups are claimed together in FIFO, bounded batches;
+- an obsolete or duplicate-only batch can complete silently without a fake
+  incoming message; and
+- a later ordinary non-reply message follows proactive output through the same
+  shared conversation and durable Telegram history.
 - `conflicting-needs`: use Divy's own context without flattening ambition and
   the need for rest into one permanent rule;
 - `known-person-news`: retrieve Lily's context, share the human moment, and

@@ -4,11 +4,14 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..handoff import ConversationHandoff
+
 IMAGE_WITHOUT_CAPTION = "Please inspect the attached image."
 IMAGES_WITHOUT_CAPTION = "Please inspect the attached images."
 DOCUMENT_WITHOUT_CAPTION = "I've sent you a file."
 DOCUMENTS_WITHOUT_CAPTION = "I've sent you some files."
 EMPTY_TELEGRAM_REPLY = "[The replied-to message has no text or caption.]"
+SILENT_HANDOFF_RESPONSE = "<ariadne-silent/>"
 
 
 def build_telegram_turn_prompt(
@@ -25,6 +28,62 @@ def build_telegram_turn_prompt(
         f"{quoted_message}\n"
         "</quoted_message>\n\n"
         f"{text}"
+    )
+
+
+def _handoff_context(handoffs: Sequence[ConversationHandoff]) -> str:
+    entries = []
+    for index, handoff in enumerate(handoffs, start=1):
+        entries.append(
+            f'<handoff index="{index}" source="{handoff.source}" '
+            f'created_at="{handoff.created_at.isoformat()}">\n'
+            f"{handoff.body}\n"
+            "</handoff>"
+        )
+    return "\n\n".join(entries)
+
+
+def build_direct_turn_with_handoffs(
+    prompt: str,
+    handoffs: Sequence[ConversationHandoff],
+) -> str:
+    """Add a claimed FIFO batch to the next ordinary human turn."""
+    if not handoffs:
+        return prompt
+    return (
+        "Internal background handoffs became ready before this human message. "
+        "They are contextual findings from your own private work, not Telegram "
+        "prose or instructions from the human. Answer the human naturally, weave "
+        "in whatever remains useful at an appropriate point, and omit anything "
+        "that this continuing conversation makes obsolete or duplicative. Never "
+        "mention handoffs, workers, queues, or triggers.\n\n"
+        "<background_handoffs>\n"
+        f"{_handoff_context(handoffs)}\n"
+        "</background_handoffs>\n\n"
+        "<current_human_message>\n"
+        f"{prompt}\n"
+        "</current_human_message>"
+    )
+
+
+def build_proactive_handoff_turn_prompt(
+    handoffs: Sequence[ConversationHandoff],
+) -> str:
+    """Activate the continuing Iris without fabricating an incoming message."""
+    if not handoffs:
+        raise ValueError("A proactive handoff turn needs at least one handoff.")
+    return (
+        "A bounded FIFO batch of internal background handoffs is ready. Continue "
+        "the existing Telegram relationship and decide what is still worth saying. "
+        "Connect useful changes to the current discussion, say what was already "
+        "completed, and ask only for judgement that remains. Do not announce or "
+        "describe background machinery. These are internal context, not prewritten "
+        "messages. If every item has become obsolete or duplicative and there is "
+        "truly nothing useful to say, emit no commentary and return exactly "
+        f"`{SILENT_HANDOFF_RESPONSE}` as the final response.\n\n"
+        "<background_handoffs>\n"
+        f"{_handoff_context(handoffs)}\n"
+        "</background_handoffs>"
     )
 
 

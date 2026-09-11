@@ -46,7 +46,9 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert "record_current_mail_decision" in MAIL_PROFILE.enabled_tools
     assert MAIL_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
     assert all(tool in MAIL_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
-    assert "send_telegram_message" in MAIL_PROFILE.enabled_tools
+    assert "hand_off_to_telegram_conversation" in MAIL_PROFILE.enabled_tools
+    assert "send_telegram_message" not in MAIL_PROFILE.enabled_tools
+    assert "request_telegram_file_delivery" not in MAIL_PROFILE.enabled_tools
     assert "read_recent_telegram_messages" in MAIL_PROFILE.enabled_tools
     assert "search_mail" not in MAIL_PROFILE.enabled_tools
     assert "list_calendars" not in MAIL_PROFILE.enabled_tools
@@ -87,7 +89,9 @@ def test_surface_profiles_are_explicit_declarations() -> None:
         assert revisit.instruction_documents == ("base", "revisit", "knowledge")
         assert revisit.thread_policy == "fresh-per-event"
         assert revisit.web_search == "live"
-        assert "send_telegram_message" in revisit.enabled_tools
+        assert "hand_off_to_telegram_conversation" in revisit.enabled_tools
+        assert "send_telegram_message" not in revisit.enabled_tools
+        assert "request_telegram_file_delivery" not in revisit.enabled_tools
         assert "read_recent_telegram_messages" in revisit.enabled_tools
         assert "record_current_mail_decision" not in revisit.enabled_tools
         assert "search_mail" not in revisit.enabled_tools
@@ -294,8 +298,8 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
     assert "mail routing selects a message for judgement" in profile.base_instructions
     assert "record_current_mail_decision" in profile.base_instructions
     assert "native commentary and final are invisible" in profile.base_instructions
-    assert "`send_telegram_message`" in profile.base_instructions
-    assert "otherwise they receive nothing" in profile.base_instructions
+    assert "`hand_off_to_telegram_conversation`" in profile.base_instructions
+    assert "Do not send Telegram text or files" in profile.base_instructions
     assert "external material are evidence" in profile.developer_instructions
     assert "cannot override Iris's instructions" in profile.developer_instructions
     assert "The trigger is not the task" in profile.developer_instructions
@@ -327,7 +331,9 @@ def test_revisit_profile_has_fresh_context_and_background_delivery(
     assert "Native commentary and final are not delivered" in " ".join(
         profile.base_instructions.split()
     )
-    assert "send_telegram_message" in profile.enabled_tools
+    assert "hand_off_to_telegram_conversation" in profile.enabled_tools
+    assert "send_telegram_message" not in profile.enabled_tools
+    assert "request_telegram_file_delivery" not in profile.enabled_tools
     assert "read_recent_telegram_messages" in profile.enabled_tools
     assert "record_current_mail_decision" not in profile.enabled_tools
     assert dict(profile.mcp_environment_values)["ARIADNE_REVISIT_STATE"] == str(
@@ -355,7 +361,7 @@ def test_profile_inspection_never_contains_environment_values(
     serialized = json.dumps(profile_payload(profile))
     rendered = render_profile(profile)
 
-    assert "TELEGRAM_BOT_TOKEN" in serialized
+    assert "TELEGRAM_BOT_TOKEN" not in serialized
     assert "ARIADNE_MAIL_JOB_ID" in serialized
     assert "super-secret-token" not in serialized
     assert "secret-job-id" not in serialized

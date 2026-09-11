@@ -12,6 +12,14 @@ from pathlib import Path
 from ..codex import CodexConversation, CodexTurnSettings
 from ..codex.resolver import resolve_profile
 from ..config import RevisitSettings
+from ..handoff import (
+    ACTIVATION_KEY_ENVIRONMENT,
+    ACTIVATION_SOURCE_ENVIRONMENT,
+    HandoffState,
+)
+from ..handoff import (
+    STATE_ENVIRONMENT as HANDOFF_STATE_ENVIRONMENT,
+)
 from ..profile import profile_for_attention
 from ..prompts.activations import build_revisit_turn_prompt
 from ..telemetry import Telemetry
@@ -42,6 +50,7 @@ class RevisitLoop:
         state: RevisitState | None = None,
         conversation_factory: ConversationFactory | None = None,
         clock: Callable[[], datetime] | None = None,
+        handoffs: HandoffState | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = workspace
@@ -57,6 +66,12 @@ class RevisitLoop:
         self._stop = asyncio.Event()
         self._conversation_factory = conversation_factory
         self._clock = clock or (lambda: datetime.now(UTC))
+        handoff_path = self.mcp_environment.get(HANDOFF_STATE_ENVIRONMENT)
+        self.handoffs = handoffs or (
+            HandoffState(Path(handoff_path)) if handoff_path is not None else None
+        )
+        if self.handoffs is not None:
+            self.handoffs.initialize()
 
     def stop(self) -> None:
         self._stop.set()
@@ -73,7 +88,11 @@ class RevisitLoop:
                 human=self.human,
                 personality=self.personality,
                 knowledge_root=self.knowledge_root,
-                mcp_environment=self.mcp_environment,
+                mcp_environment={
+                    **self.mcp_environment,
+                    ACTIVATION_KEY_ENVIRONMENT: revisit.id,
+                    ACTIVATION_SOURCE_ENVIRONMENT: "revisit",
+                },
                 network_domains=self.network_domains,
             ),
             telemetry=self.telemetry,
@@ -107,12 +126,18 @@ class RevisitLoop:
             async for _event in conversation.stream_turn(prompt):
                 pass
             self.state.complete(revisit.id)
+            if self.handoffs is not None:
+                self.handoffs.release(revisit.id)
         except asyncio.CancelledError:
+            if self.handoffs is not None:
+                self.handoffs.discard(revisit.id, "Revisit activation was cancelled")
             self.state.release(revisit.id)
             self.telemetry.background_job(source="revisit", status="cancelled")
             raise
         except Exception as error:
             LOGGER.exception("Revisit turn failed id=%s", revisit.id)
+            if self.handoffs is not None:
+                self.handoffs.discard(revisit.id, str(error))
             try:
                 self.state.fail(revisit.id, error)
                 self.telemetry.background_job(source="revisit", status="failure")

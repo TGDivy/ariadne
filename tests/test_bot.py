@@ -24,6 +24,7 @@ from ariadne.codex import (
     WorkStarted,
     WorkSummaryUpdated,
 )
+from ariadne.handoff import HandoffCoordinator, HandoffState
 from ariadne.prompts.activations import (
     DOCUMENT_WITHOUT_CAPTION,
     build_document_turn_prompt,
@@ -66,6 +67,7 @@ def AriadneBot(
     conversation: CodexConversation,
     *,
     question_state: Path | None = None,
+    handoff_coordinator: HandoffCoordinator | None = None,
 ) -> TelegramBot:
     """Build the bot with the required test credential."""
     bot = TelegramBot(
@@ -73,6 +75,7 @@ def AriadneBot(
         conversation,
         bot_token="token-for-test",
         question_state=question_state,
+        handoff_coordinator=handoff_coordinator,
     )
     bot._rich_api = cast(RichBotAPI, FakeRichAPI())
     return bot
@@ -370,6 +373,124 @@ async def test_a_streamed_reply_edits_one_persistent_message(
     assert "Telegram turn started message_id=11" in caplog.text
     assert "Telegram turn finished message_id=11 status=success" in caplog.text
     assert "Say hello" not in caplog.text
+
+
+async def test_waiting_handoffs_join_the_next_direct_turn_and_complete(
+    tmp_path: Path,
+) -> None:
+    state = HandoffState(tmp_path / "telegram.sqlite3")
+    state.stage(
+        activation_key="mail:1",
+        source="mail",
+        body="The train moved to 08:40 and the calendar is updated.",
+    )
+    state.release("mail:1")
+    coordinator = HandoffCoordinator(state, quiet_window_seconds=120)
+    conversation = FakeConversation(["Yes, and does 08:40 still work for you?"])
+    bot = AriadneBot(
+        7,
+        cast(CodexConversation, conversation),
+        question_state=state.path,
+        handoff_coordinator=coordinator,
+    )
+
+    await bot.handle_text(cast(Message, FakeMessage()), 7, "Plan tomorrow with me")
+
+    assert len(conversation.prompts) == 1
+    prompt = conversation.prompts[0]
+    assert "Plan tomorrow with me" in prompt
+    assert "train moved to 08:40" in prompt
+    assert "Never mention handoffs, workers, queues, or triggers" in prompt
+    retained = state.for_activation("mail:1")
+    assert retained is not None and retained.status == "completed"
+
+
+async def test_handoff_arriving_mid_turn_waits_for_a_later_turn(tmp_path: Path) -> None:
+    state = HandoffState(tmp_path / "telegram.sqlite3")
+    coordinator = HandoffCoordinator(state, quiet_window_seconds=120)
+    conversation = BlockingConversation()
+    bot = AriadneBot(
+        7,
+        cast(CodexConversation, conversation),
+        question_state=state.path,
+        handoff_coordinator=coordinator,
+    )
+
+    running = asyncio.create_task(
+        bot.handle_text(cast(Message, FakeMessage()), 7, "Work on this")
+    )
+    await conversation.started.wait()
+    state.stage(activation_key="revisit:1", source="revisit", body="Arrived later")
+    state.release("revisit:1")
+    conversation.release.set()
+    await running
+
+    retained = state.for_activation("revisit:1")
+    assert retained is not None and retained.status == "ready"
+
+
+async def test_human_message_steers_a_running_proactive_handoff_turn(
+    tmp_path: Path,
+) -> None:
+    state = HandoffState(tmp_path / "telegram.sqlite3")
+    state.stage(activation_key="mail:1", source="mail", body="Train changed")
+    state.release("mail:1")
+    coordinator = HandoffCoordinator(state, quiet_window_seconds=0)
+    conversation = BlockingConversation()
+    bot = AriadneBot(
+        7,
+        cast(CodexConversation, conversation),
+        question_state=state.path,
+        handoff_coordinator=coordinator,
+    )
+
+    proactive = asyncio.create_task(coordinator.process_ready(bot))
+    await conversation.started.wait()
+    await bot.handle_text(
+        cast(Message, FakeMessage(message_id=12)),
+        7,
+        "That timing is fine",
+    )
+
+    assert conversation.steered == [turn_text("That timing is fine")]
+    conversation.release.set()
+    assert await proactive is True
+    retained = state.for_activation("mail:1")
+    assert retained is not None and retained.status == "completed"
+
+
+async def test_proactive_output_is_durable_for_a_natural_non_reply_followup(
+    tmp_path: Path,
+) -> None:
+    state = HandoffState(tmp_path / "telegram.sqlite3")
+    state.stage(
+        activation_key="revisit:1",
+        source="revisit",
+        body="The researched option is now ready.",
+    )
+    state.release("revisit:1")
+    coordinator = HandoffCoordinator(state, quiet_window_seconds=0)
+    conversation = FakeConversation(["I found a good option for Saturday."])
+    bot = AriadneBot(
+        7,
+        cast(CodexConversation, conversation),
+        question_state=state.path,
+        handoff_coordinator=coordinator,
+    )
+
+    assert await coordinator.process_ready(bot) is True
+    followup = FakeMessage(message_id=12)
+    await bot.handle_text(cast(Message, followup), 7, "Yeah that sounds good")
+
+    assert len(conversation.prompts) == 2
+    assert "researched option" in conversation.prompts[0]
+    assert conversation.prompts[1] == "Yeah that sounds good"
+    history = bot._history.read(7, since=datetime.min.replace(tzinfo=UTC))
+    assert [(item.speaker, item.text) for item in history.messages] == [
+        ("iris", "I found a good option for Saturday."),
+        ("human", "Yeah that sounds good"),
+        ("iris", "I found a good option for Saturday."),
+    ]
 
 
 async def test_bound_bot_streams_and_finalizes_native_rich_messages(

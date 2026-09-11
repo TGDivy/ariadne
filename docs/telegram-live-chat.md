@@ -226,6 +226,13 @@ not silently converted to classic HTML, plain text, or an inline keyboard. A
 transient preview edit may leave the last valid preview visible, but terminal
 completion, stop, and failure states must succeed through the Rich Message API.
 
+Background profiles never use the proactive delivery transport directly. They
+stage internal handoffs. Once released, the shared Telegram conversation may
+send settled commentary/final Rich Messages; it does not fabricate an incoming
+message or send a thinking placeholder before deciding whether the handoff has
+become obsolete. Those completed messages enter the same durable history as an
+ordinary response, so a later non-reply message remains coherent.
+
 ## Manual smoke test
 
 Use a private operator config on the machine running Ariadne; never paste the
@@ -268,9 +275,11 @@ Run these cases in order:
 10. Send three casual messages such as “ugh, long day”, “that was funny”, and
    “what do you think?” They should feel like continuing one chat, not three
    miniature reports with restatements and headings.
-11. Trigger a mail event worth notifying about. It must use
-    `send_telegram_message`; the tool must not be available in an ordinary
-    Telegram-triggered turn.
+11. Trigger a mail event worth discussing. Its profile must be unable to send
+    Telegram text or files and must stage a handoff. Confirm the handoff appears
+    through the continuing Telegram Iris with a human turn before the quiet
+    window, then repeat and allow the two-minute quiet window to elapse. Neither
+    path may interleave with an active response or show a fake incoming bubble.
 12. Schedule a wake-up about an open task, then resolve it in Telegram before
     the wake-up runs. The fresh turn should be able to read the newer message
     and avoid a redundant notification. Restart Ariadne between the message and
@@ -278,7 +287,8 @@ Run these cases in order:
 
 Automated coverage for these state transitions lives in `tests/test_bot.py`,
 `tests/test_telegram_rich.py`, `tests/test_telegram_questions.py`,
-`tests/test_telegram_history.py`, and `tests/test_mcp_server.py`.
+`tests/test_telegram_history.py`, `tests/test_handoffs.py`, and
+`tests/test_mcp_server.py`.
 
 ## References
 

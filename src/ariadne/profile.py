@@ -6,6 +6,13 @@ from openai_codex import ApprovalMode
 from openai_codex.generated.v2_all import ReasoningEffort
 
 from .codex.models import TurnProfile
+from .handoff import (
+    ACTIVATION_KEY_ENVIRONMENT,
+    ACTIVATION_SOURCE_ENVIRONMENT,
+)
+from .handoff import (
+    STATE_ENVIRONMENT as HANDOFF_STATE_ENVIRONMENT,
+)
 from .knowledge.capability import ROOT_ENVIRONMENT as KNOWLEDGE_ROOT_ENVIRONMENT
 from .knowledge.capability import TOOLS as KNOWLEDGE_TOOLS
 from .revisit import ATTENTION_SETTINGS, Attention
@@ -69,9 +76,8 @@ MAIL_PROFILE = TurnProfile(
     instruction_documents=("base", "mail", "knowledge"),
     developer_documents=("grounding", "companion"),
     enabled_tools=(
-        "send_telegram_message",
         "read_recent_telegram_messages",
-        "request_telegram_file_delivery",
+        "hand_off_to_telegram_conversation",
         "record_current_mail_decision",
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
@@ -84,12 +90,13 @@ MAIL_PROFILE = TurnProfile(
     allow_local_binding=True,
     mcp_environment_names=(
         "ARIADNE_PROFILE",
-        "TELEGRAM_BOT_TOKEN",
         "TELEGRAM_ALLOWED_USER_ID",
-        "ARIADNE_TELEGRAM_STATE",
         "ARIADNE_MAIL_JOB_ID",
         "ARIADNE_MAIL_ACCOUNT",
         "ARIADNE_MAIL_STATE",
+        HANDOFF_STATE_ENVIRONMENT,
+        ACTIVATION_KEY_ENVIRONMENT,
+        ACTIVATION_SOURCE_ENVIRONMENT,
         REVISIT_STATE_ENVIRONMENT,
         KNOWLEDGE_ROOT_ENVIRONMENT,
     ),
@@ -106,8 +113,8 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
         instruction_documents=("base", "revisit", "knowledge"),
         developer_documents=("grounding", "companion"),
         enabled_tools=(
-            "send_telegram_message",
             "read_recent_telegram_messages",
+            "hand_off_to_telegram_conversation",
             *REVISIT_TOOLS,
             *KNOWLEDGE_TOOLS,
         ),
@@ -119,9 +126,10 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
         allow_local_binding=True,
         mcp_environment_names=(
             "ARIADNE_PROFILE",
-            "TELEGRAM_BOT_TOKEN",
             "TELEGRAM_ALLOWED_USER_ID",
-            "ARIADNE_TELEGRAM_STATE",
+            HANDOFF_STATE_ENVIRONMENT,
+            ACTIVATION_KEY_ENVIRONMENT,
+            ACTIVATION_SOURCE_ENVIRONMENT,
             REVISIT_STATE_ENVIRONMENT,
             KNOWLEDGE_ROOT_ENVIRONMENT,
         ),

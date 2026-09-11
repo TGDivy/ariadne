@@ -24,6 +24,14 @@ from pydantic import ValidationError
 from ..codex import CodexConversation, CodexTurnSettings
 from ..codex.resolver import resolve_profile
 from ..config import MailAccountSettings, MailSettings
+from ..handoff import (
+    ACTIVATION_KEY_ENVIRONMENT,
+    ACTIVATION_SOURCE_ENVIRONMENT,
+    HandoffState,
+)
+from ..handoff import (
+    STATE_ENVIRONMENT as HANDOFF_STATE_ENVIRONMENT,
+)
 from ..profile import MAIL_PROFILE
 from ..prompts.activations import build_mail_turn_prompt
 from ..prompts.mail_evidence import render_mail_evidence
@@ -847,6 +855,7 @@ class MailProcessor:
         *,
         account_key: str = "icloud",
         account_label: str = "iCloud",
+        handoffs: HandoffState | None = None,
     ) -> None:
         self.client = client
         self.routes = routes
@@ -855,6 +864,7 @@ class MailProcessor:
         self.telemetry = telemetry or Telemetry()
         self.account_key = account_key
         self.account_label = account_label
+        self.handoffs = handoffs
         self.uidvalidity = 0
 
     async def reconcile(self) -> None:
@@ -1041,11 +1051,27 @@ class MailProcessor:
                 await self._apply(decided)
             else:
                 await self._prepare_and_apply(decided)
+        except asyncio.CancelledError:
+            if self.handoffs is not None:
+                self.handoffs.discard(job.job_id, "Mail activation was cancelled")
+            raise
         except Exception as error:
             LOGGER.exception("Mail job %s failed", job.job_id)
             self.state.fail(job.job_id, error)
         finally:
             finished = self.state.get(job.job_id)
+            if self.handoffs is not None:
+                if finished is not None and finished.status == "done":
+                    self.handoffs.release(job.job_id)
+                else:
+                    self.handoffs.discard(
+                        job.job_id,
+                        (
+                            f"Mail job ended with status {finished.status}"
+                            if finished is not None
+                            else "Mail job missing"
+                        ),
+                    )
             LOGGER.info(
                 "Mail job finished job_id=%s status=%s action=%s duration=%.2fs "
                 "account=%s",
@@ -1173,6 +1199,12 @@ class MailLoop:
         self.routes = load_routes(settings.routes)
         self.state = MailState(settings.state)
         self.state.initialize()
+        handoff_path = self.mcp_environment.get(HANDOFF_STATE_ENVIRONMENT)
+        self.handoffs = (
+            HandoffState(Path(handoff_path)) if handoff_path is not None else None
+        )
+        if self.handoffs is not None:
+            self.handoffs.initialize()
         self._stop = asyncio.Event()
         self._client_factory = client_factory or (
             lambda: IMAPClient(self.account.host, port=993, ssl=True)
@@ -1195,6 +1227,8 @@ class MailLoop:
                     "ARIADNE_MAIL_JOB_ID": job_id,
                     "ARIADNE_MAIL_ACCOUNT": self.account.key,
                     "ARIADNE_MAIL_STATE": str(self.settings.state),
+                    ACTIVATION_KEY_ENVIRONMENT: job_id,
+                    ACTIVATION_SOURCE_ENVIRONMENT: "mail",
                 },
                 network_domains=self.network_domains,
             ),
@@ -1245,6 +1279,8 @@ class MailLoop:
                 self.telemetry,
                 account_key=account_key,
                 account_label=account_label,
+                # Same manual-construction compatibility as `account` above.
+                handoffs=getattr(self, "handoffs", None),
             )
             while not self._stop.is_set():
                 await processor.reconcile()

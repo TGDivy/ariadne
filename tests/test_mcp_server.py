@@ -88,6 +88,7 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "read_recent_telegram_messages",
         "ask_telegram_question",
         "request_telegram_file_delivery",
+        "hand_off_to_telegram_conversation",
         "record_current_mail_decision",
         "search_knowledge",
         "list_knowledge",
