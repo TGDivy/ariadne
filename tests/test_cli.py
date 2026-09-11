@@ -57,6 +57,44 @@ class RecordingMail:
         return self._result("mail.thread", {"id": value})
 
 
+class RecordingMailDrafts:
+    def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self.calls = calls
+
+    def create_draft(
+        self,
+        *,
+        body: str,
+        reply_to: str | None = None,
+        account: str | None = None,
+        to: Sequence[str] = (),
+        cc: Sequence[str] = (),
+        subject: str | None = None,
+    ) -> dict[str, Any]:
+        arguments = {
+            "body": body,
+            "reply_to": reply_to,
+            "account": account,
+            "to": list(to),
+            "cc": list(cc),
+            "subject": subject,
+        }
+        self.calls.append(("mail.draft", arguments))
+        return {"operation": "mail.draft", "arguments": arguments}
+
+
+class RecordingMailClassifier:
+    def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
+        self.calls = calls
+
+    def classify(
+        self, *, mail_id: str | None = None, path: Path | None = None
+    ) -> dict[str, Any]:
+        arguments = {"mail_id": mail_id, "path": str(path) if path else None}
+        self.calls.append(("mail.classify", arguments))
+        return {"operation": "mail.classify", "arguments": arguments}
+
+
 class RecordingCalendar:
     def __init__(self, calls: list[tuple[str, dict[str, Any]]]) -> None:
         self.calls = calls
@@ -233,6 +271,16 @@ class RecordingBackend:
         yield RecordingMail(self.calls)
 
     @contextmanager
+    def mail_drafts(self):
+        self._check_failure()
+        yield RecordingMailDrafts(self.calls)
+
+    @contextmanager
+    def mail_classification(self):
+        self._check_failure()
+        yield RecordingMailClassifier(self.calls)
+
+    @contextmanager
     def calendar(self):
         self._check_failure()
         yield RecordingCalendar(self.calls)
@@ -307,6 +355,122 @@ def test_mail_commands_map_common_cli_arguments(
         ),
         ("mail.read", {"id": "mail:opaque"}),
         ("mail.thread", {"id": "mail:opaque"}),
+    ]
+
+
+def test_a_reply_draft_takes_its_addressing_from_the_message_it_answers(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = RecordingBackend()
+
+    main(
+        ["mail", "draft", "--reply-to", "mail:opaque", "--body", "Tuesday works."],
+        backend=backend,
+    )
+
+    assert _json_stdout(capsys)["operation"] == "mail.draft"
+    assert backend.calls == [
+        (
+            "mail.draft",
+            {
+                "body": "Tuesday works.",
+                "reply_to": "mail:opaque",
+                "account": None,
+                "to": [],
+                "cc": [],
+                "subject": None,
+            },
+        )
+    ]
+
+
+def test_a_new_draft_accepts_repeated_recipients_and_an_account(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = RecordingBackend()
+
+    main(
+        [
+            "mail",
+            "draft",
+            "--account",
+            "outlook",
+            "--to",
+            "alex@example.com",
+            "--to",
+            "Sam <sam@example.com>",
+            "--cc",
+            "team@example.com",
+            "--subject",
+            "Thursday",
+            "--body",
+            "Are you free?",
+        ],
+        backend=backend,
+    )
+
+    assert _json_stdout(capsys)["operation"] == "mail.draft"
+    assert backend.calls[0][1]["to"] == ["alex@example.com", "Sam <sam@example.com>"]
+    assert backend.calls[0][1]["cc"] == ["team@example.com"]
+    assert backend.calls[0][1]["subject"] == "Thursday"
+    assert backend.calls[0][1]["reply_to"] is None
+
+
+def test_a_draft_body_can_come_from_a_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    body = tmp_path / "reply.txt"
+    body.write_text("Multi\nline\nreply.\n", encoding="utf-8")
+    backend = RecordingBackend()
+
+    main(
+        ["mail", "draft", "--reply-to", "mail:opaque", "--body-file", str(body)],
+        backend=backend,
+    )
+
+    _json_stdout(capsys)
+    assert backend.calls[0][1]["body"] == "Multi\nline\nreply.\n"
+
+
+def test_an_unreadable_draft_body_file_fails_before_any_connection(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    backend = RecordingBackend()
+
+    with pytest.raises(SystemExit) as raised:
+        main(
+            [
+                "mail",
+                "draft",
+                "--reply-to",
+                "mail:opaque",
+                "--body-file",
+                str(tmp_path / "absent.txt"),
+            ],
+            backend=backend,
+        )
+
+    assert raised.value.code == 2
+    assert json.loads(capsys.readouterr().err)["error"]["code"] == "invalid_arguments"
+    assert backend.calls == []
+
+
+def test_mail_classify_accepts_one_id_or_one_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    backend = RecordingBackend()
+
+    main(["mail", "classify", "--id", "mail:opaque"], backend=backend)
+    assert _json_stdout(capsys)["operation"] == "mail.classify"
+    main(["mail", "classify", "--file", str(tmp_path / "message.eml")], backend=backend)
+    _json_stdout(capsys)
+
+    assert backend.calls == [
+        ("mail.classify", {"mail_id": "mail:opaque", "path": None}),
+        (
+            "mail.classify",
+            {"mail_id": None, "path": str(tmp_path / "message.eml")},
+        ),
     ]
 
 
@@ -757,6 +921,32 @@ def test_config_and_serve_dispatch_without_mixing_output(
     [
         [],
         ["mail", "search", "query", "--limit", "101"],
+        ["mail", "draft", "--body", "Hello"],
+        ["mail", "draft", "--reply-to", "mail:opaque"],
+        [
+            "mail",
+            "draft",
+            "--reply-to",
+            "mail:opaque",
+            "--to",
+            "alex@example.com",
+            "--body",
+            "Hello",
+        ],
+        ["mail", "draft", "--to", "alex@example.com", "--body", "Hello"],
+        ["mail", "draft", "--subject", "Hello", "--body", "Hello"],
+        [
+            "mail",
+            "draft",
+            "--to",
+            "alex@example.com\r\nBcc: victim@example.com",
+            "--subject",
+            "Hello",
+            "--body",
+            "Hello",
+        ],
+        ["mail", "classify"],
+        ["mail", "classify", "--id", "mail:opaque", "--file", "message.eml"],
         ["calendar", "search", "--start", "2026-09-01"],
         ["calendar", "respond", "event:id", "maybe"],
         [
@@ -945,6 +1135,58 @@ default_calendar = "Personal"
         encoding="utf-8",
     )
     return config, username, password
+
+
+def test_production_classify_reads_a_file_with_no_mailbox_connection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config, _username, _password = _private_config(tmp_path)
+    routes = tmp_path / "routes.yaml"
+    routes.write_text(
+        """
+version: 1
+folders:
+  newsletters: Newsletters
+  promotions: Promotions
+  receipts: Receipts
+  travel: Travel
+  notifications: Notifications
+rules:
+  - id: receipts
+    match:
+      from: ["shop@example.com"]
+    classification: receipts
+    action: move
+""",
+        encoding="utf-8",
+    )
+    raw = tmp_path / "message.eml"
+    raw.write_text(
+        "From: Shop <shop@example.com>\n"
+        "To: person@example.com\n"
+        "Subject: Your receipt\n"
+        "Date: Sun, 23 Aug 2026 10:00:00 +0000\n"
+        "Message-ID: <receipt@example.com>\n"
+        "\n"
+        "Thank you for your order.\n",
+        encoding="utf-8",
+    )
+
+    def refuse(*_args: object, **_keywords: object) -> None:
+        raise AssertionError("classifying a file must not contact a provider")
+
+    monkeypatch.setattr(cli_module, "IMAPClient", refuse)
+
+    main(["--config", str(config), "mail", "classify", "--file", str(raw)])
+
+    payload = _json_stdout(capsys)
+    assert payload["source"] == "file"
+    assert payload["route_id"] == "receipts"
+    assert payload["action"] == "move"
+    assert payload["destination"] == "Receipts"
+    assert payload["wakes_iris"] is False
 
 
 def test_production_mail_loads_private_toml_credentials_only_on_demand(

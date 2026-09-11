@@ -14,12 +14,12 @@ from email import policy
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.utils import getaddresses, parsedate_to_datetime
-from html.parser import HTMLParser
 from typing import Any
 
 from imapclient import IMAPClient  # type: ignore[import-untyped]
 
 from .accounts import MailAccountRegistry
+from .message import collapsed_text
 
 LOGGER = logging.getLogger(__name__)
 PREVIEW_BYTES = 16_384
@@ -29,15 +29,6 @@ THREAD_PER_FOLDER = 100
 THREAD_LIMIT = 30
 EXCLUDED_FLAGS = {"\\drafts", "\\junk", "\\noselect", "\\trash"}
 MESSAGE_ID = re.compile(r"<[^>]+>")
-
-
-class _HTMLText(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        self.parts.append(data)
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,22 +107,6 @@ def _text(value: object) -> str:
     return str(value or "")
 
 
-def _body(message: EmailMessage, limit: int) -> tuple[str, bool]:
-    part = None
-    try:
-        part = message.get_body(preferencelist=("plain", "html"))
-        content = part.get_content() if part is not None else ""
-    except (KeyError, LookupError, UnicodeError, ValueError):
-        content = ""
-    text = content if isinstance(content, str) else str(content)
-    if part is not None and part.get_content_type() == "text/html":
-        parser = _HTMLText()
-        parser.feed(text)
-        text = " ".join(parser.parts)
-    text = re.sub(r"\s+", " ", text).strip()
-    return text[:limit], len(text) > limit
-
-
 def _addresses(message: EmailMessage, field: str) -> list[dict[str, str]]:
     return [
         {"name": name, "address": address}
@@ -154,7 +129,7 @@ def _payload(
     candidate: Candidate, body_limit: int, *, account_label: str
 ) -> dict[str, Any]:
     message = candidate.message
-    body, truncated = _body(message, body_limit)
+    body, truncated = collapsed_text(message, body_limit)
     attachments = [
         {
             "filename": _text(part.get_filename()),
@@ -229,7 +204,7 @@ def _score(candidate: Candidate, query: str) -> int | None:
         f"{value['name']} {value['address']}" for value in _addresses(message, "From")
     ).casefold()
     subject = _text(message.get("Subject")).casefold()
-    body = _body(message, 8_000)[0].casefold()
+    body = collapsed_text(message, 8_000)[0].casefold()
     phrase = query.casefold().strip()
     tokens = _tokens(query)
     score = 18 * (phrase in sender) + 14 * (phrase in subject) + 7 * (phrase in body)
@@ -389,7 +364,7 @@ class MailReader:
             "partial": bool(failed_folders),
         }
 
-    def _read_candidate(self, value: str) -> Candidate:
+    def read_candidate(self, value: str) -> Candidate:
         reference = decode_mail_id(value)
         if reference.account_key != self.account_key:
             raise ValueError(
@@ -411,11 +386,11 @@ class MailReader:
 
     def read(self, value: str) -> dict[str, Any]:
         return _payload(
-            self._read_candidate(value), 50_000, account_label=self.account_label
+            self.read_candidate(value), 50_000, account_label=self.account_label
         )
 
     def read_thread(self, value: str) -> dict[str, Any]:
-        target = self._read_candidate(value)
+        target = self.read_candidate(value)
         target_payload = _payload(target, 1, account_label=self.account_label)
         ids = _message_ids(
             target_payload["message_id"],
