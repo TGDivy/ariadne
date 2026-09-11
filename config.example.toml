@@ -66,6 +66,18 @@ observation_max_elements = 120
 journal_retention_days = 14
 journal_max_entries = 5000
 
+[grocery]
+# Requires [browser].enabled. Real checkout stays off until the documented
+# owner-observed dry runs on the home server pass.
+enabled = false
+state = "~/.local/state/ariadne/grocery.sqlite3"
+browser_profile = "personal"
+base_url = "https://www.waitrose.com"
+checkout_enabled = false
+# Pounds of drift permitted on weighted items before approval is invalidated.
+weighted_tolerance = "1.00"
+approval_ttl_seconds = 900
+
 [revisits]
 state = "~/.local/state/ariadne/revisits.sqlite3"
 poll_interval_seconds = 15

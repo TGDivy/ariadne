@@ -75,6 +75,8 @@ Start with the guide that matches what you need:
 
 - [Telegram live chat](docs/telegram-live-chat.md) — rich-message behaviour, state, delivery, and manual testing.
 - [Knowledge capability](docs/knowledge-capability.md) — the durable knowledge model and its capability contract.
+- [Browser control](docs/browser-control.md) — the private Chromium service, takeover, and its authority boundaries.
+- [Grocery ordering](docs/grocery-shopping.md) — Waitrose baskets, exact checkout approval, and recovery.
 - [Behaviour scenarios](docs/behaviour-scenarios.md) — replayable, isolated judgement checks for companion behaviour.
 - [Companion direction](docs/companion-direction.md) — product intent and principles.
 

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import time as daytime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -26,6 +28,24 @@ from pydantic import (
 
 from .browser.capability import SOCKET_ENVIRONMENT as BROWSER_SOCKET_ENVIRONMENT
 from .codex.models import CodexTurnSettings, WebSearchSetting
+from .grocery.capability import (
+    APPROVAL_TTL_ENVIRONMENT as GROCERY_APPROVAL_TTL_ENVIRONMENT,
+)
+from .grocery.capability import (
+    BASE_URL_ENVIRONMENT as GROCERY_BASE_URL_ENVIRONMENT,
+)
+from .grocery.capability import (
+    CHECKOUT_ENVIRONMENT as GROCERY_CHECKOUT_ENVIRONMENT,
+)
+from .grocery.capability import (
+    PROFILE_ENVIRONMENT as GROCERY_PROFILE_ENVIRONMENT,
+)
+from .grocery.capability import (
+    STATE_ENVIRONMENT as GROCERY_STATE_ENVIRONMENT,
+)
+from .grocery.capability import (
+    TOLERANCE_ENVIRONMENT as GROCERY_TOLERANCE_ENVIRONMENT,
+)
 from .profile import PROFILES, profile_for_attention
 from .revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
 from .revisit import Attention
@@ -439,6 +459,75 @@ class BrowserConfig(BaseModel):
         return self
 
 
+class GroceryConfig(BaseModel):
+    """Opt-in Waitrose ordering above the private browser capability."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    state: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/grocery.sqlite3"
+        ).expanduser()
+    )
+    browser_profile: str = Field(default="personal", min_length=1, max_length=64)
+    base_url: AnyHttpUrl = Field(default=AnyHttpUrl("https://www.waitrose.com"))
+    # Real checkout stays off until the documented owner-observed dry runs pass.
+    checkout_enabled: bool = False
+    weighted_tolerance: Decimal = Field(
+        default=Decimal("1.00"), ge=Decimal("0"), le=Decimal("20")
+    )
+    approval_ttl_seconds: int = Field(default=900, ge=30, le=3600)
+
+    @field_validator("state", mode="before")
+    @classmethod
+    def expand_state_path(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("Grocery state path must not be empty.")
+            return Path(value).expanduser()
+        return value.expanduser() if isinstance(value, Path) else value
+
+    @field_validator("browser_profile", mode="before")
+    @classmethod
+    def strip_browser_profile(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("browser_profile")
+    @classmethod
+    def require_simple_profile_name(cls, value: str) -> str:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value):
+            raise ValueError("Grocery browser_profile must be a simple identifier.")
+        return value
+
+    @field_validator("weighted_tolerance", mode="before")
+    @classmethod
+    def read_tolerance(cls, value: object) -> object:
+        if isinstance(value, str | int | float):
+            try:
+                return Decimal(str(value)).quantize(Decimal("0.01"))
+            except InvalidOperation as error:
+                raise ValueError(
+                    "Grocery weighted_tolerance must be a decimal amount."
+                ) from error
+        return value
+
+    @field_validator("base_url")
+    @classmethod
+    def require_private_base_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        if value.username or value.password or value.query or value.fragment:
+            raise ValueError(
+                "Grocery base_url must not contain credentials, query, or fragment."
+            )
+        host = value.host.strip("[]") if value.host is not None else None
+        if value.scheme != "https" and host not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError(
+                "Grocery base_url must use HTTPS except for a local fixture site."
+            )
+        return value
+
+
 class RevisitConfig(BaseModel):
     """Always-on local settings for one-off future revisits."""
 
@@ -573,6 +662,7 @@ class Settings(BaseModel):
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    grocery: GroceryConfig = Field(default_factory=GroceryConfig)
     revisits: RevisitConfig = Field(default_factory=RevisitConfig)
     stewardship: StewardshipConfig = Field(default_factory=StewardshipConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
@@ -648,6 +738,14 @@ class Settings(BaseModel):
                 "Enabled Mail requires iCloud credentials or an enabled Outlook "
                 "account."
             )
+        if self.grocery.enabled and not self.browser.enabled:
+            raise ValueError(
+                "Enabled grocery ordering requires the [browser] capability."
+            )
+        if self.grocery.checkout_enabled and not self.grocery.enabled:
+            raise ValueError("Grocery checkout_enabled requires [grocery].enabled.")
+        if self.grocery.state.resolve() == self.browser.state.resolve():
+            raise ValueError("Grocery and browser state paths must differ.")
         return self
 
     @property
@@ -709,6 +807,21 @@ class Settings(BaseModel):
         }
         if self.browser.enabled:
             environment[BROWSER_SOCKET_ENVIRONMENT] = str(self.browser.socket.resolve())
+        if self.grocery.enabled:
+            environment.update(
+                {
+                    GROCERY_STATE_ENVIRONMENT: str(self.grocery.state.resolve()),
+                    GROCERY_PROFILE_ENVIRONMENT: self.grocery.browser_profile,
+                    GROCERY_BASE_URL_ENVIRONMENT: str(self.grocery.base_url),
+                    GROCERY_CHECKOUT_ENVIRONMENT: (
+                        "1" if self.grocery.checkout_enabled else "0"
+                    ),
+                    GROCERY_TOLERANCE_ENVIRONMENT: str(self.grocery.weighted_tolerance),
+                    GROCERY_APPROVAL_TTL_ENVIRONMENT: str(
+                        self.grocery.approval_ttl_seconds
+                    ),
+                }
+            )
         return environment
 
     @property
@@ -966,6 +1079,15 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             "observation_max_elements": settings.browser.observation_max_elements,
             "journal_retention_days": settings.browser.journal_retention_days,
             "journal_max_entries": settings.browser.journal_max_entries,
+        },
+        "grocery": {
+            "enabled": settings.grocery.enabled,
+            "state": str(settings.grocery.state),
+            "browser_profile": settings.grocery.browser_profile,
+            "base_url": str(settings.grocery.base_url),
+            "checkout_enabled": settings.grocery.checkout_enabled,
+            "weighted_tolerance": str(settings.grocery.weighted_tolerance),
+            "approval_ttl_seconds": settings.grocery.approval_ttl_seconds,
         },
         "revisits": {
             "state": str(settings.revisits.state),

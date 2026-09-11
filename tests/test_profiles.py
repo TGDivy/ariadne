@@ -7,6 +7,8 @@ from openai_codex.generated.v2_all import ReasoningEffort
 
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
+from ariadne.grocery.capability import ENVIRONMENT_NAMES as GROCERY_ENVIRONMENT
+from ariadne.grocery.capability import TOOLS as GROCERY_TOOLS
 from ariadne.knowledge.capability import ROOT_ENVIRONMENT
 from ariadne.knowledge.capability import TOOLS as KNOWLEDGE_TOOLS
 from ariadne.profile import (
@@ -82,7 +84,11 @@ def test_surface_profiles_are_explicit_declarations() -> None:
     assert "ARIADNE_TELEGRAM_STATE" in TELEGRAM_PROFILE.mcp_environment_names
     assert "search_mail" not in TELEGRAM_PROFILE.enabled_tools
     assert "list_calendars" not in TELEGRAM_PROFILE.enabled_tools
-    assert TELEGRAM_PROFILE.enabled_tools[-len(KNOWLEDGE_TOOLS) :] == KNOWLEDGE_TOOLS
+    assert TELEGRAM_PROFILE.enabled_tools[-len(GROCERY_TOOLS) :] == GROCERY_TOOLS
+    assert all(
+        name in TELEGRAM_PROFILE.mcp_environment_names for name in GROCERY_ENVIRONMENT
+    )
+    assert not any(tool in MAIL_PROFILE.enabled_tools for tool in GROCERY_TOOLS)
     assert all(tool in TELEGRAM_PROFILE.enabled_tools for tool in REVISIT_TOOLS)
 
     assert STEWARDSHIP_PROFILE.name == "stewardship"
@@ -187,6 +193,7 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
         "request_telegram_file_delivery",
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
+        *GROCERY_TOOLS,
     )
     assert "Mail, Calendar, and factual health history" in profile.base_instructions
     assert "one conversational beat per message" in profile.base_instructions

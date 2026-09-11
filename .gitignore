@@ -13,6 +13,7 @@ mail-export*.csv
 /config.toml
 /browser-data/
 /browser-profiles/
+/grocery-data/
 
 # Local secrets
 .env
