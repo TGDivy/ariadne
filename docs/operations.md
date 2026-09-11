@@ -52,6 +52,27 @@ The handoff table is created additively in `[telegram].state`; there is no confi
 
 Operational logs expose only lifecycle identifiers, counts, statuses, and timings. To validate a deployment, trigger a harmless background handoff, confirm it stays invisible until its source job completes, then check both paths: send a human message before two minutes and later allow another handoff to cross the quiet window. Restart once with a ready handoff and once during a claimed test turn to verify conservative recovery. Do not inspect the private SQLite body in shared logs or a PR.
 
+## Browser control
+
+Browser control is a separate long-lived, opt-in service. Its MCP process receives
+only the private Unix-socket path; Chromium profiles, artifacts, and credentials do
+not enter model configuration. The administrative CLI is deliberately distinct from
+the model-facing tools:
+
+```bash
+ariadne-browser health
+ariadne-browser profile list
+ariadne-browser profile inspect personal
+ariadne-browser journal --limit 50
+ariadne-browser recovery list
+ariadne-browser shutdown
+```
+
+Run `ariadne-browser serve` under the owner's service manager and create the first
+profile with `ariadne-browser profile create personal`. Full setup, takeover, backup,
+recovery, and conservative live validation are in
+[Browser control](browser-control.md).
+
 ## Behaviour scenarios
 
 The behaviour lab replays synthetic stories without contacting a real Telegram chat, mailbox, Calendar, or private Thread. Listing and inspection are deterministic and CI-safe; a real run is an explicit local command and may incur model usage.

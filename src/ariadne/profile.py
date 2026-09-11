@@ -5,6 +5,8 @@ from pathlib import Path
 from openai_codex import ApprovalMode
 from openai_codex.generated.v2_all import ReasoningEffort
 
+from .browser.capability import SOCKET_ENVIRONMENT as BROWSER_SOCKET_ENVIRONMENT
+from .browser.capability import TOOLS as BROWSER_TOOLS
 from .codex.models import TurnProfile
 from .handoff import (
     ACTIVATION_KEY_ENVIRONMENT,
@@ -55,6 +57,7 @@ TELEGRAM_PROFILE = TurnProfile(
         *KNOWLEDGE_TOOLS,
     ),
     thread_policy="shared",
+    browser_tools=BROWSER_TOOLS,
     reasoning_summary="concise",
     approval_mode=ApprovalMode.auto_review,
     permission_profile="ariadne",
@@ -68,6 +71,7 @@ TELEGRAM_PROFILE = TurnProfile(
         "ARIADNE_TELEGRAM_STATE",
         REVISIT_STATE_ENVIRONMENT,
         KNOWLEDGE_ROOT_ENVIRONMENT,
+        BROWSER_SOCKET_ENVIRONMENT,
     ),
 )
 
@@ -155,6 +159,7 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
             *KNOWLEDGE_TOOLS,
         ),
         thread_policy="fresh-per-event",
+        browser_tools=BROWSER_TOOLS,
         approval_mode=ApprovalMode.auto_review,
         permission_profile="ariadne",
         writable_roots=(Path.home(),),
@@ -168,6 +173,7 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
             ACTIVATION_SOURCE_ENVIRONMENT,
             REVISIT_STATE_ENVIRONMENT,
             KNOWLEDGE_ROOT_ENVIRONMENT,
+            BROWSER_SOCKET_ENVIRONMENT,
         ),
     )
 

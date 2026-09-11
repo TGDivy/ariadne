@@ -19,6 +19,7 @@ from openai_codex.generated.v2_all import (
 )
 
 MCP_SERVER_NAME = "ariadne"
+BROWSER_MCP_SERVER_NAME = "ariadne_browser"
 TELEGRAM_TOOLS = ("send_telegram_message", "ask_telegram_question")
 
 
@@ -67,6 +68,35 @@ _LOCAL_ACTIVITY = {
     ),
     "record_current_mail_decision": _activity(
         "Triaging mail…", "Checking the mail decision…"
+    ),
+}
+
+_BROWSER_ACTIVITY = {
+    "browser_start_session": _activity("Opening the browser…", "Browser ready…"),
+    "browser_list_tabs": _activity("Checking browser tabs…", "Reviewing tabs…"),
+    "browser_select_tab": _activity("Switching browser tabs…", "Reviewing the page…"),
+    "browser_close_tab": _activity("Closing a browser tab…", "Reviewing tabs…"),
+    "browser_navigate": _activity("Opening a webpage…", "Reviewing the page…"),
+    "browser_inspect": _activity("Reading a webpage…", "Reviewing the page…"),
+    "browser_click": _activity("Using a webpage…", "Checking what changed…"),
+    "browser_type": _activity("Filling in a form…", "Checking the form…"),
+    "browser_select": _activity("Filling in a form…", "Checking the form…"),
+    "browser_scroll": _activity("Reading more of a webpage…", "Reviewing the page…"),
+    "browser_upload": _activity("Attaching a file…", "Checking the attachment…"),
+    "browser_download": _activity("Downloading a file…", "Checking the download…"),
+    "browser_wait": _activity("Waiting for the webpage…", "Reviewing the page…"),
+    "browser_screenshot": _activity("Looking at the webpage…", "Reviewing the image…"),
+    "browser_coordinate_click": _activity(
+        "Using the webpage visually…", "Checking what changed…"
+    ),
+    "browser_request_takeover": _activity(
+        "Preparing private browser takeover…", "Waiting for you…"
+    ),
+    "browser_resume_after_takeover": _activity(
+        "Resuming browser work…", "Reviewing what changed…"
+    ),
+    "browser_release_session": _activity(
+        "Finishing browser work…", "Browser task released…"
     ),
 }
 
@@ -288,6 +318,10 @@ def describe_activity(item: object) -> ActivityDescription | None:
     if isinstance(item, WebSearchThreadItem):
         return _activity("Searching the web…", "Reviewing sources…")
     if isinstance(item, McpToolCallThreadItem):
+        if item.server == BROWSER_MCP_SERVER_NAME:
+            return _BROWSER_ACTIVITY.get(item.tool) or _activity(
+                "Using the private browser…", "Reviewing the page…"
+            )
         if item.server == MCP_SERVER_NAME and item.tool in TELEGRAM_TOOLS:
             return None
         if item.server == MCP_SERVER_NAME:

@@ -66,6 +66,7 @@ StopRequested = Callable[[], bool]
 WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_TOOL_TIMEOUT_SECONDS = 16 * 60
 MCP_SERVER_NAME = "ariadne"
+BROWSER_MCP_SERVER_NAME = "ariadne_browser"
 TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
 THREAD_STATE_VERSION = 1
 MAX_PERSISTED_THREAD_ID_LENGTH = 512
@@ -203,6 +204,24 @@ def _mcp_config_overrides(profile: ResolvedTurnProfile) -> tuple[str, ...]:
         f"mcp_servers.ariadne.env.{name}={json.dumps(value)}"
         for name, value in profile.mcp_environment_values
     )
+    environment = dict(profile.mcp_environment_values)
+    browser_socket = environment.get("ARIADNE_BROWSER_SOCKET")
+    if profile.browser_tools and browser_socket:
+        overrides.extend(
+            (
+                f"mcp_servers.{BROWSER_MCP_SERVER_NAME}.command="
+                f"{json.dumps(sys.executable)}",
+                f"mcp_servers.{BROWSER_MCP_SERVER_NAME}.args="
+                + json.dumps(["-m", "ariadne.browser.mcp"]),
+                f"mcp_servers.{BROWSER_MCP_SERVER_NAME}.enabled=true",
+                f"mcp_servers.{BROWSER_MCP_SERVER_NAME}.tool_timeout_sec="
+                f"{MCP_TOOL_TIMEOUT_SECONDS}",
+                f"mcp_servers.{BROWSER_MCP_SERVER_NAME}.enabled_tools="
+                + json.dumps(profile.browser_tools),
+                f"mcp_servers.{BROWSER_MCP_SERVER_NAME}.env.ARIADNE_BROWSER_SOCKET="
+                + json.dumps(browser_socket),
+            )
+        )
     return tuple(overrides)
 
 
