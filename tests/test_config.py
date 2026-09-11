@@ -183,6 +183,56 @@ def test_environment_variables_do_not_override_toml(tmp_path: Path) -> None:
     assert settings.telegram_bot_token == "token"
 
 
+def test_voice_transcription_command_is_explicit_argv_configuration(
+    tmp_path: Path,
+) -> None:
+    config = write_config(
+        tmp_path,
+        telegram="""\
+bot_token = "token"
+allowed_user_id = 12345
+voice_transcription_command = ["local-whisper", "--input", "{input}"]
+voice_transcription_timeout_seconds = 45""",
+    )
+
+    settings = load_settings(config, environ={})
+
+    assert settings.telegram.voice_transcription_command == (
+        "local-whisper",
+        "--input",
+        "{input}",
+    )
+    assert settings.telegram.voice_transcription_timeout_seconds == 45
+    assert settings_payload(settings)["telegram"][  # type: ignore[index]
+        "voice_transcription_command"
+    ] == ["local-whisper", "--input", "{input}"]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        '"local-whisper"',
+        '["local-whisper"]',
+        '["local-whisper", "{input}", "{input}"]',
+        '["local-whisper", ""]',
+    ],
+)
+def test_voice_transcription_command_rejects_ambiguous_execution(
+    tmp_path: Path, command: str
+) -> None:
+    config = write_config(
+        tmp_path,
+        telegram=(
+            'bot_token = "token"\n'
+            "allowed_user_id = 12345\n"
+            f"voice_transcription_command = {command}"
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="voice_transcription_command"):
+        load_settings(config, environ={})
+
+
 def test_missing_config_is_rejected(tmp_path: Path) -> None:
     missing = tmp_path / "missing.toml"
 

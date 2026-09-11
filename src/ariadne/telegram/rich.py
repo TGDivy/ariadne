@@ -722,6 +722,7 @@ class RichBotAPI:
         buttons: Sequence[RichButton] = (),
         buttons_per_row: int = 8,
         disable_interactions: bool = False,
+        disable_notification: bool = False,
     ) -> Message:
         """Send one persistent Rich Markdown message."""
         return await self.send_payload(
@@ -733,6 +734,7 @@ class RichBotAPI:
                 disable_interactions=disable_interactions,
             ),
             message_thread_id=message_thread_id,
+            disable_notification=disable_notification,
         )
 
     async def send_payload(
@@ -741,6 +743,7 @@ class RichBotAPI:
         chat_id: int,
         rich_message: Mapping[str, Any],
         message_thread_id: int | None = None,
+        disable_notification: bool = False,
     ) -> Message:
         """Send any valid ``InputRichMessage``, including explicit block trees."""
         arguments: dict[str, Any] = {
@@ -749,6 +752,8 @@ class RichBotAPI:
         }
         if message_thread_id is not None:
             arguments["message_thread_id"] = message_thread_id
+        if disable_notification:
+            arguments["disable_notification"] = True
         return cast(
             Message,
             await self._bot.do_api_request(

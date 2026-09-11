@@ -76,6 +76,16 @@ async def test_send_rich_message_uses_ptbs_forward_compatible_api() -> None:
     ]
 
 
+async def test_silent_rich_message_forwards_the_notification_flag() -> None:
+    result = telegram_message()
+    bot = FakeBot(result)
+    api = RichBotAPI(cast(Bot, bot))
+
+    await api.send(chat_id=7, markdown="Thinking", disable_notification=True)
+
+    assert bot.calls[0][1]["disable_notification"] is True
+
+
 async def test_edit_can_convert_an_ordinary_message_to_rich_content() -> None:
     message = telegram_message()
     bot = FakeBot(message)

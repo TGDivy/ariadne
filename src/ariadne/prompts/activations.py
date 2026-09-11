@@ -21,17 +21,23 @@ def build_telegram_turn_prompt(
     text: str,
     *,
     quoted_message: str | None = None,
+    quoted_message_id: int | None = None,
+    quoted_author: str | None = None,
 ) -> str:
     """Add immediate Telegram reply context to a direct message."""
     if quoted_message is None:
         return text
-    return (
-        "Telegram reply context:\n"
-        "<quoted_message>\n"
-        f"{quoted_message}\n"
-        "</quoted_message>\n\n"
-        f"{text}"
+    attributes = []
+    if quoted_message_id is not None:
+        attributes.append(f"message_id={quoted_message_id}")
+    if quoted_author is not None:
+        attributes.append(f"author={quoted_author}")
+    label = (
+        f"Telegram reply context ({', '.join(attributes)}):"
+        if attributes
+        else "Telegram reply context:"
     )
+    return f"{label}\n<quoted_message>\n{quoted_message}\n</quoted_message>\n\n{text}"
 
 
 def _handoff_context(handoffs: Sequence[ConversationHandoff]) -> str:

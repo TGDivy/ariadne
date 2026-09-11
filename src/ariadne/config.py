@@ -85,6 +85,8 @@ class TelegramConfig(BaseModel):
     allowed_user_id: PositiveInt
     state: Path = Field(default_factory=default_question_state_path)
     identity: TelegramIdentity = Field(default_factory=TelegramIdentity)
+    voice_transcription_command: tuple[str, ...] | None = None
+    voice_transcription_timeout_seconds: int = Field(default=120, ge=1, le=600)
 
     @field_validator("bot_token", mode="before")
     @classmethod
@@ -105,6 +107,22 @@ class TelegramConfig(BaseModel):
         if isinstance(value, str):
             return Path(value).expanduser()
         return value.expanduser() if isinstance(value, Path) else value
+
+    @field_validator("voice_transcription_command", mode="before")
+    @classmethod
+    def normalize_voice_command(cls, value: object) -> object:
+        if value is None:
+            return None
+        if not isinstance(value, (list, tuple)):
+            raise ValueError("voice_transcription_command must be an argument list.")
+        command = tuple(str(argument).strip() for argument in value)
+        if not command or any(not argument for argument in command):
+            raise ValueError("voice_transcription_command cannot contain empty values.")
+        if sum(argument.count("{input}") for argument in command) != 1:
+            raise ValueError(
+                "voice_transcription_command needs exactly one {input} placeholder."
+            )
+        return command
 
 
 class ICloudConfig(BaseModel):
@@ -757,6 +775,14 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             "bot_token": "<redacted>",
             "allowed_user_id": settings.allowed_user_id,
             "state": str(settings.telegram.state),
+            "voice_transcription_command": (
+                list(settings.telegram.voice_transcription_command)
+                if settings.telegram.voice_transcription_command is not None
+                else None
+            ),
+            "voice_transcription_timeout_seconds": (
+                settings.telegram.voice_transcription_timeout_seconds
+            ),
             "identity": {
                 "name": identity.name,
                 "description": identity.description,

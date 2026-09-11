@@ -249,6 +249,7 @@ def test_recent_telegram_messages_exposes_bounded_filtered_history(
                 "content_type": "text",
                 "text": "I have packed everything and sorted the bib",
                 "reply_to_message_id": None,
+                "reactions": [],
             }
         ],
         "total": 1,

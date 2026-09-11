@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -11,7 +12,7 @@ from typing import Literal, cast
 
 TelegramSpeaker = Literal["human", "iris"]
 TelegramMessageSource = Literal["telegram", "mail", "wakeup"]
-TelegramContentType = Literal["text", "photo", "document"]
+TelegramContentType = Literal["text", "photo", "document", "voice"]
 
 
 def telegram_message_time(message: object) -> datetime:
@@ -34,6 +35,7 @@ class TelegramHistoryMessage:
     content_type: TelegramContentType
     text: str
     reply_to_message_id: int | None = None
+    reactions: tuple[str, ...] = ()
 
     def public_payload(self) -> dict[str, object]:
         return {
@@ -44,6 +46,7 @@ class TelegramHistoryMessage:
             "content_type": self.content_type,
             "text": self.text,
             "reply_to_message_id": self.reply_to_message_id,
+            "reactions": list(self.reactions),
         }
 
 
@@ -75,8 +78,56 @@ class TelegramMessageStore:
         self.path.chmod(0o600)
         with self._connect_unchecked() as database:
             database.execute("PRAGMA journal_mode=WAL")
+            table = database.execute(
+                """SELECT sql FROM sqlite_master
+                WHERE type = 'table' AND name = 'telegram_messages'"""
+            ).fetchone()
+            if table is not None and "'voice'" not in str(table["sql"]):
+                database.execute("BEGIN IMMEDIATE")
+                database.execute(
+                    "ALTER TABLE telegram_messages RENAME TO telegram_messages_v1"
+                )
+                self._create_messages_table(database)
+                database.execute(
+                    """
+                    INSERT INTO telegram_messages (
+                        chat_id, message_id, sent_at, speaker, source,
+                        content_type, text, reply_to_message_id
+                    )
+                    SELECT chat_id, message_id, sent_at, speaker, source,
+                           content_type, text, reply_to_message_id
+                    FROM telegram_messages_v1
+                    """
+                )
+                database.execute("DROP TABLE telegram_messages_v1")
+            else:
+                self._create_messages_table(database)
             database.execute(
                 """
+                CREATE INDEX IF NOT EXISTS telegram_messages_by_chat_and_time
+                ON telegram_messages(chat_id, sent_at, message_id)
+                """
+            )
+            database.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telegram_message_reactions (
+                    chat_id INTEGER NOT NULL,
+                    message_id INTEGER NOT NULL,
+                    reactions TEXT NOT NULL,
+                    reacted_at REAL NOT NULL,
+                    PRIMARY KEY (chat_id, message_id),
+                    FOREIGN KEY (chat_id, message_id)
+                        REFERENCES telegram_messages(chat_id, message_id)
+                        ON DELETE CASCADE
+                )
+                """
+            )
+        self._initialized = True
+
+    @staticmethod
+    def _create_messages_table(database: sqlite3.Connection) -> None:
+        database.execute(
+            """
                 CREATE TABLE IF NOT EXISTS telegram_messages (
                     chat_id INTEGER NOT NULL,
                     message_id INTEGER NOT NULL,
@@ -85,20 +136,13 @@ class TelegramMessageStore:
                     source TEXT NOT NULL
                         CHECK(source IN ('telegram','mail','wakeup')),
                     content_type TEXT NOT NULL
-                        CHECK(content_type IN ('text','photo','document')),
+                        CHECK(content_type IN ('text','photo','document','voice')),
                     text TEXT NOT NULL,
                     reply_to_message_id INTEGER,
                     PRIMARY KEY (chat_id, message_id)
                 )
-                """
-            )
-            database.execute(
-                """
-                CREATE INDEX IF NOT EXISTS telegram_messages_by_chat_and_time
-                ON telegram_messages(chat_id, sent_at, message_id)
-                """
-            )
-        self._initialized = True
+            """
+        )
 
     def record(self, message: TelegramHistoryMessage) -> None:
         """Insert or replace one Telegram message without creating duplicates."""
@@ -162,20 +206,20 @@ class TelegramMessageStore:
         if invalid_sources:
             raise ValueError("Unknown Telegram message source.")
 
-        clauses = ["chat_id = ?", "sent_at >= ?"]
+        clauses = ["m.chat_id = ?", "m.sent_at >= ?"]
         values: list[object] = [chat_id, since.astimezone(UTC).timestamp()]
         if before is not None:
-            clauses.append("sent_at < ?")
+            clauses.append("m.sent_at < ?")
             values.append(before.astimezone(UTC).timestamp())
         if speakers:
-            clauses.append("speaker IN (" + ",".join("?" for _ in speakers) + ")")
+            clauses.append("m.speaker IN (" + ",".join("?" for _ in speakers) + ")")
             values.extend(speakers)
         if sources:
-            clauses.append("source IN (" + ",".join("?" for _ in sources) + ")")
+            clauses.append("m.source IN (" + ",".join("?" for _ in sources) + ")")
             values.extend(sources)
         normalized_query = query.strip().casefold() if query is not None else ""
         if normalized_query:
-            clauses.append("instr(CASEFOLD(text), ?) > 0")
+            clauses.append("instr(CASEFOLD(m.text), ?) > 0")
             values.append(normalized_query)
         where = " AND ".join(clauses)
 
@@ -186,14 +230,18 @@ class TelegramMessageStore:
             ).fetchone()[0]
             total = int(
                 database.execute(
-                    f"SELECT COUNT(*) FROM telegram_messages WHERE {where}", values
+                    f"SELECT COUNT(*) FROM telegram_messages AS m WHERE {where}",
+                    values,
                 ).fetchone()[0]
             )
             rows = database.execute(
                 f"""
-                SELECT * FROM telegram_messages
+                SELECT m.*, r.reactions AS reactions_json
+                FROM telegram_messages AS m
+                LEFT JOIN telegram_message_reactions AS r
+                  ON r.chat_id = m.chat_id AND r.message_id = m.message_id
                 WHERE {where}
-                ORDER BY sent_at DESC, message_id DESC
+                ORDER BY m.sent_at DESC, m.message_id DESC
                 LIMIT ?
                 """,
                 (*values, limit),
@@ -207,6 +255,58 @@ class TelegramMessageStore:
                 else None
             ),
         )
+
+    def set_reactions(
+        self,
+        chat_id: int,
+        message_id: int,
+        reactions: Sequence[str],
+        *,
+        reacted_at: datetime,
+    ) -> bool:
+        """Replace owner feedback for a permanent Iris message, if it exists."""
+        if reacted_at.tzinfo is None or reacted_at.utcoffset() is None:
+            raise ValueError("Reaction time must include a timezone offset.")
+        normalized = tuple(dict.fromkeys(reaction.strip() for reaction in reactions))
+        if any(not reaction or len(reaction) > 128 for reaction in normalized):
+            raise ValueError("Telegram reactions must be short visible values.")
+        with self._connect() as database:
+            database.execute("BEGIN IMMEDIATE")
+            message = database.execute(
+                """
+                SELECT speaker FROM telegram_messages
+                WHERE chat_id = ? AND message_id = ?
+                """,
+                (chat_id, message_id),
+            ).fetchone()
+            if message is None or message["speaker"] != "iris":
+                return False
+            if normalized:
+                database.execute(
+                    """
+                    INSERT INTO telegram_message_reactions (
+                        chat_id, message_id, reactions, reacted_at
+                    ) VALUES (?, ?, ?, ?)
+                    ON CONFLICT(chat_id, message_id) DO UPDATE SET
+                        reactions = excluded.reactions,
+                        reacted_at = excluded.reacted_at
+                    """,
+                    (
+                        chat_id,
+                        message_id,
+                        json.dumps(normalized, ensure_ascii=False),
+                        reacted_at.astimezone(UTC).timestamp(),
+                    ),
+                )
+            else:
+                database.execute(
+                    """
+                    DELETE FROM telegram_message_reactions
+                    WHERE chat_id = ? AND message_id = ?
+                    """,
+                    (chat_id, message_id),
+                )
+        return True
 
     def _connect(self) -> sqlite3.Connection:
         self.initialize()
@@ -234,5 +334,10 @@ def _message(row: sqlite3.Row) -> TelegramHistoryMessage:
             int(row["reply_to_message_id"])
             if row["reply_to_message_id"] is not None
             else None
+        ),
+        reactions=(
+            tuple(cast(list[str], json.loads(str(row["reactions_json"]))))
+            if "reactions_json" in row.keys() and row["reactions_json"] is not None
+            else ()
         ),
     )

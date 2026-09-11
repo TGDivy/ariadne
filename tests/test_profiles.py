@@ -191,6 +191,9 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert "Mail, Calendar, and factual health history" in profile.base_instructions
     assert "one conversational beat per message" in profile.base_instructions
     assert "do not recap it" in profile.base_instructions
+    assert "light, ambiguous feedback" in profile.base_instructions
+    assert "Never turn acknowledgements" in profile.base_instructions
+    assert "sensitive reflection" in profile.base_instructions
     assert "ariadne.prompts/telegram.md" in profile.base_instruction_sources
     assert "direct message from Example User or an activation from Ariadne" in (
         profile.developer_instructions

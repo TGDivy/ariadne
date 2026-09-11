@@ -59,7 +59,7 @@ uv run ariadne serve
 
 `config check` validates the resolved configuration without printing secrets. To use a different private configuration, set `ARIADNE_CONFIG` or put `--config PATH` before the command you are running. `ariadne config show` displays the effective configuration with secrets redacted. `python -m ariadne` exposes the same CLI when a console script is inconvenient, but it still needs the explicit `serve` command.
 
-Send `/new` in Telegram to start a fresh Codex conversation while retaining durable knowledge. `/settings` selects a supported model, reasoning effort, and web-research setting for the running Telegram process. `/stop` asks the active turn to interrupt; completed work cannot be undone.
+Send `/new` in Telegram to start a fresh Codex conversation while retaining durable knowledge. `/settings` selects a supported model, reasoning effort, and web-research setting for the running Telegram process. `/stop` asks the active turn to interrupt; completed work cannot be undone. `/status` is a compact panel showing whether Iris is working, initiative state, scheduled wake-ups, updates waiting for a quiet moment, and which private sources are switched on; `/wakeups` opens its wake-up page directly. Commands are temporary controls: the command message and the previous panel are removed, only one panel stays visible, and it disappears when ordinary conversation resumes. See [Telegram live chat](telegram-live-chat.md#ephemeral-command-panels).
 
 ## Add optional integrations deliberately
 
@@ -69,6 +69,7 @@ Mail, Calendar, health, proactive stewardship, and telemetry are off in `config.
 - **Calendar:** enable `[calendar]` and set an IANA timezone. Calendar writes and invitation responses can communicate externally, so keep it opt-in and review the [architecture notes](architecture.md#integration-boundaries).
 - **Health:** enable `[health]` with Ithaca's HTTPS API URL, distinct read token, and your IANA timezone. The CLI is read-only and exposes compact workout and sleep facts, never canonical raw health records.
 - **Proactive stewardship:** first run several manual owner-reviewed cycles, then enable one daily creative opportunity in a local waking window. It may read enabled private sources and complete already-authorized reversible work, but sends anything worth discussing through the continuing Telegram conversation and may remain silent.
+- **Voice notes:** set `telegram.voice_transcription_command` to an argv list containing exactly one `{input}` placeholder. Ariadne invokes it without a shell on a bounded private OGG file and expects only the UTF-8 transcript on stdout. A local Whisper wrapper is a suitable backend; when omitted, voice notes receive a brief unavailable response.
 - **Telemetry:** enable `[telemetry]` only after adding an OTLP endpoint and authorization to the private configuration. The included Grafana dashboard is at `docs/grafana/ariadne-observability.json`.
 
 The implementation details and operational contracts for Mail, Calendar, health, and stewardship live in the source and their nearby documentation. They are intentionally not required for a first private conversation.

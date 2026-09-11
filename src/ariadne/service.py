@@ -7,6 +7,7 @@ import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from telegram import BotCommand, Update
@@ -16,6 +17,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     MessageHandler,
+    MessageReactionHandler,
     TypeHandler,
     filters,
 )
@@ -30,6 +32,8 @@ from .revisit.runtime import RevisitLoop
 from .stewardship.runtime import StewardshipLoop
 from .telegram.bot import AriadneBot
 from .telegram.continuity import TelegramConversationThreadStore
+from .telegram.status import PrivateSource, StatusSources
+from .telegram.voice import CommandVoiceTranscriber
 from .telemetry import configure_telemetry
 
 LOGGER = logging.getLogger(__name__)
@@ -37,10 +41,40 @@ LOGGER = logging.getLogger(__name__)
 AriadneApplication = Application[Any, Any, Any, Any, Any, Any]
 
 COMMANDS = (
+    BotCommand("status", "What Ariadne is doing and what is scheduled"),
+    BotCommand("wakeups", "Scheduled one-off wake-ups"),
     BotCommand("new", "Start a fresh conversation"),
     BotCommand("stop", "Interrupt the turn Ariadne is working on"),
     BotCommand("settings", "Model, reasoning effort, and web research"),
 )
+
+
+def status_timezone(settings: Settings) -> ZoneInfo:
+    """Choose the owner's local zone from whichever surface actually sets one.
+
+    There is no single local-timezone setting; stewardship, Calendar, and health
+    each carry their own and each defaults to UTC. Prefer the first that has
+    been configured so a `/status` panel reads in real local time even when
+    daily initiative is switched off.
+    """
+    for candidate in (
+        settings.stewardship.timezone,
+        settings.calendar.timezone,
+        settings.health.timezone,
+    ):
+        if candidate != "UTC":
+            return ZoneInfo(candidate)
+    return ZoneInfo("UTC")
+
+
+def _private_sources(settings: Settings) -> tuple[PrivateSource, ...]:
+    """Report which major private capabilities are switched on, not reachable."""
+    return (
+        PrivateSource("Mail", settings.mail.enabled),
+        PrivateSource("Calendar", settings.calendar.enabled),
+        PrivateSource("Health", settings.health.enabled),
+        PrivateSource("Knowledge", True),
+    )
 
 
 async def publish_commands(application: AriadneApplication) -> None:
@@ -86,6 +120,9 @@ def _configure_cli_environment(path: Path | None) -> None:
 
 def run(path: Path | None = None) -> None:
     """Start Ariadne using the selected private TOML configuration."""
+    # PTB is migrating media durations from integer seconds to timedelta. Opt
+    # into the future representation now; Ariadne accepts both during rollout.
+    os.environ.setdefault("PTB_TIMEDELTA", "true")
     configure_logging()
     settings = _load_configuration(path)
     # The model process inherits this path; provider credentials remain in the
@@ -117,13 +154,6 @@ def run(path: Path | None = None) -> None:
     )
     handoff_coordinator = HandoffCoordinator(
         HandoffState(settings.telegram.state.resolve())
-    )
-    ariadne = AriadneBot(
-        settings.allowed_user_id,
-        conversation,
-        bot_token=settings.telegram_bot_token,
-        question_state=telegram_state,
-        handoff_coordinator=handoff_coordinator,
     )
     try:
         mail_loops = (
@@ -171,6 +201,27 @@ def run(path: Path | None = None) -> None:
         telemetry.shutdown()
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
+    ariadne = AriadneBot(
+        settings.allowed_user_id,
+        conversation,
+        bot_token=settings.telegram_bot_token,
+        question_state=telegram_state,
+        handoff_coordinator=handoff_coordinator,
+        voice_transcriber=(
+            CommandVoiceTranscriber(
+                settings.telegram.voice_transcription_command,
+                timeout_seconds=settings.telegram.voice_transcription_timeout_seconds,
+            )
+            if settings.telegram.voice_transcription_command is not None
+            else None
+        ),
+        status_sources=StatusSources(
+            timezone=status_timezone(settings),
+            sources=_private_sources(settings),
+            initiative=stewardship_loop,
+            wakeups=revisit_loop.state,
+        ),
+    )
     mail_tasks: list[asyncio.Task[None]] = []
     revisit_task: asyncio.Task[None] | None = None
     handoff_task: asyncio.Task[None] | None = None
@@ -180,6 +231,7 @@ def run(path: Path | None = None) -> None:
         nonlocal revisit_task, handoff_task, stewardship_task
         ariadne.bind_bot(application.bot)
         await ariadne.recover_questions()
+        await ariadne.recover_panel()
         await publish_commands(application)
         for mail_loop in mail_loops:
             mail_tasks.append(asyncio.create_task(mail_loop.run_forever()))
@@ -233,8 +285,13 @@ def run(path: Path | None = None) -> None:
     application.add_handler(CommandHandler("new", ariadne.new))
     application.add_handler(CommandHandler("stop", ariadne.stop))
     application.add_handler(CommandHandler("settings", ariadne.settings))
+    application.add_handler(CommandHandler("status", ariadne.status))
+    application.add_handler(CommandHandler("wakeups", ariadne.wakeups))
     application.add_handler(
         CallbackQueryHandler(ariadne.settings_callback, pattern=r"^settings:")
+    )
+    application.add_handler(
+        CallbackQueryHandler(ariadne.status_callback, pattern=r"^status:")
     )
     application.add_handler(
         CallbackQueryHandler(ariadne.file_delivery_callback, pattern=r"^file-delivery:")
@@ -242,6 +299,7 @@ def run(path: Path | None = None) -> None:
     application.add_handler(
         CallbackQueryHandler(ariadne.question_callback, pattern=r"^question:")
     )
+    application.add_handler(MessageReactionHandler(ariadne.reaction))
     application.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
     )
@@ -251,6 +309,7 @@ def run(path: Path | None = None) -> None:
     application.add_handler(
         MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE, ariadne.document)
     )
+    application.add_handler(MessageHandler(filters.VOICE, ariadne.voice))
     # PTB 22.8 predates Rich Messages, but retains the raw field in
     # Message.api_kwargs. A second handler group lets us inspect those updates
     # without competing with the native text/media handlers above.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,7 +19,7 @@ from ariadne.prompts.activations import (
     build_direct_turn_with_handoffs,
     build_proactive_handoff_turn_prompt,
 )
-from ariadne.telegram.history import TelegramMessageStore
+from ariadne.telegram.history import TelegramHistoryMessage, TelegramMessageStore
 from ariadne.telegram.proactive import ProactiveTurn
 from ariadne.telegram.rich import RichBotAPI
 
@@ -310,6 +311,12 @@ class FakeRichAPI:
         return SimpleNamespace(message_id=100 + len(self.sent))
 
 
+class RejectingHistory(TelegramMessageStore):
+    def record(self, message: TelegramHistoryMessage) -> None:
+        del message
+        raise sqlite3.OperationalError("history unavailable")
+
+
 async def test_proactive_renderer_has_no_fake_input_or_thinking_placeholder(
     tmp_path: Path,
 ) -> None:
@@ -361,3 +368,24 @@ async def test_proactive_renderer_can_suppress_an_obsolete_batch(
     renderer.complete()
 
     assert rich.sent == []
+
+
+async def test_accepted_proactive_send_is_not_retried_when_history_fails(
+    tmp_path: Path, caplog
+) -> None:
+    caplog.set_level(logging.ERROR)
+    rich = FakeRichAPI()
+    history = RejectingHistory(tmp_path / "telegram.sqlite3")
+    renderer = ProactiveTurn(cast(RichBotAPI, rich), history, chat_id=7)
+
+    await renderer.apply(AgentMessageStarted("final", MessagePhase.final_answer))
+    await renderer.apply(
+        AgentMessageCompleted(
+            "final", MessagePhase.final_answer, "One authoritative update"
+        )
+    )
+    renderer.complete()
+
+    assert [item["markdown"] for item in rich.sent] == ["One authoritative update"]
+    assert renderer.delivered_messages == 1
+    assert "suppressing automatic retry" in caplog.text

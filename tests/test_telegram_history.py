@@ -185,3 +185,100 @@ def test_record_rejects_invisible_text_and_timezone_free_time(tmp_path: Path) ->
                 text="Hello",
             )
         )
+
+
+def test_reactions_replace_current_feedback_without_starting_new_messages(
+    tmp_path: Path,
+) -> None:
+    store = TelegramMessageStore(tmp_path / "telegram.sqlite3")
+    store.record(message(1, 0, "Human", speaker="human"))
+    store.record(message(2, 1, "Iris", speaker="iris"))
+
+    assert store.set_reactions(
+        7,
+        2,
+        ("👍", "❤️", "👍"),
+        reacted_at=START + timedelta(minutes=2),
+    )
+    assert store.set_reactions(
+        7,
+        2,
+        ("👎",),
+        reacted_at=START + timedelta(minutes=3),
+    )
+    assert not store.set_reactions(
+        7,
+        1,
+        ("👍",),
+        reacted_at=START + timedelta(minutes=3),
+    )
+    assert not store.set_reactions(
+        7,
+        999,
+        ("👍",),
+        reacted_at=START + timedelta(minutes=3),
+    )
+
+    page = store.read(7, since=START)
+
+    assert page.messages[0].reactions == ()
+    assert page.messages[1].reactions == ("👎",)
+    assert page.messages[1].public_payload()["reactions"] == ["👎"]
+
+    assert store.set_reactions(7, 2, (), reacted_at=START + timedelta(minutes=4))
+    assert store.read(7, since=START).messages[1].reactions == ()
+
+
+def test_reaction_requires_timezone_and_visible_bounded_values(tmp_path: Path) -> None:
+    store = TelegramMessageStore(tmp_path / "telegram.sqlite3")
+    store.record(message(2, 0, "Iris", speaker="iris"))
+
+    with pytest.raises(ValueError, match="timezone"):
+        store.set_reactions(7, 2, ("👍",), reacted_at=datetime(2026, 8, 29))
+    with pytest.raises(ValueError, match="short visible"):
+        store.set_reactions(7, 2, ("",), reacted_at=START)
+    with pytest.raises(ValueError, match="short visible"):
+        store.set_reactions(7, 2, ("x" * 129,), reacted_at=START)
+
+
+def test_existing_history_schema_migrates_atomically_for_voice(tmp_path: Path) -> None:
+    path = tmp_path / "telegram.sqlite3"
+    with sqlite3.connect(path) as database:
+        database.execute(
+            """
+            CREATE TABLE telegram_messages (
+                chat_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                sent_at REAL NOT NULL,
+                speaker TEXT NOT NULL CHECK(speaker IN ('human','iris')),
+                source TEXT NOT NULL CHECK(source IN ('telegram','mail','wakeup')),
+                content_type TEXT NOT NULL
+                    CHECK(content_type IN ('text','photo','document')),
+                text TEXT NOT NULL,
+                reply_to_message_id INTEGER,
+                PRIMARY KEY (chat_id, message_id)
+            )
+            """
+        )
+        database.execute(
+            """INSERT INTO telegram_messages VALUES
+            (7, 1, ?, 'human', 'telegram', 'text', 'Preserved', NULL)""",
+            (START.timestamp(),),
+        )
+
+    store = TelegramMessageStore(path)
+    voice = TelegramHistoryMessage(
+        chat_id=7,
+        message_id=2,
+        sent_at=START + timedelta(minutes=1),
+        speaker="human",
+        source="telegram",
+        content_type="voice",
+        text="[Voice note]\nHello",
+    )
+    store.record(voice)
+
+    assert [item.content_type for item in store.read(7, since=START).messages] == [
+        "text",
+        "voice",
+    ]

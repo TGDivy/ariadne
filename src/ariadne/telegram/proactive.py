@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import sqlite3
 from collections.abc import Callable
 
 from openai_codex.generated.v2_all import MessagePhase
@@ -15,6 +17,8 @@ from ..codex import (
 from ..prompts.activations import SILENT_HANDOFF_RESPONSE
 from .history import TelegramHistoryMessage, TelegramMessageStore, telegram_message_time
 from .rich import RichBotAPI, split_rich_markdown
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ProactiveTurn:
@@ -65,20 +69,30 @@ class ProactiveTurn:
                     chat_id=self._chat_id,
                     markdown=chunk,
                 )
-                self._history.record(
-                    TelegramHistoryMessage(
-                        chat_id=self._chat_id,
-                        message_id=message.message_id,
-                        sent_at=telegram_message_time(message),
-                        speaker="iris",
-                        source="telegram",
-                        content_type="text",
-                        text=chunk,
-                    )
-                )
+                # Telegram acceptance is authoritative. Count delivery before
+                # touching local state so a history outage cannot cause the
+                # owning handoff to retry and speak the same message twice.
                 self._delivered += 1
                 if self._activity is not None:
                     self._activity()
+                try:
+                    self._history.record(
+                        TelegramHistoryMessage(
+                            chat_id=self._chat_id,
+                            message_id=message.message_id,
+                            sent_at=telegram_message_time(message),
+                            speaker="iris",
+                            source="telegram",
+                            content_type="text",
+                            text=chunk,
+                        )
+                    )
+                except (OSError, sqlite3.Error, ValueError):
+                    LOGGER.exception(
+                        "Telegram accepted proactive message_id=%s but private "
+                        "history is unavailable; suppressing automatic retry",
+                        message.message_id,
+                    )
 
     def complete(self) -> None:
         if self._active_message is not None:

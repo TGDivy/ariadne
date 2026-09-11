@@ -80,6 +80,7 @@ class _LiveBubble:
             message_thread_id=getattr(self._source, "message_thread_id", None),
             buttons=(),
             disable_interactions=True,
+            disable_notification=True,
         )
         self._markdown = markdown
         self._sent_at = time.monotonic()
@@ -129,7 +130,7 @@ class _LiveBubble:
             return
         self._phase = "terminal"
         self._cancel_scheduled_edit()
-        await self._finalize(markdown, buttons=())
+        await self._publish(markdown, record_history=True)
 
     async def stopping(self) -> None:
         if self._phase != "running":
@@ -162,12 +163,14 @@ class _LiveBubble:
                 content += f"\n\n_{STOPPED_MESSAGE}_"
         if not content:
             content = STOPPED_MESSAGE
-        await self._finalize(content, buttons=(), record_history=False)
+        await self._publish(content, record_history=bool(partial_message.strip()))
 
     async def fail(self) -> None:
+        if self._phase == "terminal":
+            return
         self._phase = "terminal"
         self._cancel_scheduled_edit()
-        await self._edit(FAILURE_MESSAGE, buttons=(), required=True)
+        await self._publish(FAILURE_MESSAGE, record_history=False)
 
     async def discard(self) -> None:
         self._phase = "terminal"
@@ -222,6 +225,7 @@ class _LiveBubble:
             preview = "\n".join(
                 ">" if not line else f"> {line}" for line in preview.splitlines()
             )
+            preview = f"**Thinking**\n\n{preview}"
         return f"{preview}\n\n{status}"
 
     def _cancel_scheduled_edit(self) -> None:
@@ -230,28 +234,44 @@ class _LiveBubble:
         if task is not None and task is not asyncio.current_task():
             task.cancel()
 
-    async def _finalize(
+    async def _publish(
         self,
         markdown: str,
         *,
-        buttons: Sequence[RichButton],
-        record_history: bool = True,
+        record_history: bool,
     ) -> None:
         chunks = split_rich_markdown(markdown)
         if not chunks:
             raise ValueError("A final Telegram response cannot be empty.")
-        await self._edit(chunks[0], buttons=buttons, required=True)
-        assert self._message is not None
-        if record_history:
-            self._record(self._message, chunks[0])
-        for chunk in chunks[1:]:
+        history_error: Exception | None = None
+        for chunk in chunks:
             message = await self._rich_api.send(
                 chat_id=self._source.chat_id,
                 markdown=chunk,
                 message_thread_id=getattr(self._source, "message_thread_id", None),
+                disable_notification=False,
             )
             if record_history:
-                self._record(message, chunk)
+                try:
+                    self._record(message, chunk)
+                except Exception as error:
+                    # Telegram has already accepted the permanent message. Keep
+                    # delivering any remaining chunks, clean up the duplicate
+                    # preview, and surface the local failure without resending.
+                    if history_error is None:
+                        history_error = error
+        await self._delete_preview()
+        if history_error is not None:
+            raise history_error
+
+    async def _delete_preview(self) -> None:
+        if self._message is None:
+            return
+        async with self._edit_lock:
+            try:
+                await self._message.delete()
+            except TelegramError:
+                LOGGER.exception("Telegram live placeholder deletion failed")
 
     def _record(self, message: Message, markdown: str) -> None:
         self._history.record(
@@ -419,6 +439,13 @@ class LiveTurn:
         self._phase = "terminal"
         bubble = await self._ensure_bubble()
         await bubble.fail()
+
+    async def discard(self) -> None:
+        """Remove only the provisional bubble when the handler is cancelled."""
+        self._phase = "terminal"
+        if self._bubble is not None:
+            await self._bubble.discard()
+            self._bubble = None
 
     async def _open_bubble(self) -> _LiveBubble:
         if self._bubble is not None:
