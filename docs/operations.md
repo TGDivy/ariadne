@@ -52,7 +52,7 @@ See [Behaviour scenarios](behaviour-scenarios.md) for its isolation boundary and
 
 ## Mail
 
-Mail is opt-in. Copy the route example to a private location, configure shared iCloud credentials, and enable the mail section:
+Mail is opt-in. Copy the route example to a private location, configure iCloud, personal Outlook.com, or both, and enable the shared mail section:
 
 ```bash
 cp mail-routes.example.yaml ~/.config/ariadne/mail-routes.yaml
@@ -63,6 +63,7 @@ chmod 600 ~/.config/ariadne/mail-routes.yaml
 [icloud]
 username = "YOUR_ICLOUD_ADDRESS"
 app_password = "YOUR_APP_SPECIFIC_PASSWORD"
+mail_label = "iCloud"
 
 [mail]
 enabled = true
@@ -72,17 +73,55 @@ state = "~/.local/state/ariadne/mail.sqlite3"
 
 Existing configurations with credentials directly under `[mail]` remain supported. When `[icloud]` is present, its credentials are shared by Mail and Calendar and take precedence over those legacy fields.
 
+### Personal Outlook.com authorization
+
+Register Ariadne as a public client in Microsoft Entra before enabling Outlook:
+
+1. Create an app registration whose supported account type is **Personal Microsoft accounts only**.
+2. Under **Authentication**, enable **Allow public client flows**. Device authorization does not need a client secret or a production redirect URL. In Outlook.com's Mail settings, also allow IMAP access for the mailbox if it has been disabled.
+3. Add the delegated Office 365 Exchange Online permission `IMAP.AccessAsUser.All`. Do not add `Mail.Send`; Ariadne requests only IMAP read/write access and offline refresh.
+4. Copy the application (client) ID into the private configuration. A client ID is not a credential, but the address and cache path still belong in the private file.
+
+```toml
+[outlook]
+enabled = true
+address = "YOUR_PERSONAL_OUTLOOK_ADDRESS"
+client_id = "YOUR_MICROSOFT_PUBLIC_CLIENT_ID"
+token_cache = "~/.local/state/ariadne/outlook-token.json"
+label = "Personal Outlook"
+
+[mail]
+enabled = true
+routes = "~/.config/ariadne/mail-routes.yaml"
+state = "~/.local/state/ariadne/mail.sqlite3"
+```
+
+Stop the service for the initial authorization and run:
+
+```bash
+ariadne mail authorize-outlook
+```
+
+The command prints Microsoft's verification URL and short code, then polls on the Ariadne host. Open the URL on any phone or computer, sign into the configured personal Outlook.com account, and enter the code. The resulting refreshable cache is written atomically on the Ariadne host with owner-only permissions; it is never printed, placed in TOML, or passed to the model. Start the service again afterward. Access tokens refresh automatically across restarts.
+
+If consent expires or is revoked, rerun the same command. To force a clean reauthorization, stop Ariadne, delete only the configured `token_cache`, and rerun it. To revoke access, remove Ariadne from the Microsoft account's consent/applications page and delete the local cache. To remove the account, also set `[outlook].enabled = false`; retained account-qualified job history is harmless and prevents old work from being reassigned to another mailbox.
+
+### Mail state upgrade
+
+The first start of this version migrates the configured Mail SQLite database in one transaction. Existing jobs, decisions, retry counts, and checkpoints are assigned to the stable `icloud` account; new uniqueness is account plus mailbox, UIDVALIDITY, and UID. Stop the old Ariadne process before deploying so it cannot write through the migration. A private backup of the SQLite database (and any `-wal`/`-shm` files) is prudent before the first start. Rolling the binary back afterward requires restoring that backup because the old runtime does not understand account-qualified state.
+
 ### Read-only agent commands
 
 Mail search, message reads, and thread reads use the unified CLI:
 
 ```bash
 ariadne mail search "train confirmation" --since 2026-08-01 --limit 10
+ariadne mail search "train confirmation" --account outlook --limit 10
 ariadne mail read 'mail:OPAQUE_ID'
 ariadne mail thread 'mail:OPAQUE_ID'
 ```
 
-Search returns opaque IDs for the other two commands. These operations use read-only mailbox selection and `BODY.PEEK`; they do not mark, move, delete, or send mail. The MCP surface retains only `record_current_mail_decision`, because that mutation is meaningful solely inside the currently claimed ingestion job. Ordinary reads live in the CLI so their less frequently used schemas are loaded through `--help` only when needed.
+Search queries every enabled account by default, merges and ranks a global bounded result set, and returns each friendly account label and stable key. `--account` limits the search when needed. The response lists searched and failed accounts and sets `partial=true` if one provider was unavailable; it never implies a partial result is complete. Account-qualified opaque IDs route `read` and `thread` back to only their source mailbox, and legacy IDs continue to resolve to iCloud. These operations use read-only mailbox selection and `BODY.PEEK`; they do not mark, move, delete, or send mail. The MCP surface retains only `record_current_mail_decision`, because that mutation is meaningful solely inside the currently claimed ingestion job. Ordinary reads live in the CLI so their less frequently used schemas are loaded through `--help` only when needed.
 
 Routes are ordered and first-match-wins. A `move` rule does not invoke the agent. For `iris_then_move`, an explicit agent decision to flag or move elsewhere wins; `keep_in_inbox` falls back to the route’s configured folder. By default, unmatched mail is inspected and kept in `INBOX`; set `defaults.unmatched_action` to `cheap_triage` to retain clearly routine unmatched mail without starting an agent turn.
 
@@ -108,18 +147,32 @@ uv run python -m ariadne.scripts.mail_backfill --restore-folder Receipts
 uv run python -m ariadne.scripts.mail_backfill --restore-folder Receipts --apply
 ```
 
-Restoring a folder moves every message in that named folder, because older backfills do not retain a per-message move history.
+When both providers are enabled these single-mailbox operator tools require `--account icloud` or `--account outlook`; this is mandatory for applying bulk mutations and also keeps previews unambiguous. Both accounts use the same route file. Restoring a folder moves every message in that named folder, because older backfills do not retain a per-message move history.
 
 ### Read-only export experiment
 
-Export recent iCloud Mail messages for local analysis:
+Export recent messages from one account for local analysis:
 
 ```bash
 uv run python -m ariadne.scripts.mail_export \
-  --limit 1000 --output mail-export.jsonl
+  --account outlook --limit 1000 --output mail-export.jsonl
 ```
 
-The export uses a read-only mailbox selection and `BODY.PEEK` fetches. It does not send, move, delete, or mark messages read. It can contain sensitive message text and metadata; treat the output as private.
+Every exported record contains its account key and label. The export uses a read-only mailbox selection and `BODY.PEEK` fetches. It does not send, move, delete, or mark messages read. It can contain sensitive message text and metadata; treat the output as private.
+
+### Outlook.com live validation checklist
+
+The automated suite uses fake OAuth and IMAP responses and therefore cannot establish provider compatibility. Before treating Outlook support as operational, validate on the private Linux home server without recording addresses, tokens, codes, or message contents:
+
+1. Run `ariadne mail authorize-outlook`, completing the browser step on a separate phone or computer; confirm the cache is mode `0600`.
+2. Restart Ariadne after the first access token expires (or use a deliberately expired fixture cache in a private staging run) and confirm automatic refresh plus successful IMAP authentication.
+3. With both accounts enabled, run bounded all-account and `--account outlook` searches, then `read` and `thread` one returned Outlook ID. Confirm an Outlook ID cannot be read through iCloud.
+4. Deliver a harmless test message, confirm the Outlook IDLE loop creates and completes an account-qualified job, and exercise each allowed current-event action: keep, flag, and move to a test route folder. Confirm no send or provider-draft capability appears.
+5. Disconnect Outlook long enough to deliver another test message, reconnect it, and confirm checkpoint catch-up handles the message exactly once.
+6. While Outlook is disconnected or unauthorized, confirm iCloud ingestion and direct reads continue. An all-account search must identify Outlook as failed and mark the response partial.
+7. Preview route lint, backfill, restore, and export for each explicit account. Apply only to disposable test mail and confirm exported records include the correct account key.
+
+If Outlook IMAP proves an operation unreliable, capture only sanitized protocol facts and reassess that operation before introducing Microsoft Graph; Graph is not part of the initial implementation.
 
 ## Calendar
 

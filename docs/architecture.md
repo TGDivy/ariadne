@@ -48,7 +48,7 @@ The agent does not receive a vague integration-level permission. Ariadne owns st
 | **Discoverable CLI** | Mail search/read/thread, all Calendar operations, and Ithaca health reads | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
 | **Operator commands** | Bulk mail backfill/export, profile inspection, bot-profile changes, and behaviour runs | These have operational or bulk effects and are intentionally not advertised as ordinary model capabilities. |
 
-The installed `ariadne` CLI emits bounded JSON and keeps provider implementations behind typed `MailReader`, `ICloudCalendar`, and `IthacaClient` interfaces. For these provider commands, the long-running service exports the selected private config path and makes the sibling CLI executable discoverable to Codex. Credentials are loaded by the selected command on demand and are not copied into the MCP subprocess environment. The configured Ithaca hostname, but not its URL or token, is added to each turn profile's network allowlist.
+The installed `ariadne` CLI emits bounded JSON and keeps provider implementations behind typed Mail account/reader, `ICloudCalendar`, and `IthacaClient` interfaces. A small Mail registry dispatches account-qualified opaque IDs while one shared IMAP parser, route pipeline, and action implementation serves iCloud and Outlook.com. Each enabled account has an independently supervised IDLE/catch-up loop, so one provider outage does not stop the other. For provider commands, the long-running service exports the selected private config path and makes the sibling CLI executable discoverable to Codex. Credentials and OAuth tokens are loaded by the selected command on demand and are not copied into the MCP subprocess environment. The configured Ithaca hostname, but not its URL or token, is added to each turn profile's network allowlist.
 
 This split also leaves a clean growth rule: add a namespace to the CLI when a provider exposes a broad, mostly request/response data plane; keep an MCP tool when its schema and lifecycle are fundamental to nearly every turn or intrinsically bound to live turn state. If both surfaces ever need the same operation, both should call one typed use-case/client layer rather than duplicate provider logic.
 
@@ -60,7 +60,7 @@ Mail, calendar invitations, attachments, webpages, and quoted text may be releva
 
 ### Mail is intentionally limited
 
-Mail is opt-in and configured through ordered private routes. A mail turn can keep, flag, or move the message being processed, and it may draft a reply. It cannot send email. Unmatched mail defaults to inspection and retention in `INBOX` unless the private configuration deliberately selects cheaper routine triage.
+Mail is opt-in and configured through one ordered private route file shared by every enabled account. Search merges bounded results from iCloud and a personal Outlook.com account, while opaque IDs keep subsequent reads and threads inside their source account. A mail turn can keep, flag, or move only the message being processed, and it may draft a reply. It cannot send email. Unmatched mail defaults to inspection and retention in `INBOX` unless the private configuration deliberately selects cheaper routine triage.
 
 ### Calendar mutations are explicit
 

@@ -65,7 +65,7 @@ Send `/new` in Telegram to start a fresh Codex conversation while retaining dura
 
 Mail, Calendar, health, and telemetry are off in `config.example.toml`. Enable only the pieces you intend to operate:
 
-- **Mail:** add shared iCloud credentials under `[icloud]`, point `[mail].routes` at a private routes file, then enable `[mail]`. Mail turns may triage, flag, or move messages under their configured route policy, but never send email.
+- **Mail:** configure iCloud, personal Outlook.com, or both; point `[mail].routes` at a private routes file, then enable `[mail]`. Mail turns may triage, flag, or move messages under their configured route policy, but never send email. Outlook's one-time browser authorization is documented in the [operations reference](operations.md#personal-outlookcom-authorization).
 - **Calendar:** enable `[calendar]` and set an IANA timezone. Calendar writes and invitation responses can communicate externally, so keep it opt-in and review the [architecture notes](architecture.md#integration-boundaries).
 - **Health:** enable `[health]` with Ithaca's HTTPS API URL, distinct read token, and your IANA timezone. The CLI is read-only and exposes compact workout and sleep facts, never canonical raw health records.
 - **Telemetry:** enable `[telemetry]` only after adding an OTLP endpoint and authorization to the private configuration. The included Grafana dashboard is at `docs/grafana/ariadne-observability.json`.
