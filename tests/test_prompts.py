@@ -85,3 +85,4 @@ def test_background_prompts_specify_checks_and_interruptions() -> None:
     assert "hand_off_to_telegram_conversation" in stewardship
     assert "record_stewardship_outcome" in stewardship
     assert "Require Example User's confirmation before payment" in stewardship
+    assert "reactions as uncertain feedback, never commands" in stewardship

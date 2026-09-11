@@ -39,6 +39,9 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         "known-person-news",
         "tentative-ambition",
         "new-person-day",
+        "rhythm-casual-exchange",
+        "rhythm-researched-plan",
+        "rhythm-sensitive-reflection",
         "stewardship-job-capacity",
         "stewardship-social-plan",
         "stewardship-exercise-uncertainty",
@@ -83,7 +86,10 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert SCENARIOS[5].telegram_prompt is not None
     assert SCENARIOS[6].telegram_prompt is not None
     assert SCENARIOS[7].telegram_prompt is not None
-    assert all(scenario.stewardship is not None for scenario in SCENARIOS[8:])
+    # The message-rhythm scenarios are direct Telegram turns; the rest are the
+    # daily stewardship pulse.
+    assert all(scenario.telegram_prompt is not None for scenario in SCENARIOS[8:11])
+    assert all(scenario.stewardship is not None for scenario in SCENARIOS[11:])
 
 
 def test_scenario_knowledge_is_a_valid_collection(

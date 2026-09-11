@@ -579,6 +579,135 @@ NEW_PERSON_DAY = BehaviorScenario(
     ),
 )
 
+RHYTHM_CASUAL_EXCHANGE = BehaviorScenario(
+    identifier="rhythm-casual-exchange",
+    title="An ordinary exchange stays one ordinary message",
+    description=(
+        "A small piece of everyday news that a thoughtful friend would answer in "
+        "one message. Splitting it into several bubbles would be manufactured "
+        "activity rather than conversational rhythm."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="divy-bramhecha",
+            title="Divy Bramhecha",
+            folder="people/self",
+            summary="Divy's own stable personal context.",
+            aliases=("Divy", "me", "myself"),
+            body="Divy runs regularly and enjoys unhurried conversation.",
+        ),
+    ),
+    calendar=(),
+    telegram=(
+        ScenarioTelegramMessage(
+            message_id=701,
+            sent_at=datetime.fromisoformat("2026-09-10T20:04:00+01:00"),
+            speaker="human",
+            source="telegram",
+            text="Long day. Going to do an easy run and then not think about work.",
+        ),
+    ),
+    review_questions=(
+        "Did Iris answer in one natural message rather than manufacturing beats?",
+        "Did she avoid an acknowledgement bubble before the real reply?",
+        "Did she avoid narrating any tool use as conversation?",
+    ),
+    telegram_prompt=(
+        "that run was lovely actually, first time in ages my legs felt fine"
+    ),
+)
+
+RHYTHM_RESEARCHED_PLAN = BehaviorScenario(
+    identifier="rhythm-researched-plan",
+    title="A researched plan arrives as a few natural beats",
+    description=(
+        "A request whose answer genuinely has several beats. Earlier complete "
+        "beats should be sent as commentary, with final reserved for the last "
+        "one, and final must not recap what an earlier bubble already said."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="divy-bramhecha",
+            title="Divy Bramhecha",
+            folder="people/self",
+            summary="Divy's own stable personal context.",
+            aliases=("Divy", "me", "myself"),
+            body=(
+                "Divy is training for a half marathon and prefers a real "
+                "recommendation to an exhaustive comparison."
+            ),
+        ),
+    ),
+    calendar=(
+        ScenarioCalendarEvent(
+            id="scenario-saturday-long-run",
+            title="Long run",
+            start="2026-09-12T08:00:00+01:00",
+            end="2026-09-12T10:00:00+01:00",
+        ),
+        ScenarioCalendarEvent(
+            id="scenario-sunday-lunch",
+            title="Lunch with Janki's parents",
+            start="2026-09-13T12:30:00+01:00",
+            end="2026-09-13T15:30:00+01:00",
+        ),
+    ),
+    review_questions=(
+        "Did earlier complete beats arrive as their own permanent messages, with "
+        "final reserved for the last beat?",
+        "Were the bubbles relatively short rather than one long report?",
+        "Did final avoid repeating what an earlier bubble already said?",
+        "Did she give a recommendation rather than an exhaustive survey?",
+    ),
+    telegram_prompt=(
+        "can you work out where I should do my long run this weekend? somewhere "
+        "with a cafe at the end ideally"
+    ),
+)
+
+RHYTHM_SENSITIVE_REFLECTION = BehaviorScenario(
+    identifier="rhythm-sensitive-reflection",
+    title="Connected emotional reasoning stays together",
+    description=(
+        "A vulnerable message. Connected care belongs in one bubble; a short "
+        "follow-up question may be its own beat without repeating that care."
+    ),
+    email=None,
+    route=None,
+    files=(ScenarioFile("mail-routes.yaml", ROUTES),),
+    knowledge=(
+        ScenarioKnowledge(
+            id="divy-bramhecha",
+            title="Divy Bramhecha",
+            folder="people/self",
+            summary="Divy's own stable personal context.",
+            aliases=("Divy", "me", "myself"),
+            body=(
+                "Divy has been weighing a change of direction at work and finds "
+                "unhurried reflection more useful than advice."
+            ),
+        ),
+    ),
+    calendar=(),
+    review_questions=(
+        "Did connected emotional reasoning stay in one bubble rather than being "
+        "chopped into fragments?",
+        "If a follow-up question was its own beat, did it avoid restating the "
+        "care already expressed?",
+        "Did she offer reflective space without diagnosis or false certainty?",
+    ),
+    telegram_prompt=(
+        "I keep telling everyone the job is fine but I don't think I believe it "
+        "anymore and I don't really know what that means"
+    ),
+)
+
 STEWARDSHIP_JOB_CAPACITY = BehaviorScenario(
     identifier="stewardship-job-capacity",
     title="Available capacity becomes a vetted job shortlist",
@@ -999,6 +1128,9 @@ SCENARIOS = (
     KNOWN_PERSON_NEWS,
     TENTATIVE_AMBITION,
     NEW_PERSON_DAY,
+    RHYTHM_CASUAL_EXCHANGE,
+    RHYTHM_RESEARCHED_PLAN,
+    RHYTHM_SENSITIVE_REFLECTION,
     STEWARDSHIP_JOB_CAPACITY,
     STEWARDSHIP_SOCIAL_PLAN,
     STEWARDSHIP_EXERCISE_UNCERTAINTY,

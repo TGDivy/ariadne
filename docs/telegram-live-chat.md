@@ -103,6 +103,44 @@ not raw hidden reasoning; they remain visibly provisional and are replaced by
 the next native commentary or final message. Each completed commentary item is
 permanent, then Ariadne opens a fresh work bubble for the remainder of the turn.
 
+A provisional body is presented as a labelled quoted block above the activity,
+so its temporary nature is unmistakable and stable:
+
+```text
+**Thinking**
+
+> Connecting this with tomorrow's schedule…
+
+✦ Reading Calendar…
+```
+
+### Notification lifecycle
+
+Telegram notifies for a sent message but not for a later edit, so editing
+`Thinking…` into the answer leaves a backgrounded reader with no notification
+carrying the real text. Completed speech is therefore a fresh send, not an edit:
+
+```text
+temporary preview  ─ disable_notification=true, edited while work continues
+        │
+        │ commentary or final item completes
+        ▼
+permanent send     ─ exact complete Rich Message, normal notification,
+        │            recorded in durable history
+        ▼
+preview deleted    ─ only after the permanent send succeeded
+        │
+        ├─ after commentary: a new silent preview opens for later work
+        └─ after final: the turn ends with no preview
+```
+
+The permanent send is authoritative. If Telegram accepts it but the private
+history write fails, Ariadne logs the failure, still removes the preview, and
+never resends the message; the same no-duplicate contract covers a rejected
+send, a failed preview deletion, `/stop`, and handler cancellation. Oversized
+output is still split on block boundaries, and each overflow chunk is a genuine
+new message.
+
 The activity footer is independent from the provisional body. A tool event can
 change `Analysing…` to `Searching memory…`, `Reading mail…`, `Running tests…`,
 or another semantic activity. Known `ariadne` Mail, Calendar, and health commands,
@@ -218,6 +256,72 @@ speaker/source filters and a literal case-insensitive substring, and returns
 the newest bounded matches in chronological order. The store is local history
 from deployment onward, not a Telegram archive backfill.
 
+## Replies, reactions, and voice notes
+
+A reply to a permanent bubble reaches the model as labelled quoted context
+carrying the referenced message's Telegram id and author. A reply aimed at the
+live preview is resolved conservatively against the visible preview content and
+kept as steering; a deleted preview never becomes the durable target of a reply.
+
+Reaction updates on permanent Iris messages in the configured private chat are
+stored as the message's current reaction state, replacing any previous state
+rather than accumulating counts. They are lightweight private feedback: they do
+not start or steer a turn, need no acknowledgement, and reach ordinary
+conversation and stewardship as uncertain evidence rather than instructions. No
+individual emoji carries an assigned meaning. Aggregate anonymous counts and
+reactions to temporary control or thinking messages are not retained.
+
+A voice note is downloaded into the existing private attachment lifecycle,
+bounded to 10 minutes and Telegram's 20 MB download limit before any expensive
+work, and transcribed by `telegram.voice_transcription_command`. That command is
+argv-only, runs without a shell with exactly one `{input}` placeholder, and must
+write only the UTF-8 transcript to stdout within
+`telegram.voice_transcription_timeout_seconds`. The transcript is submitted to
+the shared conversation labelled as an automatic transcription, stored as a
+durable `voice` human message, and the audio file is deleted. Missing,
+timed-out, oversized, or failed transcription produces a brief ordinary reply
+and leaves the conversation usable.
+
+## Ephemeral command panels
+
+Deterministic commands are temporary controls, not conversation. At most one
+control panel exists per chat. Opening a panel deletes the previous one, deletes
+the owner's command message, and sends the new panel silently. Panels are
+excluded from durable history and are removed when any normal text, media, or
+voice message is accepted, and on startup after a restart. Panel identity lives
+in the same private SQLite state, so an abandoned panel is cleaned up on the
+next interaction. Callbacks for a panel that is no longer the active one are
+acknowledged and ignored, and a failed deletion leaves the control inert rather
+than breaking conversation.
+
+`/status` is the compact entry point and `/wakeups` a direct shortcut to the
+same panel; `/new`, `/stop`, and `/settings` remain in the menu. Ordinary Mail,
+Calendar, health, goal, and knowledge work stays conversational.
+
+There is no single local-timezone setting, so the panel uses the first of
+`stewardship.timezone`, `calendar.timezone`, and `health.timezone` that is not
+the `UTC` default; times read in real local time even when daily initiative is
+off. The panel names the zone it used, and the initiative waking window is still
+labelled with its own `stewardship.timezone`.
+
+`/status` shows, in that zone: whether Iris is ready or working;
+initiative enabled/paused/running state with its last completed and next
+expected cycle; counts of upcoming and failed wake-ups; the number of
+conversational handoffs waiting for a quiet moment; which major private sources
+are switched on; and the current Telegram model, effort, and web-research mode.
+It reports what is *enabled*, and says so — connectivity is not measured.
+
+Trusted buttons move the same panel between Wake-ups, Initiative, and Settings.
+Initiative offers Run now, Pause 24 hours, Pause indefinitely, and Resume; Run
+now starts one background cycle and returns immediately, and a second press
+while that cycle is running is ignored. A waiting-handoff control asks for
+delivery now without exposing an inbox. Wake-ups is a bounded chronological page
+of five, showing local due time, a shortened note, attention level, and failure
+state, with cancellation behind a second confirmation. Rescheduling and rewording
+stay conversational. Settings keeps its existing interaction and still discloses
+that changing model, effort, or web mode starts a fresh Codex conversation.
+None of these controls is itself a model turn.
+
 ## Delivery contract
 
 Rich Messages are required for live responses, proactive messages, and question
@@ -284,11 +388,39 @@ Run these cases in order:
     the wake-up runs. The fresh turn should be able to read the newer message
     and avoid a redundant notification. Restart Ariadne between the message and
     wake-up to verify persistence.
+13. Ask something whose answer has several beats. Background the app before it
+    completes, then lock the phone. Each completed conversational message must
+    produce its own notification containing the real text, not a bare
+    `Thinking…` notification or a silent edit. Repeat with the app foregrounded
+    and confirm the previews disappear and the chat is left clean. Telegram
+    ultimately controls presentation; the required result is a fresh
+    completed-message notification carrying the authored text.
+14. Reply to an earlier permanent bubble, to a commentary bubble, and to an
+    overflow chunk. Each should reach the turn as quoted context with the right
+    author. Reply while a turn is streaming and confirm it is accepted as
+    steering. Restart Ariadne and reply to a message from before the restart.
+15. Add, change, and remove a reaction on an Iris message. None should start a
+    turn or produce an acknowledgement, and only the current state should be
+    retained. Ask Iris afterwards about recent reactions and confirm she treats
+    them as uncertain feedback.
+16. Send a short voice note, then one over 10 minutes, then one while
+    `telegram.voice_transcription_command` is unset or pointed at a failing
+    command. The first should continue the conversation from its transcript;
+    the rest should explain briefly and leave no audio behind under
+    `~/.ariadne/attachments`.
+17. Exercise every panel: `/status`, its Wake-ups, Initiative, and Settings
+    buttons, `/wakeups`, `/new`, `/settings`, and `/stop` with and without an
+    active turn. Confirm each command message disappears, only one panel is ever
+    visible, panels arrive silently, a stale button reports that the panel is
+    inactive, and sending an ordinary message clears the panel. Restart Ariadne
+    with a panel open and confirm it is removed on startup. Check the times,
+    counts, and enabled sources on `/status` against reality.
 
 Automated coverage for these state transitions lives in `tests/test_bot.py`,
 `tests/test_telegram_rich.py`, `tests/test_telegram_questions.py`,
-`tests/test_telegram_history.py`, `tests/test_handoffs.py`, and
-`tests/test_mcp_server.py`.
+`tests/test_telegram_history.py`, `tests/test_telegram_panels.py`,
+`tests/test_telegram_status.py`, `tests/test_telegram_voice.py`,
+`tests/test_handoffs.py`, and `tests/test_mcp_server.py`.
 
 ## References
 

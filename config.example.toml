@@ -8,6 +8,10 @@ vault = "~/ariadne-thread"
 bot_token = ""
 allowed_user_id = 0
 state = "~/.local/state/ariadne/telegram.sqlite3"
+# Optional argv-only command. `{input}` is replaced with the private OGG path;
+# the command must write only the UTF-8 transcript to stdout.
+# voice_transcription_command = ["whisper-transcribe", "{input}"]
+# voice_transcription_timeout_seconds = 120
 
 [telegram.identity]
 name = "Iris"

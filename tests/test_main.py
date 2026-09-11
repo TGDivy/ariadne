@@ -2,9 +2,11 @@ import json
 import logging
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ariadne.__main__ import main
-from ariadne.service import configure_logging
+from ariadne.config import Settings
+from ariadne.service import configure_logging, status_timezone
 
 
 def test_configure_logging_suppresses_http_client_request_logs() -> None:
@@ -49,3 +51,30 @@ allowed_user_id = 7
     output = capsys.readouterr().out
     assert json.loads(output)["telegram"]["bot_token"] == "<redacted>"
     assert "super-secret-token" not in output
+
+
+def test_status_timezone_prefers_the_first_configured_local_zone(
+    tmp_path: Path,
+) -> None:
+    vault = tmp_path / "vault"
+    (vault / ".git").mkdir(parents=True)
+
+    def settings(**zones: str) -> Settings:
+        return Settings.model_validate(
+            {
+                "version": 1,
+                "human_name": "Example User",
+                "vault": str(vault),
+                "telegram": {"bot_token": "token", "allowed_user_id": 7},
+                **{section: {"timezone": zone} for section, zone in zones.items()},
+            }
+        )
+
+    assert status_timezone(settings()) == ZoneInfo("UTC")
+    assert status_timezone(settings(calendar="Europe/London")) == ZoneInfo(
+        "Europe/London"
+    )
+    assert status_timezone(settings(health="Asia/Kolkata")) == ZoneInfo("Asia/Kolkata")
+    assert status_timezone(
+        settings(stewardship="Europe/London", health="Asia/Kolkata")
+    ) == ZoneInfo("Europe/London")

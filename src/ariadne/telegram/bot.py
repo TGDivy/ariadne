@@ -5,9 +5,8 @@ import logging
 import sqlite3
 import time
 from collections import deque
-from contextlib import suppress
 from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from telegram import (
@@ -18,10 +17,15 @@ from telegram import (
     InlineKeyboardMarkup,
     Message,
     PhotoSize,
+    ReactionType,
+    ReactionTypeCustomEmoji,
+    ReactionTypeEmoji,
+    ReactionTypePaid,
     Update,
+    Voice,
 )
 from telegram.constants import FileSizeLimit, ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 from telegram.ext import ContextTypes
 
 from ..codex import (
@@ -40,6 +44,8 @@ from ..prompts.activations import (
     build_proactive_handoff_turn_prompt,
     build_telegram_turn_prompt,
 )
+from ..revisit.models import Revisit
+from ..stewardship.models import StewardshipRuntimeSnapshot
 from .file_delivery import FileDelivery, FileDeliveryError
 from .history import (
     TelegramContentType,
@@ -52,6 +58,7 @@ from .live import (
     STOPPING_MESSAGE,
     LiveTurn,
 )
+from .panels import TelegramControlPanel, TelegramControlPanelStore
 from .proactive import ProactiveTurn
 from .questions import (
     QuestionSelection,
@@ -62,11 +69,34 @@ from .questions import (
     parse_question_callback,
 )
 from .rich import RichBotAPI, incoming_rich_markdown
+from .status import (
+    STATUS_CALLBACK_PREFIX,
+    STATUS_DELIVER_CALLBACK,
+    STATUS_INITIATIVE_CALLBACK,
+    STATUS_INITIATIVE_PAUSE_CALLBACK,
+    STATUS_INITIATIVE_PAUSE_DAY_CALLBACK,
+    STATUS_INITIATIVE_RESUME_CALLBACK,
+    STATUS_INITIATIVE_RUN_CALLBACK,
+    STATUS_ROOT_CALLBACK,
+    STATUS_SETTINGS_CALLBACK,
+    STATUS_WAKEUP_ASK_PREFIX,
+    STATUS_WAKEUP_CONFIRM_PREFIX,
+    STATUS_WAKEUPS_PREFIX,
+    StatusSources,
+    render_initiative,
+    render_status,
+    render_wakeup_cancellation,
+    render_wakeups,
+    wakeup_counts,
+)
+from .voice import VoiceTranscriber, VoiceTranscriptionError
 
 LOGGER = logging.getLogger(__name__)
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_DOCUMENT_BYTES = int(FileSizeLimit.FILESIZE_DOWNLOAD)
+MAX_VOICE_BYTES = int(FileSizeLimit.FILESIZE_DOWNLOAD)
+MAX_VOICE_DURATION_SECONDS = 10 * 60
 ATTACHMENT_ROOT = Path.home() / ".ariadne" / "attachments"
 SUPPORTED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
 ALBUM_DEBOUNCE_SECONDS = 1.0
@@ -79,7 +109,12 @@ DOCUMENT_TOO_LARGE_MESSAGE = (
     "That file is too large; Telegram only lets me download files up to 20 MB."
 )
 DOCUMENT_FAILED_MESSAGE = "I couldn't download that file. Please try again."
+VOICE_TOO_LARGE_MESSAGE = "That voice note is too large; the limit is 20 MB."
+VOICE_TOO_LONG_MESSAGE = "That voice note is too long; the limit is 10 minutes."
+VOICE_UNAVAILABLE_MESSAGE = "Voice-note transcription isn't configured yet."
+VOICE_FAILED_MESSAGE = "I couldn't transcribe that voice note. Please try again."
 NOTHING_TO_STOP_MESSAGE = "There isn't an active turn to stop."
+WAKEUPS_UNAVAILABLE_MESSAGE = "Wake-ups\n\nI couldn't read the wake-up list."
 SETTINGS_UNAVAILABLE_MESSAGE = (
     "I couldn't load the available Codex settings. Please try again."
 )
@@ -95,25 +130,57 @@ SETTINGS_MODELS_CALLBACK = "settings:models"
 SETTINGS_EFFORT_CALLBACK = "settings:effort"
 SETTINGS_WEB_CALLBACK = "settings:web"
 SETTINGS_BACK_CALLBACK = "settings:back"
+SETTINGS_STATUS_CALLBACK = "settings:status"
 
 
 def turn_text(
     text: str,
-    replied_message: Message | None = None,
+    replied_message: object | None = None,
 ) -> str:
     """Extract Telegram reply content for the shared activation builder."""
     quoted_message: str | None = None
     if replied_message is not None:
-        quoted_message = (
-            replied_message.text
-            if replied_message.text is not None
-            else replied_message.caption
-        )
+        quoted_message = getattr(replied_message, "text", None)
         if quoted_message is None:
+            quoted_message = getattr(replied_message, "caption", None)
+        if quoted_message is None and isinstance(replied_message, Message):
             quoted_message = incoming_rich_markdown(replied_message)
         if quoted_message is None:
             quoted_message = EMPTY_TELEGRAM_REPLY
-    return build_telegram_turn_prompt(text, quoted_message=quoted_message)
+    author: str | None = None
+    message_id: int | None = None
+    if replied_message is not None:
+        candidate_message_id = getattr(replied_message, "message_id", None)
+        if isinstance(candidate_message_id, int):
+            message_id = candidate_message_id
+        sender = getattr(replied_message, "from_user", None)
+        if sender is not None:
+            author = "Iris" if bool(getattr(sender, "is_bot", False)) else "Divy"
+    return build_telegram_turn_prompt(
+        text,
+        quoted_message=quoted_message,
+        quoted_message_id=message_id,
+        quoted_author=author,
+    )
+
+
+def _page_number(value: str) -> int:
+    """Read a page from untrusted callback data without raising."""
+    return int(value) if value.isdigit() and value != "0" else 1
+
+
+def _status_back_button() -> InlineKeyboardButton:
+    return InlineKeyboardButton("Back", callback_data=STATUS_ROOT_CALLBACK)
+
+
+def _reaction_value(reaction: ReactionType) -> str:
+    if isinstance(reaction, ReactionTypeEmoji):
+        return reaction.emoji
+    if isinstance(reaction, ReactionTypeCustomEmoji):
+        return f"custom:{reaction.custom_emoji_id}"
+    if isinstance(reaction, ReactionTypePaid):
+        return "paid"
+    return f"unknown:{reaction.type}"
 
 
 def _document_filename(document: Document) -> str:
@@ -122,10 +189,12 @@ def _document_filename(document: Document) -> str:
     return name if name not in {"", ".", ".."} else "document"
 
 
-def _attachment_name(media: PhotoSize | Document) -> str:
+def _attachment_name(media: PhotoSize | Document | Voice) -> str:
     """Return the filename to keep a downloaded attachment under."""
     if isinstance(media, Document):
         return _document_filename(media)
+    if isinstance(media, Voice):
+        return f"voice-{datetime.now():%H%M%S}.ogg"
     return f"photo-{datetime.now():%H%M%S}.jpg"
 
 
@@ -204,6 +273,8 @@ class AriadneBot:
         bot_token: str,
         question_state: Path | None = None,
         handoff_coordinator: HandoffCoordinator | None = None,
+        voice_transcriber: VoiceTranscriber | None = None,
+        status_sources: StatusSources | None = None,
     ) -> None:
         self._allowed_user_id = allowed_user_id
         self._bot_token = bot_token
@@ -221,11 +292,16 @@ class AriadneBot:
         self._handoffs = handoff_coordinator or HandoffCoordinator(
             HandoffState(state_path)
         )
+        self._panels = TelegramControlPanelStore(state_path)
+        self._panels.initialize()
         self._file_delivery = FileDelivery()
         self._albums: dict[str, _Album] = {}
         self._pending_messages: deque[_PendingMessage] = deque()
         self._pending_task: asyncio.Task[None] | None = None
         self._steer_lock = asyncio.Lock()
+        self._voice_transcriber = voice_transcriber
+        self._status = status_sources
+        self._initiative_task: asyncio.Task[None] | None = None
 
     @property
     def proactive_handoff_blocked(self) -> bool:
@@ -246,6 +322,10 @@ class AriadneBot:
             return
         for question in questions:
             await self._settle_question(question)
+
+    async def recover_panel(self) -> None:
+        """Remove a deterministic panel left visible by a previous process."""
+        await self._dismiss_panel(self._allowed_user_id)
 
     async def start(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start."""
@@ -332,11 +412,11 @@ class AriadneBot:
         query = update.callback_query
         if not isinstance(query, CallbackQuery):
             return
+        if not self._is_allowed(self._user_id_from(update)):
+            return
         await self._answer_callback_safely(query)
         message = query.message
         if not isinstance(message, Message) or not isinstance(query.data, str):
-            return
-        if not self._is_allowed(self._user_id_from(update)):
             return
         parts = query.data.split(":", maxsplit=2)
         if len(parts) != 3:
@@ -401,14 +481,61 @@ class AriadneBot:
         if not isinstance(query, CallbackQuery):
             return
 
-        await self._answer_callback_safely(query)
         if not self._is_allowed(self._user_id_from(update)):
+            await self._answer_callback_safely(query)
             return
 
         message = query.message
         if not isinstance(message, Message) or not isinstance(query.data, str):
+            await self._answer_callback_safely(query)
             return
+        if not self._panel_is_active(message, "settings"):
+            await self._answer_callback_safely(
+                query, "This settings panel is no longer active."
+            )
+            return
+        await self._answer_callback_safely(query)
         await self.handle_settings_callback(
+            message,
+            self._user_id_from(update),
+            query.data,
+        )
+
+    async def status(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /status."""
+        message = self._message_from(update)
+        if message is None:
+            return
+        await self.handle_status(message, self._user_id_from(update))
+
+    async def wakeups(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle /wakeups."""
+        message = self._message_from(update)
+        if message is None:
+            return
+        await self.handle_wakeups(message, self._user_id_from(update))
+
+    async def status_callback(
+        self, update: Update, _: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle a button press from Ariadne's status panel."""
+        query = update.callback_query
+        if not isinstance(query, CallbackQuery):
+            return
+
+        if not self._is_allowed(self._user_id_from(update)):
+            await self._answer_callback_safely(query)
+            return
+
+        message = query.message
+        if not isinstance(message, Message) or not isinstance(query.data, str):
+            await self._answer_callback_safely(query)
+            return
+        if not self._panel_is_active(message, "status"):
+            await self._answer_callback_safely(query, "This panel is no longer active.")
+            return
+        await self._answer_callback_safely(query)
+        await self.handle_status_callback(
             message,
             self._user_id_from(update),
             query.data,
@@ -444,6 +571,33 @@ class AriadneBot:
             content,
         )
 
+    async def reaction(self, update: Update, _: ContextTypes.DEFAULT_TYPE) -> None:
+        """Record an owner's current reaction without starting an agent turn."""
+        changed = update.message_reaction
+        if (
+            changed is None
+            or not self._is_allowed(self._user_id_from(update))
+            or changed.chat.id != self._allowed_user_id
+            or changed.chat.type != "private"
+        ):
+            return
+        try:
+            recorded = self._history.set_reactions(
+                changed.chat.id,
+                changed.message_id,
+                tuple(_reaction_value(reaction) for reaction in changed.new_reaction),
+                reacted_at=changed.date,
+            )
+        except (OSError, sqlite3.Error, ValueError):
+            LOGGER.exception("Telegram reaction state update failed")
+            return
+        if recorded:
+            LOGGER.info(
+                "Telegram reaction updated message_id=%s reactions=%d",
+                changed.message_id,
+                len(changed.new_reaction),
+            )
+
     async def image(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Download an image message and send it to Codex with its caption."""
         message = self._message_from(update)
@@ -451,6 +605,7 @@ class AriadneBot:
             return
         if not self._is_allowed(self._user_id_from(update)):
             return
+        await self._dismiss_panel(message.chat_id)
         image = self._image_from(message)
         if image is None:
             return
@@ -499,6 +654,7 @@ class AriadneBot:
             return
         if not self._is_allowed(self._user_id_from(update)):
             return
+        await self._dismiss_panel(message.chat_id)
         document = message.document
         if document is None:
             return
@@ -517,6 +673,72 @@ class AriadneBot:
             message,
             self._user_id_from(update),
             _Attachment(path, message.caption, document.mime_type, is_image=False),
+        )
+
+    async def voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Transcribe an incoming voice note and continue the shared conversation."""
+        message = self._message_from(update)
+        if message is None or message.voice is None:
+            return
+        await self.handle_voice(
+            message,
+            self._user_id_from(update),
+            message.voice,
+            context,
+        )
+
+    async def handle_voice(
+        self,
+        message: Message,
+        user_id: int | None,
+        voice: Voice,
+        context: ContextTypes.DEFAULT_TYPE,
+    ) -> None:
+        """Validate, transcribe, and submit one Telegram voice note."""
+        if not self._is_allowed(user_id):
+            return
+        await self._dismiss_panel(message.chat_id)
+        if self._voice_transcriber is None:
+            await self._reply_safely(message, VOICE_UNAVAILABLE_MESSAGE)
+            return
+        duration = (
+            voice.duration.total_seconds()
+            if isinstance(voice.duration, timedelta)
+            else voice.duration
+        )
+        if duration > MAX_VOICE_DURATION_SECONDS:
+            await self._reply_safely(message, VOICE_TOO_LONG_MESSAGE)
+            return
+        if voice.file_size is not None and voice.file_size > MAX_VOICE_BYTES:
+            await self._reply_safely(message, VOICE_TOO_LARGE_MESSAGE)
+            return
+        try:
+            path = await self._download(context, voice, MAX_VOICE_BYTES)
+        except (OSError, TelegramError):
+            LOGGER.exception("Voice note download failed")
+            await self._reply_safely(message, VOICE_FAILED_MESSAGE)
+            return
+        try:
+            transcript = await self._voice_transcriber.transcribe(path)
+        except VoiceTranscriptionError:
+            LOGGER.exception("Voice note transcription failed")
+            await self._reply_safely(message, VOICE_FAILED_MESSAGE)
+            return
+        finally:
+            path.unlink(missing_ok=True)
+
+        prompt = (
+            "Telegram voice-note transcript (automatic and possibly imperfect):\n"
+            "<transcript>\n"
+            f"{transcript}\n"
+            "</transcript>"
+        )
+        await self.handle_text(
+            message,
+            user_id,
+            prompt,
+            history_text=f"[Voice note]\n{transcript}",
+            content_type="voice",
         )
 
     async def handle_document(
@@ -539,23 +761,23 @@ class AriadneBot:
         """Respond to an allowed user's /start command."""
         if not self._is_allowed(user_id):
             return
-        await self._reply_safely(message, READY_MESSAGE)
+        await self._send_panel(message, READY_MESSAGE, kind="start")
 
     async def handle_new(self, message: Message, user_id: int | None) -> None:
         """Start a fresh Codex session without changing private knowledge."""
         if not self._is_allowed(user_id):
             return
         if self._busy:
-            await self._reply_safely(message, BUSY_MESSAGE)
+            await self._send_panel(message, BUSY_MESSAGE, kind="new")
             return
 
         try:
             self._conversation.reset()
         except Exception:
             LOGGER.exception("Persistent Codex conversation reset failed")
-            await self._reply_safely(message, RESET_FAILED_MESSAGE)
+            await self._send_panel(message, RESET_FAILED_MESSAGE, kind="new")
             return
-        await self._reply_safely(message, NEW_CONVERSATION_MESSAGE)
+        await self._send_panel(message, NEW_CONVERSATION_MESSAGE, kind="new")
 
     async def handle_stop(self, message: Message, user_id: int | None) -> None:
         """Request that Codex stop the one active Ariadne turn."""
@@ -567,20 +789,24 @@ class AriadneBot:
         """Interrupt the active turn in response to /stop."""
         if not self._busy:
             if command_message is not None:
-                await self._reply_safely(command_message, NOTHING_TO_STOP_MESSAGE)
+                await self._send_panel(
+                    command_message, NOTHING_TO_STOP_MESSAGE, kind="stop"
+                )
             return
         if self._stopping:
-            if command_message is not None and self._live_response is None:
-                await self._reply_safely(command_message, STOPPING_MESSAGE)
+            if command_message is not None:
+                await self._delete_safely(command_message)
             return
 
         self._stopping = True
         await self._cancel_pending_question()
         if self._live_response is not None:
+            if command_message is not None:
+                await self._delete_safely(command_message)
             await self._live_response.stopping()
         elif command_message is not None:
-            self._stop_notice = await self._reply_safely(
-                command_message, STOPPING_MESSAGE
+            self._stop_notice = await self._send_panel(
+                command_message, STOPPING_MESSAGE, kind="stop"
             )
 
         try:
@@ -591,20 +817,21 @@ class AriadneBot:
             if self._live_response is not None:
                 await self._live_response.resume()
             self._stopping = False
+            notice = self._stop_notice
             self._stop_notice = None
-            if command_message is not None:
-                await self._reply_safely(
-                    command_message,
-                    "I couldn't stop the active turn. Please try again.",
+            if notice is not None:
+                await self._edit_safely(
+                    notice, "I couldn't stop the active turn. Please try again."
                 )
 
     async def handle_settings(self, message: Message, user_id: int | None) -> None:
         """Show the process-local Codex settings panel."""
         if not self._is_allowed(user_id):
             return
-        await self._reply_safely(
+        await self._send_panel(
             message,
             self._settings_text(),
+            kind="settings",
             reply_markup=self._settings_keyboard(),
         )
 
@@ -622,6 +849,11 @@ class AriadneBot:
 
         if data == SETTINGS_BACK_CALLBACK:
             await self._show_settings(message)
+        elif data == SETTINGS_STATUS_CALLBACK:
+            if self._status is None:
+                return
+            self._rekey_panel(message, "status")
+            await self._show_status(message)
         elif data == SETTINGS_MODELS_CALLBACK:
             await self._show_model_choices(message)
         elif data == SETTINGS_EFFORT_CALLBACK:
@@ -779,6 +1011,329 @@ class AriadneBot:
         await self._edit_safely(message, SETTINGS_BUSY_MESSAGE)
         return False
 
+    async def handle_status(self, message: Message, user_id: int | None) -> None:
+        """Open the compact deterministic status panel."""
+        if not self._is_allowed(user_id) or self._status is None:
+            return
+        text, keyboard = self._status_panel()
+        await self._send_panel(message, text, kind="status", reply_markup=keyboard)
+
+    async def handle_wakeups(self, message: Message, user_id: int | None) -> None:
+        """Open the wake-ups page directly, skipping the status entry point."""
+        if not self._is_allowed(user_id) or self._status is None:
+            return
+        text, keyboard = self._wakeups_panel(1)
+        await self._send_panel(message, text, kind="status", reply_markup=keyboard)
+
+    async def handle_status_callback(
+        self,
+        message: Message,
+        user_id: int | None,
+        data: str,
+    ) -> None:
+        """Apply one trusted status-panel control without starting a model turn."""
+        if (
+            not self._is_allowed(user_id)
+            or self._status is None
+            or not data.startswith(STATUS_CALLBACK_PREFIX)
+        ):
+            return
+
+        if data == STATUS_ROOT_CALLBACK:
+            await self._show_status(message)
+        elif data == STATUS_INITIATIVE_CALLBACK:
+            await self._show_initiative(message)
+        elif data == STATUS_INITIATIVE_RUN_CALLBACK:
+            await self._run_initiative_now(message)
+        elif data == STATUS_INITIATIVE_PAUSE_DAY_CALLBACK:
+            await self._pause_initiative(message, timedelta(hours=24))
+        elif data == STATUS_INITIATIVE_PAUSE_CALLBACK:
+            await self._pause_initiative(message, None)
+        elif data == STATUS_INITIATIVE_RESUME_CALLBACK:
+            await self._resume_initiative(message)
+        elif data == STATUS_DELIVER_CALLBACK:
+            await self._deliver_waiting_handoffs(message)
+        elif data == STATUS_SETTINGS_CALLBACK:
+            self._rekey_panel(message, "settings")
+            await self._show_settings(message)
+        elif data.startswith(STATUS_WAKEUPS_PREFIX):
+            await self._show_wakeups(
+                message, _page_number(data.removeprefix(STATUS_WAKEUPS_PREFIX))
+            )
+        elif data.startswith(STATUS_WAKEUP_ASK_PREFIX):
+            await self._ask_wakeup_cancellation(
+                message, data.removeprefix(STATUS_WAKEUP_ASK_PREFIX)
+            )
+        elif data.startswith(STATUS_WAKEUP_CONFIRM_PREFIX):
+            await self._cancel_wakeup(
+                message, data.removeprefix(STATUS_WAKEUP_CONFIRM_PREFIX)
+            )
+
+    async def _show_status(self, message: Message) -> None:
+        text, keyboard = self._status_panel()
+        await self._edit_safely(message, text, reply_markup=keyboard)
+
+    async def _show_wakeups(self, message: Message, page: int) -> None:
+        text, keyboard = self._wakeups_panel(page)
+        await self._edit_safely(message, text, reply_markup=keyboard)
+
+    async def _show_initiative(self, message: Message) -> None:
+        text, keyboard = self._initiative_panel()
+        await self._edit_safely(message, text, reply_markup=keyboard)
+
+    def _status_panel(self) -> tuple[str, InlineKeyboardMarkup]:
+        assert self._status is not None
+        snapshot = self._initiative_snapshot()
+        revisits = self._open_wakeups()
+        waiting = self._waiting_handoffs()
+        settings = self._conversation.settings
+        text = render_status(
+            working=self._busy,
+            snapshot=snapshot,
+            counts=wakeup_counts(revisits) if revisits is not None else None,
+            waiting_handoffs=waiting,
+            sources=self._status.sources,
+            model=settings.model,
+            effort=settings.effort.value,
+            web_search="live" if settings.web_search == "live" else "off",
+            timezone=self._status.timezone,
+        )
+        keyboard: list[list[InlineKeyboardButton]] = []
+        if revisits is not None:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        "Wake-ups", callback_data=f"{STATUS_WAKEUPS_PREFIX}1"
+                    )
+                ]
+            )
+        if snapshot is not None:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        "Initiative", callback_data=STATUS_INITIATIVE_CALLBACK
+                    )
+                ]
+            )
+        if waiting:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        f"Deliver {waiting} waiting now",
+                        callback_data=STATUS_DELIVER_CALLBACK,
+                    )
+                ]
+            )
+        keyboard.append(
+            [InlineKeyboardButton("Settings", callback_data=STATUS_SETTINGS_CALLBACK)]
+        )
+        return text, InlineKeyboardMarkup(keyboard)
+
+    def _wakeups_panel(self, page: int) -> tuple[str, InlineKeyboardMarkup]:
+        assert self._status is not None
+        revisits = self._open_wakeups()
+        if revisits is None:
+            return (
+                WAKEUPS_UNAVAILABLE_MESSAGE,
+                InlineKeyboardMarkup([[_status_back_button()]]),
+            )
+        text, shown, current, pages = render_wakeups(
+            revisits, page=page, timezone=self._status.timezone
+        )
+        keyboard: list[list[InlineKeyboardButton]] = []
+        cancels = [
+            InlineKeyboardButton(
+                f"Cancel {offset}",
+                callback_data=f"{STATUS_WAKEUP_ASK_PREFIX}{revisit.id}",
+            )
+            for offset, revisit in enumerate(shown, start=1)
+        ]
+        keyboard += [cancels[index : index + 3] for index in range(0, len(cancels), 3)]
+        if pages > 1:
+            navigation: list[InlineKeyboardButton] = []
+            if current > 1:
+                navigation.append(
+                    InlineKeyboardButton(
+                        "Previous",
+                        callback_data=f"{STATUS_WAKEUPS_PREFIX}{current - 1}",
+                    )
+                )
+            if current < pages:
+                navigation.append(
+                    InlineKeyboardButton(
+                        "Next", callback_data=f"{STATUS_WAKEUPS_PREFIX}{current + 1}"
+                    )
+                )
+            keyboard.append(navigation)
+        keyboard.append([_status_back_button()])
+        return text, InlineKeyboardMarkup(keyboard)
+
+    def _initiative_panel(self) -> tuple[str, InlineKeyboardMarkup]:
+        assert self._status is not None
+        snapshot = self._initiative_snapshot()
+        text = render_initiative(snapshot, self._status.timezone)
+        keyboard: list[list[InlineKeyboardButton]] = []
+        if snapshot is not None and snapshot.enabled:
+            keyboard.append(
+                [
+                    InlineKeyboardButton(
+                        "Run now", callback_data=STATUS_INITIATIVE_RUN_CALLBACK
+                    )
+                ]
+            )
+            if snapshot.paused:
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            "Resume", callback_data=STATUS_INITIATIVE_RESUME_CALLBACK
+                        )
+                    ]
+                )
+            else:
+                keyboard.append(
+                    [
+                        InlineKeyboardButton(
+                            "Pause 24 hours",
+                            callback_data=STATUS_INITIATIVE_PAUSE_DAY_CALLBACK,
+                        ),
+                        InlineKeyboardButton(
+                            "Pause indefinitely",
+                            callback_data=STATUS_INITIATIVE_PAUSE_CALLBACK,
+                        ),
+                    ]
+                )
+        keyboard.append([_status_back_button()])
+        return text, InlineKeyboardMarkup(keyboard)
+
+    async def _ask_wakeup_cancellation(self, message: Message, identifier: str) -> None:
+        assert self._status is not None
+        revisit = next(
+            (item for item in self._open_wakeups() or () if item.id == identifier),
+            None,
+        )
+        if revisit is None:
+            await self._show_wakeups(message, 1)
+            return
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Cancel it",
+                        callback_data=f"{STATUS_WAKEUP_CONFIRM_PREFIX}{revisit.id}",
+                    ),
+                    InlineKeyboardButton(
+                        "Keep it", callback_data=f"{STATUS_WAKEUPS_PREFIX}1"
+                    ),
+                ]
+            ]
+        )
+        await self._edit_safely(
+            message,
+            render_wakeup_cancellation(revisit, self._status.timezone),
+            reply_markup=keyboard,
+        )
+
+    async def _cancel_wakeup(self, message: Message, identifier: str) -> None:
+        assert self._status is not None
+        directory = self._status.wakeups
+        if directory is None:
+            await self._show_status(message)
+            return
+        try:
+            directory.cancel(identifier)
+        except (OSError, sqlite3.Error, ValueError):
+            # A wake-up that already ran or vanished is not an error worth
+            # escalating; show the owner the list as it now really is.
+            LOGGER.info("Telegram wake-up cancellation was rejected", exc_info=True)
+        await self._show_wakeups(message, 1)
+
+    async def _run_initiative_now(self, message: Message) -> None:
+        assert self._status is not None
+        initiative = self._status.initiative
+        if initiative is None:
+            await self._show_initiative(message)
+            return
+        if self._initiative_task is not None and not self._initiative_task.done():
+            await self._show_initiative(message)
+            return
+
+        async def run() -> None:
+            try:
+                result = await initiative.process_due(force=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                LOGGER.exception("Requested stewardship cycle failed")
+            else:
+                LOGGER.info("Requested stewardship cycle finished %s", result.status)
+
+        # A cycle is a long background turn; the panel must stay responsive.
+        self._initiative_task = asyncio.create_task(run())
+        await self._show_initiative(message)
+
+    async def _pause_initiative(
+        self, message: Message, duration: timedelta | None
+    ) -> None:
+        assert self._status is not None
+        initiative = self._status.initiative
+        if initiative is not None:
+            until = datetime.now(UTC) + duration if duration is not None else None
+            try:
+                initiative.pause(until=until)
+            except (OSError, sqlite3.Error, ValueError):
+                LOGGER.exception("Telegram initiative pause failed")
+        await self._show_initiative(message)
+
+    async def _resume_initiative(self, message: Message) -> None:
+        assert self._status is not None
+        initiative = self._status.initiative
+        if initiative is not None:
+            try:
+                initiative.resume()
+            except (OSError, sqlite3.Error, ValueError):
+                LOGGER.exception("Telegram initiative resume failed")
+        await self._show_initiative(message)
+
+    async def _deliver_waiting_handoffs(self, message: Message) -> None:
+        """Ask for waiting context now without exposing an inbox interface."""
+        try:
+            delivered = await self._handoffs.deliver_now(self)
+        except Exception:
+            LOGGER.exception("Requested handoff delivery failed")
+            delivered = False
+        if delivered:
+            # Delivery is a conversational turn, so it has already removed this
+            # panel. Editing the deleted message would only log a failure.
+            return
+        await self._show_status(message)
+
+    def _initiative_snapshot(self) -> StewardshipRuntimeSnapshot | None:
+        assert self._status is not None
+        if self._status.initiative is None:
+            return None
+        try:
+            return self._status.initiative.status_snapshot()
+        except (OSError, sqlite3.Error, ValueError):
+            LOGGER.exception("Telegram initiative status read failed")
+            return None
+
+    def _open_wakeups(self) -> tuple[Revisit, ...] | None:
+        assert self._status is not None
+        if self._status.wakeups is None:
+            return None
+        try:
+            return self._status.wakeups.list_open()
+        except (OSError, sqlite3.Error, ValueError):
+            LOGGER.exception("Telegram wake-up list read failed")
+            return None
+
+    def _waiting_handoffs(self) -> int:
+        try:
+            return self._handoffs.waiting_count()
+        except (OSError, sqlite3.Error, ValueError):
+            LOGGER.exception("Telegram waiting-handoff count failed")
+            return 0
+
     async def _available_models(
         self, message: Message
     ) -> tuple[CodexModel, ...] | None:
@@ -832,12 +1387,18 @@ class AriadneBot:
         if not self._is_allowed(user_id):
             return
         self._handoffs.note_activity()
+        await self._dismiss_panel(message.chat_id)
 
         reply_to = (
             message.reply_to_message.message_id
             if message.reply_to_message is not None
             else None
         )
+        if (
+            self._live_response is not None
+            and reply_to == self._live_response.message_id
+        ):
+            reply_to = None
         if record_history:
             self._history.record(
                 TelegramHistoryMessage(
@@ -903,6 +1464,10 @@ class AriadneBot:
                     return
                 await self._stream_response(live, prompt, image_paths)
                 status = "success"
+            except asyncio.CancelledError:
+                status = "cancelled"
+                await live.discard()
+                raise
             except TurnInterrupted:
                 status = "cancelled"
                 LOGGER.info(
@@ -953,6 +1518,9 @@ class AriadneBot:
         rich_api = self._rich_api
         if rich_api is None:
             raise RuntimeError("Telegram Rich Messages are not initialized.")
+        # A proactive turn is a conversational entry path too; a control panel
+        # must not stay visible above speech the owner did not ask for.
+        await self._dismiss_panel(self._allowed_user_id)
         self._busy = True
         started_at = time.monotonic()
         renderer = ProactiveTurn(
@@ -1018,11 +1586,16 @@ class AriadneBot:
 
     async def _submit_album_later(self, group: str) -> None:
         """Send a media group once it has stopped growing."""
-        with suppress(asyncio.CancelledError):
+        # Only the wait is cancellable: a later item restarts the timer. Once
+        # submission begins, cancellation must propagate rather than be
+        # swallowed into an apparently successful task.
+        try:
             await asyncio.sleep(ALBUM_DEBOUNCE_SECONDS)
-            album = self._albums.pop(group, None)
-            if album is not None:
-                await self._submit_album(album)
+        except asyncio.CancelledError:
+            return
+        album = self._albums.pop(group, None)
+        if album is not None:
+            await self._submit_album(album)
 
     async def _submit_album(self, album: _Album) -> None:
         """Turn one message or media group into a single Codex turn."""
@@ -1216,10 +1789,14 @@ class AriadneBot:
         *,
         parse_mode: ParseMode | None = None,
         reply_markup: InlineKeyboardMarkup | None = None,
+        disable_notification: bool = False,
     ) -> Message | None:
         try:
             return await message.reply_text(
-                text, parse_mode=parse_mode, reply_markup=reply_markup
+                text,
+                parse_mode=parse_mode,
+                reply_markup=reply_markup,
+                disable_notification=disable_notification,
             )
         except TelegramError:
             LOGGER.exception("Telegram reply failed")
@@ -1244,6 +1821,86 @@ class AriadneBot:
             return False
         return True
 
+    async def _send_panel(
+        self,
+        source: Message,
+        text: str,
+        *,
+        kind: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
+    ) -> Message | None:
+        await self._dismiss_panel(source.chat_id)
+        panel = await self._reply_safely(
+            source,
+            text,
+            reply_markup=reply_markup,
+            disable_notification=True,
+        )
+        if panel is not None:
+            try:
+                self._panels.set(
+                    TelegramControlPanel(source.chat_id, panel.message_id, kind)
+                )
+            except (OSError, sqlite3.Error, ValueError):
+                LOGGER.exception("Telegram control panel state update failed")
+        await self._delete_safely(source)
+        return panel
+
+    def _rekey_panel(self, message: Message, kind: str) -> None:
+        """Hand the one live panel to another control tree without resending it."""
+        try:
+            self._panels.set(
+                TelegramControlPanel(message.chat_id, message.message_id, kind)
+            )
+        except (OSError, sqlite3.Error, ValueError):
+            LOGGER.exception("Telegram control panel state update failed")
+
+    def _panel_is_active(self, message: Message, kind: str) -> bool:
+        try:
+            panel = self._panels.get(message.chat_id)
+        except (OSError, sqlite3.Error):
+            LOGGER.exception("Telegram control panel state read failed")
+            return False
+        return (
+            panel is not None
+            and panel.message_id == message.message_id
+            and panel.kind == kind
+        )
+
+    async def _dismiss_panel(self, chat_id: int) -> None:
+        try:
+            panel = self._panels.get(chat_id)
+        except (OSError, sqlite3.Error):
+            LOGGER.exception("Telegram control panel state read failed")
+            return
+        if panel is None or self._bot is None:
+            return
+        try:
+            await self._bot.delete_message(chat_id, panel.message_id)
+        except BadRequest:
+            LOGGER.info(
+                "Telegram control panel was already unavailable message_id=%s",
+                panel.message_id,
+            )
+        except TelegramError:
+            LOGGER.exception(
+                "Telegram control panel deletion failed message_id=%s",
+                panel.message_id,
+            )
+        try:
+            self._panels.clear(chat_id, expected_message_id=panel.message_id)
+        except (OSError, sqlite3.Error):
+            LOGGER.exception("Telegram control panel state cleanup failed")
+
+    @staticmethod
+    async def _delete_safely(message: Message) -> None:
+        try:
+            await message.delete()
+        except TelegramError:
+            LOGGER.info(
+                "Telegram command cleanup failed message_id=%s", message.message_id
+            )
+
     async def _answer_callback_safely(
         self, query: CallbackQuery, text: str | None = None
     ) -> None:
@@ -1266,28 +1923,33 @@ class AriadneBot:
     def _settings_keyboard(self) -> InlineKeyboardMarkup:
         settings = self._conversation.settings
         web_search = "Live" if settings.web_search == "live" else "Off"
-        return InlineKeyboardMarkup(
+        keyboard = [
             [
-                [
-                    InlineKeyboardButton(
-                        f"Model: {settings.model}",
-                        callback_data=SETTINGS_MODELS_CALLBACK,
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        f"Reasoning: {settings.effort.value}",
-                        callback_data=SETTINGS_EFFORT_CALLBACK,
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        f"Web research: {web_search}",
-                        callback_data=SETTINGS_WEB_CALLBACK,
-                    )
-                ],
-            ]
-        )
+                InlineKeyboardButton(
+                    f"Model: {settings.model}",
+                    callback_data=SETTINGS_MODELS_CALLBACK,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"Reasoning: {settings.effort.value}",
+                    callback_data=SETTINGS_EFFORT_CALLBACK,
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    f"Web research: {web_search}",
+                    callback_data=SETTINGS_WEB_CALLBACK,
+                )
+            ],
+        ]
+        if self._status is not None:
+            # The status tree owns this same panel; hand it back rather than
+            # leaving the owner in a dead end after arriving from /status.
+            keyboard.append(
+                [InlineKeyboardButton("Status", callback_data=SETTINGS_STATUS_CALLBACK)]
+            )
+        return InlineKeyboardMarkup(keyboard)
 
     def _models_keyboard(self, models: tuple[CodexModel, ...]) -> InlineKeyboardMarkup:
         keyboard = [
@@ -1358,7 +2020,7 @@ class AriadneBot:
     @staticmethod
     async def _download(
         context: ContextTypes.DEFAULT_TYPE,
-        media: PhotoSize | Document,
+        media: PhotoSize | Document | Voice,
         size_limit: int,
     ) -> Path:
         """Save one sent file into the attachment archive."""
