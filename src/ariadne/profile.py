@@ -18,6 +18,9 @@ from .knowledge.capability import TOOLS as KNOWLEDGE_TOOLS
 from .revisit import ATTENTION_SETTINGS, Attention
 from .revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
 from .revisit import TOOLS as REVISIT_TOOLS
+from .stewardship import CYCLE_ENVIRONMENT as STEWARDSHIP_CYCLE_ENVIRONMENT
+from .stewardship import STATE_ENVIRONMENT as STEWARDSHIP_STATE_ENVIRONMENT
+from .stewardship import TOOLS as STEWARDSHIP_TOOLS
 
 NETWORK_DOMAINS = (
     "github.com",
@@ -102,6 +105,39 @@ MAIL_PROFILE = TurnProfile(
     ),
 )
 
+STEWARDSHIP_PROFILE = TurnProfile(
+    name="stewardship",
+    model="gpt-5.6-terra",
+    effort=ReasoningEffort.high,
+    web_search="live",
+    instruction_documents=("base", "stewardship", "knowledge"),
+    developer_documents=("grounding", "companion"),
+    enabled_tools=(
+        "read_recent_telegram_messages",
+        "hand_off_to_telegram_conversation",
+        *STEWARDSHIP_TOOLS,
+        *REVISIT_TOOLS,
+        *KNOWLEDGE_TOOLS,
+    ),
+    thread_policy="fresh-per-event",
+    approval_mode=ApprovalMode.auto_review,
+    permission_profile="ariadne",
+    writable_roots=(Path.home(),),
+    network_domains=NETWORK_DOMAINS,
+    allow_local_binding=True,
+    mcp_environment_names=(
+        "ARIADNE_PROFILE",
+        "TELEGRAM_ALLOWED_USER_ID",
+        HANDOFF_STATE_ENVIRONMENT,
+        ACTIVATION_KEY_ENVIRONMENT,
+        ACTIVATION_SOURCE_ENVIRONMENT,
+        REVISIT_STATE_ENVIRONMENT,
+        STEWARDSHIP_STATE_ENVIRONMENT,
+        STEWARDSHIP_CYCLE_ENVIRONMENT,
+        KNOWLEDGE_ROOT_ENVIRONMENT,
+    ),
+)
+
 
 def _revisit_profile(attention: Attention) -> TurnProfile:
     settings = ATTENTION_SETTINGS[attention]
@@ -151,6 +187,7 @@ PROFILES: dict[str, TurnProfile] = {
     for profile in (
         TELEGRAM_PROFILE,
         MAIL_PROFILE,
+        STEWARDSHIP_PROFILE,
         *REVISIT_PROFILES.values(),
     )
 }

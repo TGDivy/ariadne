@@ -58,6 +58,10 @@ class HandoffCoordinator:
         """Record human or Iris conversational activity."""
         self._last_activity = self._clock()
 
+    def waiting_count(self) -> int:
+        """Return committed handoffs still waiting for a shared turn."""
+        return self.state.ready_count()
+
     def claim_for_direct_turn(self) -> tuple[ConversationHandoff, ...]:
         """Give waiting context to the next direct human turn immediately."""
         return self.state.claim_ready(limit=self._batch_limit)
@@ -72,11 +76,19 @@ class HandoffCoordinator:
     ) -> None:
         self.state.retry(tuple(handoff.id for handoff in handoffs), error)
 
-    async def process_ready(self, target: HandoffTurnTarget) -> bool:
+    async def process_ready(
+        self,
+        target: HandoffTurnTarget,
+        *,
+        force: bool = False,
+    ) -> bool:
         """Run one quiet-window proactive batch when the conversation is free."""
         if target.proactive_handoff_blocked:
             return False
-        if self._clock() - self._last_activity < self._quiet_window_seconds:
+        if (
+            not force
+            and self._clock() - self._last_activity < self._quiet_window_seconds
+        ):
             return False
         handoffs = self.state.claim_ready(limit=self._batch_limit)
         if not handoffs:
@@ -93,6 +105,10 @@ class HandoffCoordinator:
             self.complete(handoffs)
             self.note_activity()
         return True
+
+    async def deliver_now(self, target: HandoffTurnTarget) -> bool:
+        """Present one bounded waiting batch now, without interrupting a busy turn."""
+        return await self.process_ready(target, force=True)
 
     def stop(self) -> None:
         self._stop.set()

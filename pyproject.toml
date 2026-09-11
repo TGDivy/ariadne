@@ -21,6 +21,7 @@ dependencies = [
 [project.scripts]
 ariadne = "ariadne.cli:main"
 ariadne-knowledge = "ariadne.scripts.knowledge:main"
+ariadne-stewardship = "ariadne.scripts.stewardship:main"
 
 [build-system]
 requires = ["hatchling"]

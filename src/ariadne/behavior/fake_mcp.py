@@ -20,6 +20,9 @@ from ariadne.mcp.revisit import cancel_wakeup as real_cancel_wakeup
 from ariadne.mcp.revisit import list_wakeups as real_list_wakeups
 from ariadne.mcp.revisit import schedule_wakeup as real_schedule_wakeup
 from ariadne.mcp.revisit import update_wakeup as real_update_wakeup
+from ariadne.mcp.stewardship import (
+    record_stewardship_outcome as real_record_stewardship_outcome,
+)
 from ariadne.mcp.telegram import (
     read_recent_telegram_messages as real_read_recent_telegram_messages,
 )
@@ -94,6 +97,20 @@ def hand_off_to_telegram_conversation(text: str) -> dict[str, str]:
         "handoff_id": "handoff_scenario",
         "activation_key": "scenario",
     }
+
+
+@wraps(real_record_stewardship_outcome)
+def record_stewardship_outcome(
+    summary: str,
+    broad_attention: str | None = None,
+) -> dict[str, str]:
+    if not summary.strip():
+        raise ToolError("A cycle summary must not be empty.")
+    record_call(
+        "record_stewardship_outcome",
+        {"summary": summary, "broad_attention": broad_attention},
+    )
+    return {"status": "recorded", "cycle_id": "stewardship_scenario"}
 
 
 @wraps(real_record_current_mail_decision)
@@ -202,6 +219,7 @@ def create_server() -> FastMCP:
     server.tool(read_recent_telegram_messages, annotations=harmless)
     server.tool(request_telegram_file_delivery, annotations=harmless)
     server.tool(hand_off_to_telegram_conversation, annotations=harmless)
+    server.tool(record_stewardship_outcome, annotations=harmless)
     server.tool(record_current_mail_decision, annotations=harmless)
     register_knowledge_tools(server, harmless)
     server.tool(schedule_wakeup, annotations=harmless)

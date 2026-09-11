@@ -56,6 +56,7 @@ def test_background_prompts_specify_checks_and_interruptions() -> None:
     companion = render("companion", human="Example User")
     mail = render("mail", human="Example User")
     revisit = render("revisit", human="Example User")
+    stewardship = render("stewardship", human="Example User")
 
     assert "when at least one of these is true" in companion
     assert "If none is true, finish silently" in companion
@@ -74,3 +75,13 @@ def test_background_prompts_specify_checks_and_interruptions() -> None:
     assert "exact `since` and `before` values" in revisit
     assert "Read every knowledge record named or referenced" in revisit
     assert "do not interpret silence as disinterest" in revisit
+    assert "Reflect" in stewardship
+    assert "Dream" in stewardship
+    assert "Choose" in stewardship
+    assert "Act" in stewardship
+    assert "Learn" in stewardship
+    assert "one coherent opportunity" in stewardship
+    assert "Most cycles may finish silently" in stewardship
+    assert "hand_off_to_telegram_conversation" in stewardship
+    assert "record_stewardship_outcome" in stewardship
+    assert "Require Example User's confirmation before payment" in stewardship

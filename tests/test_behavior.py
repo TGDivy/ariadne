@@ -39,6 +39,14 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         "known-person-news",
         "tentative-ambition",
         "new-person-day",
+        "stewardship-job-capacity",
+        "stewardship-social-plan",
+        "stewardship-exercise-uncertainty",
+        "stewardship-vague-goal",
+        "stewardship-past-informs-present",
+        "stewardship-feature-proposal",
+        "stewardship-quiet-maintenance",
+        "stewardship-nothing-worthwhile",
     ]
     assert len({scenario.identifier for scenario in SCENARIOS}) == len(SCENARIOS)
 
@@ -47,6 +55,11 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
         if scenario.telegram_prompt is not None:
             assert prompt == scenario.telegram_prompt
             assert scenario.profile_name == "telegram"
+        elif scenario.stewardship is not None:
+            assert "today's one open-ended stewardship opportunity" in prompt
+            assert "Reflect → Dream → Choose → Act → Learn" in prompt
+            assert "record_stewardship_outcome" in prompt
+            assert scenario.profile_name == "stewardship"
         elif scenario.revisit is None:
             assert scenario.route is not None
             assert "Ariadne speaking" in prompt
@@ -70,6 +83,7 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert SCENARIOS[5].telegram_prompt is not None
     assert SCENARIOS[6].telegram_prompt is not None
     assert SCENARIOS[7].telegram_prompt is not None
+    assert all(scenario.stewardship is not None for scenario in SCENARIOS[8:])
 
 
 def test_scenario_knowledge_is_a_valid_collection(
@@ -145,6 +159,7 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
         "read_recent_telegram_messages",
         "request_telegram_file_delivery",
         "hand_off_to_telegram_conversation",
+        "record_stewardship_outcome",
         "record_current_mail_decision",
         "search_knowledge",
         "list_knowledge",

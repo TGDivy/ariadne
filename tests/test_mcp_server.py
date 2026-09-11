@@ -100,6 +100,7 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "list_wakeups",
         "update_wakeup",
         "cancel_wakeup",
+        "record_stewardship_outcome",
     ]
 
 

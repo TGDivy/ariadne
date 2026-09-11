@@ -1,10 +1,13 @@
 """Typed builders for user-level inputs that activate an Iris turn."""
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from datetime import time as daytime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from ..handoff import ConversationHandoff
+from ..stewardship import StewardshipCycle, StewardshipSnapshot
 
 IMAGE_WITHOUT_CAPTION = "Please inspect the attached image."
 IMAGES_WITHOUT_CAPTION = "Please inspect the attached images."
@@ -185,4 +188,56 @@ def build_revisit_turn_prompt(
         "<earlier_iris_note>\n"
         f"{note}\n"
         "</earlier_iris_note>"
+    )
+
+
+def build_stewardship_turn_prompt(
+    *,
+    cycle: StewardshipCycle,
+    awakened_at: datetime,
+    timezone: str,
+    waking_start: daytime,
+    waking_end: daytime,
+    state: StewardshipSnapshot,
+) -> str:
+    """Build bounded orientation for one open-ended daily opportunity."""
+    if awakened_at.tzinfo is None or awakened_at.utcoffset() is None:
+        raise ValueError("Stewardship activation time needs an explicit timezone.")
+    history_since = awakened_at.astimezone(UTC) - timedelta(days=3)
+    history_before = awakened_at.astimezone(UTC)
+    local = awakened_at.astimezone(ZoneInfo(timezone))
+    calendar_start = (local.date() - timedelta(days=1)).isoformat()
+    calendar_end = (local.date() + timedelta(days=14)).isoformat()
+    broad_at = (
+        state.last_broad_attention_at.astimezone(UTC).isoformat()
+        if state.last_broad_attention_at is not None
+        else "never"
+    )
+    return (
+        "Ariadne speaking. This is today's one open-ended stewardship opportunity, "
+        "not a request for a compulsory briefing or visible activity. Follow the "
+        "Reflect → Dream → Choose → Act → Learn cycle and complete one coherent "
+        "safe loop, or deliberately do nothing.\n\n"
+        f"Cycle id: {cycle.id}\n"
+        f"Local stewardship day: {cycle.local_day.isoformat()} ({timezone})\n"
+        f"Waking window: {waking_start.isoformat(timespec='minutes')}–"
+        f"{waking_end.isoformat(timespec='minutes')}\n"
+        f"Awakened at: {awakened_at.isoformat()}\n\n"
+        "Initial orientation:\n"
+        "- The concise current context is already in your instructions.\n"
+        "- Call `read_recent_telegram_messages` with these exact bounds before "
+        "choosing: "
+        f"since={history_since.isoformat()}, before={history_before.isoformat()}.\n"
+        "- List active goal summaries, then read only plausible goal records.\n"
+        "- Inspect Calendar from "
+        f"{calendar_start} through {calendar_end}; use narrower or deeper reads only "
+        "where they could change the judgement.\n"
+        "- Query recent health/workout facts, mail, public information, and deeper "
+        "knowledge selectively rather than exhaustively.\n\n"
+        "Recent cycle focuses/outcomes (operational orientation, not life state):\n"
+        f"{state.recent_summary or '(none yet)'}\n\n"
+        "Last deliberate broad knowledge/curiosity attention:\n"
+        f"{state.last_broad_attention or '(none yet)'} (at {broad_at})\n\n"
+        "Finish with `record_stewardship_outcome`. Use a conversational handoff only "
+        "if something is genuinely worth presenting through the continuing Iris."
     )

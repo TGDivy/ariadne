@@ -111,6 +111,7 @@ def test_claims_are_bounded_fifo_and_complete_durably(tmp_path: Path) -> None:
     claimed = state.claim_ready(limit=3)
 
     assert [handoff.body for handoff in claimed] == ["body 0", "body 1", "body 2"]
+    assert state.ready_count() == 1
     assert [handoff.body for handoff in state.list_status("ready")] == ["body 3"]
 
     state.complete([handoff.id for handoff in claimed])
@@ -190,6 +191,31 @@ async def test_coordinator_honours_quiet_window_busy_state_and_batching(
     assert len(state.list_status("completed")) == 2
     assert [item.body for item in state.list_status("ready")] == ["body 2"]
     assert await coordinator.process_ready(target) is False
+
+
+async def test_deliver_now_bypasses_only_the_quiet_window(tmp_path: Path) -> None:
+    wall_clock = MutableClock()
+    monotonic = MutableClock(0)
+    state = handoff_state(tmp_path, wall_clock)
+    coordinator = HandoffCoordinator(
+        state,
+        clock=monotonic,
+        quiet_window_seconds=120,
+    )
+    target = FakeTarget()
+    state.stage(activation_key="job", source="mail", body="Ready now")
+    state.release("job")
+
+    assert coordinator.waiting_count() == 1
+    assert await coordinator.process_ready(target) is False
+    target.proactive_handoff_blocked = True
+    assert await coordinator.deliver_now(target) is False
+    assert coordinator.waiting_count() == 1
+
+    target.proactive_handoff_blocked = False
+    assert await coordinator.deliver_now(target) is True
+    assert target.presented == [("Ready now",)]
+    assert coordinator.waiting_count() == 0
 
 
 async def test_direct_message_claim_has_priority_and_failed_turn_retries(

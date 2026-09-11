@@ -217,6 +217,15 @@ class HandoffState:
         by_id = {str(row["id"]): _handoff(row) for row in rows}
         return tuple(by_id[identifier] for identifier in identifiers)
 
+    def ready_count(self) -> int:
+        """Return handoffs committed by their source and waiting for conversation."""
+        with self._connect() as database:
+            row = database.execute(
+                "SELECT COUNT(*) AS count FROM telegram_handoffs WHERE status = 'ready'"
+            ).fetchone()
+        assert row is not None
+        return int(row["count"])
+
     def complete(self, identifiers: Sequence[str]) -> None:
         """Mark a successfully presented batch complete."""
         self._finish_claim(identifiers, completed=True, error=None)

@@ -12,7 +12,7 @@ uv run python -m ariadne.scripts.behavior show race-confirmation
 ```
 
 They list or render checked-in synthetic inputs. `show` uses an unchanged direct
-Telegram message or the production mail/revisit activation builder, so it also
+Telegram message or the production mail/revisit/stewardship activation builder, so it also
 makes prompt drift inspectable. Ordinary tests verify that every scenario
 remains valid, that the fake MCP server retains the first-class production tool
 contracts, and that fake Mail and Calendar use the production CLI parser.
@@ -30,7 +30,7 @@ Add `--effort low`, `--effort medium`, or `--effort high` to compare reasoning
 levels for a manual run without changing production configuration. Use
 `--model` when deliberately comparing another locally available model.
 
-It uses the scenario's Telegram, mail, or attention-selected revisit profile,
+It uses the scenario's Telegram, mail, attention-selected revisit, or stewardship profile,
 web-search setting, and instruction layers from the repository defaults. It
 needs local Codex authentication and may incur usage, but it does not need an
 Ariadne config or service credentials. It is not called by the test suite or
@@ -43,8 +43,8 @@ name, personality, model, reasoning effort, and web-search setting are used, but
 its service credentials still are not forwarded to the run.
 
 Each run creates a disposable Git-backed Thread containing only synthetic
-fixtures. Telegram delivery, file delivery, mail triage, semantic knowledge,
-and future revisits use a harmless fake MCP server. Mail reads and Calendar use
+fixtures. Telegram delivery, file delivery, mail triage, stewardship outcomes,
+semantic knowledge, and future revisits use a harmless fake MCP server. Mail reads and Calendar use
 a temporary `ariadne` executable on `PATH`; it invokes the same nested parser as
 production with harmless in-memory/file-backed clients. Both paths record their
 calls. The knowledge and Calendar substitutes start with the scenario's
@@ -103,6 +103,30 @@ delivery. The separate deterministic handoff scenarios in
   silently promoting it into an active goal;
 - `new-person-day`: create a useful new person while keeping facts about her in
   the person record and Divy's lived experience in the journal.
+
+Eight stewardship stories exercise creative initiative and restraint:
+
+- `stewardship-job-capacity`: use real capacity and career criteria to research
+  non-duplicate fitting roles and leave concrete progress;
+- `stewardship-social-plan`: turn an unfinished plan into researched options and
+  a draft without contacting the other person;
+- `stewardship-exercise-uncertainty`: adapt around incomplete health coverage
+  without inventing success, failure, or motive;
+- `stewardship-vague-goal`: ask one useful discriminating question without
+  silently redefining a fundamental aim;
+- `stewardship-past-informs-present`: retrieve an older experience only because
+  it improves a current choice, and record that broad attention;
+- `stewardship-feature-proposal`: turn repeated observed friction into the
+  smallest evidence-led system proposal without starting implementation;
+- `stewardship-quiet-maintenance`: repair one knowledge neighbourhood without a
+  performative message; and
+- `stewardship-nothing-worthwhile`: verify enough context to choose silence
+  rather than manufacturing work.
+
+These are manual judgement checks, not automated proof of safe live initiative.
+Before recurring stewardship is enabled, run several cycles against private
+sources and review usefulness, surprise, repetition, action correctness, and
+interruption quality.
 
 These first runs should make current capability gaps visible. The scenario uses
 the same six semantic knowledge operations, bounded root overview, and concise

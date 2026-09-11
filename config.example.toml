@@ -50,6 +50,14 @@ timeout_seconds = 30
 state = "~/.local/state/ariadne/revisits.sqlite3"
 poll_interval_seconds = 15
 
+[stewardship]
+enabled = false
+timezone = "UTC"
+waking_start = "09:00"
+waking_end = "21:00"
+state = "~/.local/state/ariadne/stewardship.sqlite3"
+poll_interval_seconds = 60
+
 [telemetry]
 enabled = false
 service_name = "ariadne"
@@ -68,6 +76,11 @@ export_interval_seconds = 60
 # [profiles.mail]
 # model = "gpt-5.6-terra"
 # effort = "medium"
+# web_search = "live"
+
+# [profiles.stewardship]
+# model = "gpt-5.6-terra"
+# effort = "high"
 # web_search = "live"
 
 # Revisit profiles map the semantic attention chosen by Iris to runtime cost.

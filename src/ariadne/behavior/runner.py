@@ -33,7 +33,12 @@ from ariadne.codex.resolver import resolve_profile
 from ariadne.knowledge import KnowledgeMetadata
 from ariadne.knowledge.documents import render_document
 from ariadne.knowledge.paths import slug
-from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE, profile_for_attention
+from ariadne.profile import (
+    MAIL_PROFILE,
+    STEWARDSHIP_PROFILE,
+    TELEGRAM_PROFILE,
+    profile_for_attention,
+)
 from ariadne.telegram.history import TelegramMessageStore
 
 from .fake_calendar import CALENDAR_ENVIRONMENT
@@ -57,6 +62,8 @@ _REDACTED_ENVIRONMENT = (
     "TELEGRAM_ALLOWED_USER_ID",
     "ARIADNE_TELEGRAM_STATE",
     "ARIADNE_REVISIT_STATE",
+    "ARIADNE_STEWARDSHIP_STATE",
+    "ARIADNE_STEWARDSHIP_CYCLE",
     "GITHUB_TOKEN",
     "GH_TOKEN",
 )
@@ -316,6 +323,8 @@ async def run_scenario(
 
         if scenario.telegram_prompt is not None:
             surface = TELEGRAM_PROFILE
+        elif scenario.stewardship is not None:
+            surface = STEWARDSHIP_PROFILE
         elif scenario.revisit is not None:
             surface = profile_for_attention(scenario.revisit.attention)
         else:
