@@ -56,6 +56,12 @@ OWNER = 7
 LONDON = ZoneInfo("Europe/London")
 NOW = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
 
+
+def revisit_state(path: Path) -> RevisitState:
+    """Pin the store's clock to NOW so fixtures cannot expire as real time passes."""
+    return RevisitState(path, clock=NOW.timestamp)
+
+
 SETTINGS = CodexTurnSettings(
     model="gpt-5.6-luna",
     effort=ReasoningEffort.low,
@@ -204,7 +210,7 @@ class Panel:
         self, tmp_path: Path, responses: list[str] | None = None, **sources: object
     ) -> None:
         state = tmp_path / "telegram.sqlite3"
-        self.revisits = RevisitState(tmp_path / "revisits.sqlite3")
+        self.revisits = revisit_state(tmp_path / "revisits.sqlite3")
         self.revisits.initialize()
         self.handoffs = HandoffCoordinator(HandoffState(state), quiet_window_seconds=0)
         self.initiative = FakeInitiative(snapshot())
@@ -269,7 +275,7 @@ def test_page_bounds_clamp_a_requested_page_into_range() -> None:
 
 
 def test_status_counts_separate_upcoming_work_from_failures(tmp_path: Path) -> None:
-    state = RevisitState(tmp_path / "revisits.sqlite3")
+    state = revisit_state(tmp_path / "revisits.sqlite3")
     state.initialize()
     failing = state.schedule(
         due_at=NOW + timedelta(hours=1), note="failed", attention=Attention.light
@@ -358,7 +364,7 @@ def test_status_reports_a_paused_or_running_initiative_truthfully() -> None:
 
 
 def test_wakeups_page_is_bounded_and_shows_failure_state(tmp_path: Path) -> None:
-    state = RevisitState(tmp_path / "revisits.sqlite3")
+    state = revisit_state(tmp_path / "revisits.sqlite3")
     state.initialize()
     for index in range(7):
         state.schedule(
