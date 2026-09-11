@@ -50,6 +50,22 @@ timeout_seconds = 30
 # api_url = "https://your-ithaca-host.example"
 # read_token = ""
 
+[browser]
+enabled = false
+state = "~/.local/state/ariadne/browser/browser.sqlite3"
+profiles = "~/.local/share/ariadne/browser/profiles"
+artifacts = "~/.local/state/ariadne/browser/artifacts"
+socket = "~/.local/state/ariadne/browser/browser.sock"
+# Headful is required for normal home-server operation and human takeover.
+headless = false
+# takeover_url = "https://your-private-browser-view.example"
+lease_seconds = 900
+action_timeout_seconds = 30
+observation_max_chars = 12000
+observation_max_elements = 120
+journal_retention_days = 14
+journal_max_entries = 5000
+
 [revisits]
 state = "~/.local/state/ariadne/revisits.sqlite3"
 poll_interval_seconds = 15

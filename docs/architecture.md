@@ -46,9 +46,10 @@ The agent does not receive a vague integration-level permission. Ariadne owns st
 | Surface | Current capability families | Why it belongs there |
 | --- | --- | --- |
 | **First-class MCP** | Telegram conversation controls, semantic knowledge, and one-off revisits | These are fundamental to Iris’s identity and follow-through, are commonly needed without prior discovery, and include interactive or stateful turn semantics. |
+| **Dedicated MCP** | Persistent browser task sessions | Chromium is long-lived and stateful, while browser authority belongs only in selected turn profiles. A private Unix socket separates its small semantic tools from the browser daemon and profiles. |
 | **Turn-scoped MCP** | `record_current_mail_decision`, `record_stewardship_outcome`, and `hand_off_to_telegram_conversation` | These operations are bound to the background job that activated the turn. A handoff stages internal context; it has no direct delivery authority and becomes ready only at the job's successful commit boundary. |
 | **Discoverable CLI** | Mail search/read/thread, all Calendar operations, and Ithaca health reads | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
-| **Operator commands** | Bulk mail backfill/export, profile inspection, bot-profile changes, and behaviour runs | These have operational or bulk effects and are intentionally not advertised as ordinary model capabilities. |
+| **Operator commands** | Browser daemon/profile administration, bulk mail backfill/export, profile inspection, bot-profile changes, and behaviour runs | These have operational or bulk effects and are intentionally not advertised as ordinary model capabilities. |
 
 The installed `ariadne` CLI emits bounded JSON and keeps provider implementations behind typed Mail account/reader, `ICloudCalendar`, and `IthacaClient` interfaces. A small Mail registry dispatches account-qualified opaque IDs while one shared IMAP parser, route pipeline, and action implementation serves iCloud and Outlook.com. Each enabled account has an independently supervised IDLE/catch-up loop, so one provider outage does not stop the other. For provider commands, the long-running service exports the selected private config path and makes the sibling CLI executable discoverable to Codex. Credentials and OAuth tokens are loaded by the selected command on demand and are not copied into the MCP subprocess environment. The configured Ithaca hostname, but not its URL or token, is added to each turn profile's network allowlist.
 
@@ -67,6 +68,18 @@ Mail is opt-in and configured through one ordered private route file shared by e
 ### Calendar mutations are explicit
 
 Calendar is opt-in. It supports bounded discovery and event operations, including invitations. Creating or changing attendees can send external updates through the provider, so a calendar entry is never treated as authority for a separate action. Mutations can use the provider’s ETag to reject a stale decision.
+
+### The browser preserves authority boundaries
+
+Browser control does not turn a visible button into permission to press it. Telegram
+and stewardship profiles may prepare forms, carts, research, and other reversible
+state through fresh semantic references. Login, MFA, CAPTCHA, and recovery pause for
+private human takeover. Payment, sending or publishing as the owner, applications,
+material account changes, and consequential commitments require a trusted
+confirmation bound to the current material page state. A lost final-action response
+is recorded as uncertain and blocks retry until the site's definitive state is
+inspected. Browser profiles and retained evidence remain in configured private paths;
+the public repository and ordinary logs never contain them.
 
 ### Revisit, do not nag
 

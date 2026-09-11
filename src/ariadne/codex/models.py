@@ -66,6 +66,7 @@ class TurnProfile:
     developer_documents: tuple[str, ...]
     enabled_tools: tuple[str, ...]
     thread_policy: ThreadPolicy
+    browser_tools: tuple[str, ...] = ()
     reasoning_summary: ReasoningSummarySetting = "none"
     approval_mode: ApprovalMode = ApprovalMode.auto_review
     permission_profile: str = "ariadne"
@@ -112,6 +113,10 @@ class ResolvedTurnProfile:
     @property
     def enabled_tools(self) -> tuple[str, ...]:
         return self.profile.enabled_tools
+
+    @property
+    def browser_tools(self) -> tuple[str, ...]:
+        return self.profile.browser_tools
 
     @property
     def thread_policy(self) -> ThreadPolicy:

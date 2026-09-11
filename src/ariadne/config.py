@@ -24,6 +24,7 @@ from pydantic import (
     model_validator,
 )
 
+from .browser.capability import SOCKET_ENVIRONMENT as BROWSER_SOCKET_ENVIRONMENT
 from .codex.models import CodexTurnSettings, WebSearchSetting
 from .profile import PROFILES, profile_for_attention
 from .revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
@@ -350,6 +351,94 @@ class HealthConfig(BaseModel):
         return self
 
 
+class BrowserConfig(BaseModel):
+    """Opt-in paths and limits for the private Chromium daemon."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    state: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/browser/browser.sqlite3"
+        ).expanduser()
+    )
+    profiles: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/share/ariadne/browser/profiles"
+        ).expanduser()
+    )
+    artifacts: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/browser/artifacts"
+        ).expanduser()
+    )
+    socket: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/browser/browser.sock"
+        ).expanduser()
+    )
+    headless: bool = False
+    executable_path: Path | None = None
+    takeover_url: AnyHttpUrl | None = None
+    lease_seconds: int = Field(default=900, ge=30, le=86_400)
+    action_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    observation_max_chars: int = Field(default=12_000, ge=1_000, le=50_000)
+    observation_max_elements: int = Field(default=120, ge=10, le=500)
+    journal_retention_days: int = Field(default=14, ge=1, le=365)
+    journal_max_entries: int = Field(default=5_000, ge=100, le=100_000)
+
+    @field_validator("state", "profiles", "artifacts", "socket", mode="before")
+    @classmethod
+    def expand_browser_path(cls, value: object) -> object:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("Browser private paths must not be empty.")
+            return Path(value).expanduser()
+        return value.expanduser() if isinstance(value, Path) else value
+
+    @field_validator("executable_path", mode="before")
+    @classmethod
+    def expand_browser_executable(cls, value: object) -> object:
+        if isinstance(value, str):
+            return Path(value).expanduser() if value.strip() else None
+        return value.expanduser() if isinstance(value, Path) else value
+
+    @field_validator("takeover_url")
+    @classmethod
+    def require_private_takeover_url(
+        cls, value: AnyHttpUrl | None
+    ) -> AnyHttpUrl | None:
+        if value is None:
+            return None
+        if value.username or value.password or value.query or value.fragment:
+            raise ValueError(
+                "Browser takeover_url must not contain credentials, query, or fragment."
+            )
+        host = value.host.strip("[]") if value.host is not None else None
+        if value.scheme != "https" and host not in {"localhost", "127.0.0.1", "::1"}:
+            raise ValueError("Browser takeover_url must use HTTPS except on localhost.")
+        return value
+
+    @model_validator(mode="after")
+    def require_safe_browser_layout(self) -> BrowserConfig:
+        resolved = {
+            self.state.resolve(),
+            self.profiles.resolve(),
+            self.artifacts.resolve(),
+            self.socket.resolve(),
+        }
+        if len(resolved) != 4:
+            raise ValueError(
+                "Browser state, profile, artifact, and socket paths must differ."
+            )
+        if self.enabled and self.executable_path is not None:
+            executable = self.executable_path.resolve()
+            if not executable.is_file():
+                raise ValueError("Browser executable_path must point to a file.")
+        return self
+
+
 class RevisitConfig(BaseModel):
     """Always-on local settings for one-off future revisits."""
 
@@ -483,6 +572,7 @@ class Settings(BaseModel):
     mail: MailConfig = Field(default_factory=MailConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
     revisits: RevisitConfig = Field(default_factory=RevisitConfig)
     stewardship: StewardshipConfig = Field(default_factory=StewardshipConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
@@ -610,13 +700,16 @@ class Settings(BaseModel):
 
     @property
     def mcp_environment(self) -> dict[str, str]:
-        return {
+        environment = {
             "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
             "TELEGRAM_ALLOWED_USER_ID": str(self.allowed_user_id),
             QUESTION_STATE_ENVIRONMENT: str(self.telegram.state.resolve()),
             REVISIT_STATE_ENVIRONMENT: str(self.revisits.state.resolve()),
             STEWARDSHIP_STATE_ENVIRONMENT: str(self.stewardship.state.resolve()),
         }
+        if self.browser.enabled:
+            environment[BROWSER_SOCKET_ENVIRONMENT] = str(self.browser.socket.resolve())
+        return environment
 
     @property
     def mail_accounts(self) -> tuple[MailAccountSettings, ...]:
@@ -849,6 +942,30 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             ),
             "timezone": settings.health.timezone,
             "timeout_seconds": settings.health.timeout_seconds,
+        },
+        "browser": {
+            "enabled": settings.browser.enabled,
+            "state": str(settings.browser.state),
+            "profiles": str(settings.browser.profiles),
+            "artifacts": str(settings.browser.artifacts),
+            "socket": str(settings.browser.socket),
+            "headless": settings.browser.headless,
+            "executable_path": (
+                str(settings.browser.executable_path)
+                if settings.browser.executable_path is not None
+                else None
+            ),
+            "takeover_url": (
+                str(settings.browser.takeover_url)
+                if settings.browser.takeover_url is not None
+                else None
+            ),
+            "lease_seconds": settings.browser.lease_seconds,
+            "action_timeout_seconds": settings.browser.action_timeout_seconds,
+            "observation_max_chars": settings.browser.observation_max_chars,
+            "observation_max_elements": settings.browser.observation_max_elements,
+            "journal_retention_days": settings.browser.journal_retention_days,
+            "journal_max_entries": settings.browser.journal_max_entries,
         },
         "revisits": {
             "state": str(settings.revisits.state),

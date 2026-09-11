@@ -71,6 +71,9 @@ Mail, Calendar, health, proactive stewardship, and telemetry are off in `config.
 - **Proactive stewardship:** first run several manual owner-reviewed cycles, then enable one daily creative opportunity in a local waking window. It may read enabled private sources and complete already-authorized reversible work, but sends anything worth discussing through the continuing Telegram conversation and may remain silent.
 - **Voice notes:** set `telegram.voice_transcription_command` to an argv list containing exactly one `{input}` placeholder. Ariadne invokes it without a shell on a bounded private OGG file and expects only the UTF-8 transcript on stdout. A local Whisper wrapper is a suitable backend; when omitted, voice notes receive a brief unavailable response.
 - **Telemetry:** enable `[telemetry]` only after adding an OTLP endpoint and authorization to the private configuration. The included Grafana dashboard is at `docs/grafana/ariadne-observability.json`.
+- **Browser:** install Chromium, enable `[browser]`, and run the separate private
+  browser daemon before Ariadne. Named profiles preserve owner-created logins;
+  see [Browser control](browser-control.md) before creating one.
 
 The implementation details and operational contracts for Mail, Calendar, health, and stewardship live in the source and their nearby documentation. They are intentionally not required for a first private conversation.
 

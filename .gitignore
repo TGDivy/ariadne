@@ -11,6 +11,8 @@ mail-export*.jsonl
 mail-export*.csv
 /mail-routes.yaml
 /config.toml
+/browser-data/
+/browser-profiles/
 
 # Local secrets
 .env

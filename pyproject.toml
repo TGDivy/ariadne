@@ -12,6 +12,7 @@ dependencies = [
     "openai-codex>=0.147.0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
+    "playwright>=1.55.0",
     "pydantic>=2.13.4",
     "pypdf>=6.0.0",
     "pyyaml>=6.0.2",
@@ -22,6 +23,8 @@ dependencies = [
 ariadne = "ariadne.cli:main"
 ariadne-knowledge = "ariadne.scripts.knowledge:main"
 ariadne-stewardship = "ariadne.scripts.stewardship:main"
+ariadne-browser = "ariadne.browser.cli:main"
+ariadne-browser-mcp = "ariadne.browser.mcp:main"
 
 [build-system]
 requires = ["hatchling"]
