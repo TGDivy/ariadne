@@ -36,7 +36,7 @@ You talk to Iris in a private Telegram conversation. Ariadne runs on your machin
 | **Private conversation** | Rich Telegram messages, reply context, attachment handling, questions, reactions, and conversation continuity. |
 | **Durable context** | Searchable, linked personal records with Git-backed change history. |
 | **Follow-through** | One-off scheduled revisits that can re-check a concrete open loop at an appropriate level of attention. |
-| **Optional life integrations** | iCloud Mail routing, Calendar operations, and read-only Ithaca health queries, each separately configured and scoped. |
+| **Optional life integrations** | Unified iCloud and Outlook.com Mail routing, iCloud Calendar operations, and read-only Ithaca health queries, each separately configured and scoped. |
 | **Evaluation and observability** | Reproducible companion-behaviour scenarios plus optional OpenTelemetry/Grafana telemetry. |
 
 Read the fuller [architecture and boundary notes](docs/architecture.md) for the turn lifecycle, data ownership, and integration contracts.

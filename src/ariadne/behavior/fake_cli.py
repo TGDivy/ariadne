@@ -24,10 +24,19 @@ class FakeMail:
         since: str | None = None,
         before: str | None = None,
         limit: int = 20,
+        account: str | None = None,
     ) -> dict[str, Any]:
+        arguments: dict[str, Any] = {
+            "query": query,
+            "since": since,
+            "before": before,
+            "limit": limit,
+        }
+        if account is not None:
+            arguments["account"] = account
         record_call(
             "cli.mail.search",
-            {"query": query, "since": since, "before": before, "limit": limit},
+            arguments,
         )
         return {"query": query, "results": [], "searched_folders": 1}
 
@@ -181,6 +190,9 @@ class BehaviorBackend:
         self._unsupported()
 
     def serve(self) -> None:
+        self._unsupported()
+
+    def authorize_outlook(self) -> dict[str, object]:
         self._unsupported()
 
     @contextmanager

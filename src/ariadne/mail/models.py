@@ -163,6 +163,7 @@ def _matches(match: RouteMatch, message: MailMetadata) -> bool:
 @dataclass(frozen=True, slots=True)
 class MailJob:
     job_id: str
+    account_key: str
     mailbox: str
     uidvalidity: int
     uid: int

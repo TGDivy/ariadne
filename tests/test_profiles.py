@@ -142,6 +142,8 @@ def test_telegram_profile_is_complete_and_uses_dynamic_settings(
     assert profile.writable_roots == (Path.home(),)
     assert "github.com" in profile.network_domains
     assert "imap.mail.me.com" in profile.network_domains
+    assert "outlook.office365.com" in profile.network_domains
+    assert "login.microsoftonline.com" in profile.network_domains
     assert "*.icloud.com" in profile.network_domains
     assert profile.allow_local_binding is True
     assert profile.enabled_tools == (
@@ -288,6 +290,7 @@ def test_mail_profile_has_independent_settings_and_mail_authority(
         ).enabled_tools
     )
     assert "ARIADNE_MAIL_JOB_ID" in profile.mcp_environment_names
+    assert "ARIADNE_MAIL_ACCOUNT" in profile.mcp_environment_names
     assert "mail routing selects a message for judgement" in profile.base_instructions
     assert "record_current_mail_decision" in profile.base_instructions
     assert "native commentary and final are invisible" in profile.base_instructions

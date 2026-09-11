@@ -316,9 +316,14 @@ class Telemetry:
             },
         )
 
-    def background_job(self, *, source: str, status: TurnStatus) -> None:
+    def background_job(
+        self, *, source: str, status: TurnStatus, account: str | None = None
+    ) -> None:
         """Record one durable background job outcome without private details."""
-        self._background_jobs.add(1, {"source": source, "status": status})
+        attributes = {"source": source, "status": status}
+        if account is not None:
+            attributes["account"] = account
+        self._background_jobs.add(1, attributes)
 
     def shutdown(self) -> None:
         """Flush owned providers. Export failures are logged by the OTel SDK."""

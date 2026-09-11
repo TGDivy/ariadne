@@ -28,7 +28,13 @@ from imapclient.exceptions import (  # type: ignore[import-untyped]
 from pydantic import ValidationError
 
 from .calendar import CalendarConflict, CalendarError, ICloudCalendar
-from .config import Settings, config_path, load_settings, settings_payload
+from .config import (
+    MailAccountSettings,
+    Settings,
+    config_path,
+    load_settings,
+    settings_payload,
+)
 from .health import (
     IthacaAuthenticationError,
     IthacaClient,
@@ -40,7 +46,18 @@ from .health import (
     WorkoutActivityType,
 )
 from .health.presentation import HealthQueries
-from .mail import IMAP_HOST, MailReader
+from .mail import (
+    IMAP_HOST,
+    DeviceAuthorization,
+    MailAccountRegistry,
+    MailAuthenticationError,
+    MailReader,
+    MailUnavailableError,
+    MultiAccountMailReader,
+    OutlookAuthorizationRequired,
+    OutlookOAuth,
+    connect_account,
+)
 from .redaction import redact_sensitive_text
 
 EXIT_INTERNAL = 1
@@ -61,6 +78,7 @@ class MailCommands(Protocol):
         since: str | None = None,
         before: str | None = None,
         limit: int = 20,
+        account: str | None = None,
     ) -> dict[str, Any]: ...
 
     def read(self, value: str) -> dict[str, Any]: ...
@@ -188,6 +206,8 @@ class CliBackend(Protocol):
 
     def mail(self) -> AbstractContextManager[MailCommands]: ...
 
+    def authorize_outlook(self) -> dict[str, object]: ...
+
     def calendar(self) -> AbstractContextManager[CalendarCommands]: ...
 
     def health(self) -> AbstractContextManager[HealthCommands]: ...
@@ -270,30 +290,98 @@ class ProductionBackend:
     @contextmanager
     def mail(self) -> Iterator[MailCommands]:
         settings = self._load()
-        if not settings.mail.enabled or settings.icloud_credentials is None:
+        configured = settings.mail_settings
+        if configured is None:
             raise CliError(
                 "mail_not_configured",
                 "Mail is not enabled in Ariadne's private configuration.",
                 EXIT_USAGE,
             )
-        username, password = settings.icloud_credentials
+        if (
+            len(configured.accounts) == 1
+            and configured.accounts[0].provider == "icloud"
+        ):
+            account = configured.accounts[0]
+            try:
+                with IMAPClient(IMAP_HOST, port=993, ssl=True, timeout=30) as client:
+                    assert account.password is not None
+                    client.login(account.address, account.password.get_secret_value())
+                    reader = (
+                        MailReader(client)
+                        if account.label == "iCloud"
+                        else MailReader(client, account.key, account.label)
+                    )
+                    yield reader
+            except LoginError as error:
+                raise CliError(
+                    "mail_authentication_failed",
+                    "iCloud rejected the configured Mail credentials.",
+                    EXIT_AUTH,
+                ) from error
+            except (IMAPClientError, RuntimeError) as error:
+                raise CliError(
+                    "mail_unavailable",
+                    "iCloud Mail could not complete that operation.",
+                    EXIT_TRANSIENT,
+                    retryable=True,
+                ) from error
+            return
+
+        @contextmanager
+        def connector(account: MailAccountSettings) -> Iterator[IMAPClient]:
+            with connect_account(account, client_factory=IMAPClient) as client:
+                yield client
+
+        registry = MailAccountRegistry(configured.accounts, connector=connector)
         try:
-            with IMAPClient(IMAP_HOST, port=993, ssl=True, timeout=30) as client:
-                client.login(username, password.get_secret_value())
-                yield MailReader(client)
-        except LoginError as error:
+            yield MultiAccountMailReader(registry)
+        except MailAuthenticationError as error:
             raise CliError(
                 "mail_authentication_failed",
-                "iCloud rejected the configured Mail credentials.",
+                str(error),
                 EXIT_AUTH,
             ) from error
-        except (IMAPClientError, RuntimeError) as error:
+        except (MailUnavailableError, IMAPClientError, RuntimeError) as error:
             raise CliError(
                 "mail_unavailable",
-                "iCloud Mail could not complete that operation.",
+                "Mail could not complete that operation.",
                 EXIT_TRANSIENT,
                 retryable=True,
             ) from error
+
+    def authorize_outlook(self) -> dict[str, object]:
+        settings = self._load()
+        account = next(
+            (item for item in settings.mail_accounts if item.provider == "outlook"),
+            None,
+        )
+        if account is None:
+            raise CliError(
+                "outlook_not_configured",
+                "Outlook Mail is not enabled in Ariadne's private configuration.",
+                EXIT_USAGE,
+            )
+
+        def notify(details: DeviceAuthorization) -> None:
+            print(
+                f"Open {details.verification_uri} on any device and enter "
+                f"code {details.user_code}. Waiting for authorization…",
+                file=sys.stderr,
+                flush=True,
+            )
+
+        try:
+            OutlookOAuth(account).authorize(notify)
+        except RuntimeError as error:
+            raise CliError(
+                "outlook_authorization_failed", str(error), EXIT_AUTH
+            ) from error
+        return {
+            "status": "authorized",
+            "account_key": account.key,
+            "account_label": account.label,
+            "token_cache": str(account.token_cache),
+        }
 
     @contextmanager
     def calendar(self) -> Iterator[CalendarCommands]:
@@ -348,12 +436,20 @@ def _config_show(_: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
 
 def _mail_search(args: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
     with backend.mail() as mail:
-        return mail.search(
-            args.query,
-            since=args.since,
-            before=args.before,
-            limit=args.limit,
-        )
+        arguments: dict[str, Any] = {
+            "since": args.since,
+            "before": args.before,
+            "limit": args.limit,
+        }
+        if args.account is not None:
+            arguments["account"] = args.account
+        return mail.search(args.query, **arguments)
+
+
+def _mail_authorize_outlook(
+    _: argparse.Namespace, backend: CliBackend
+) -> dict[str, object]:
+    return backend.authorize_outlook()
 
 
 def _mail_read(args: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
@@ -740,7 +836,7 @@ def build_parser() -> AriadneArgumentParser:
     )
     config_show.set_defaults(_handler=_config_show)
 
-    mail = commands.add_parser("mail", help="search and read iCloud Mail")
+    mail = commands.add_parser("mail", help="search and read enabled Mail accounts")
     mail_actions = mail.add_subparsers(dest="mail_action", required=True)
     mail_search = mail_actions.add_parser(
         "search",
@@ -752,6 +848,10 @@ def build_parser() -> AriadneArgumentParser:
     mail_search.add_argument("query", help="words, person, company, or topic")
     mail_search.add_argument("--since", help="inclusive ISO date (YYYY-MM-DD)")
     mail_search.add_argument("--before", help="exclusive ISO date (YYYY-MM-DD)")
+    mail_search.add_argument(
+        "--account",
+        help="stable account key to search instead of all enabled accounts",
+    )
     mail_search.add_argument(
         "--limit",
         type=_bounded_integer(1, 100),
@@ -774,6 +874,15 @@ def build_parser() -> AriadneArgumentParser:
     )
     mail_thread.add_argument("id", help="opaque id returned by mail search")
     mail_thread.set_defaults(_handler=_mail_thread)
+    mail_authorize = mail_actions.add_parser(
+        "authorize-outlook",
+        help="authorize personal Outlook.com Mail using a browser on any device",
+        description=(
+            "Print Microsoft's device URL and code, then save a refreshable token "
+            "cache privately on this Ariadne host."
+        ),
+    )
+    mail_authorize.set_defaults(_handler=_mail_authorize_outlook)
 
     calendar = commands.add_parser("calendar", help="read and change iCloud Calendar")
     calendar_actions = calendar.add_subparsers(dest="calendar_action", required=True)
@@ -1076,6 +1185,10 @@ def build_parser() -> AriadneArgumentParser:
 def _as_cli_error(error: Exception) -> CliError:
     if isinstance(error, CliError):
         return error
+    if isinstance(error, OutlookAuthorizationRequired | MailAuthenticationError):
+        return CliError("mail_authentication_failed", str(error), EXIT_AUTH)
+    if isinstance(error, MailUnavailableError):
+        return CliError("mail_unavailable", str(error), EXIT_TRANSIENT, retryable=True)
     if isinstance(error, IthacaAuthenticationError):
         return CliError(
             "health_authentication_failed",

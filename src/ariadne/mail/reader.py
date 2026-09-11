@@ -1,11 +1,13 @@
-"""Direct, read-only iCloud Mail access for ordinary Iris turns."""
+"""Direct, read-only provider-neutral Mail access for ordinary Iris turns."""
 
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import logging
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from email import policy
@@ -16,6 +18,8 @@ from html.parser import HTMLParser
 from typing import Any
 
 from imapclient import IMAPClient  # type: ignore[import-untyped]
+
+from .accounts import MailAccountRegistry
 
 LOGGER = logging.getLogger(__name__)
 PREVIEW_BYTES = 16_384
@@ -41,6 +45,7 @@ class MailReference:
     folder: str
     uidvalidity: int
     uid: int
+    account_key: str = "icloud"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +58,13 @@ class Candidate:
 def encode_mail_id(reference: MailReference) -> str:
     """Encode an IMAP identity without keeping local state."""
     raw = json.dumps(
-        [reference.folder, reference.uidvalidity, reference.uid],
+        [
+            1,
+            reference.account_key,
+            reference.folder,
+            reference.uidvalidity,
+            reference.uid,
+        ],
         ensure_ascii=False,
         separators=(",", ":"),
     ).encode()
@@ -66,18 +77,39 @@ def decode_mail_id(value: str) -> MailReference:
         if not value.startswith("mail:"):
             raise ValueError
         token = value.removeprefix("mail:")
-        folder, validity, uid = json.loads(
-            base64.urlsafe_b64decode(token + "=" * (-len(token) % 4))
-        )
+        payload = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+        if isinstance(payload, list) and len(payload) == 3:
+            account_key = "icloud"
+            folder, validity, uid = payload
+        elif (
+            isinstance(payload, list)
+            and len(payload) == 5
+            and isinstance(payload[0], int)
+            and not isinstance(payload[0], bool)
+            and payload[0] == 1
+        ):
+            _version, account_key, folder, validity, uid = payload
+        else:
+            raise ValueError
+        if not isinstance(account_key, str) or not re.fullmatch(
+            r"[a-z][a-z0-9_-]{0,31}", account_key
+        ):
+            raise ValueError
         if not isinstance(folder, str) or not folder:
             raise ValueError
-        if not isinstance(validity, int) or validity <= 0:
+        if not isinstance(validity, int) or isinstance(validity, bool) or validity <= 0:
             raise ValueError
-        if not isinstance(uid, int) or uid <= 0:
+        if not isinstance(uid, int) or isinstance(uid, bool) or uid <= 0:
             raise ValueError
-    except (ValueError, TypeError, json.JSONDecodeError) as error:
+    except (
+        ValueError,
+        TypeError,
+        UnicodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ) as error:
         raise ValueError("That mail id is not valid. Search mail again.") from error
-    return MailReference(folder, validity, uid)
+    return MailReference(folder, validity, uid, account_key)
 
 
 def _text(value: object) -> str:
@@ -118,7 +150,9 @@ def _timestamp(message: EmailMessage) -> str | None:
         return None
 
 
-def _payload(candidate: Candidate, body_limit: int) -> dict[str, Any]:
+def _payload(
+    candidate: Candidate, body_limit: int, *, account_label: str
+) -> dict[str, Any]:
     message = candidate.message
     body, truncated = _body(message, body_limit)
     attachments = [
@@ -131,6 +165,8 @@ def _payload(candidate: Candidate, body_limit: int) -> dict[str, Any]:
     ]
     return {
         "id": encode_mail_id(candidate.reference),
+        "account_key": candidate.reference.account_key,
+        "account_label": account_label,
         "folder": candidate.reference.folder,
         "date": _text(message.get("Date")),
         "timestamp": _timestamp(message),
@@ -218,8 +254,15 @@ def _sort_key(candidate: Candidate) -> tuple[float, int]:
 class MailReader:
     """Search and refetch mail using read-only selects and BODY.PEEK."""
 
-    def __init__(self, client: IMAPClient) -> None:
+    def __init__(
+        self,
+        client: IMAPClient,
+        account_key: str = "icloud",
+        account_label: str = "iCloud",
+    ) -> None:
         self.client = client
+        self.account_key = account_key
+        self.account_label = account_label
 
     def _folders(self) -> tuple[str, ...]:
         folders = []
@@ -255,7 +298,7 @@ class MailReader:
                 message = BytesParser(policy=policy.default).parsebytes(raw)
                 result.append(
                     Candidate(
-                        MailReference(folder, validity, int(uid)),
+                        MailReference(folder, validity, int(uid), self.account_key),
                         message,
                         int(uid) in server_matches,
                     )
@@ -269,7 +312,10 @@ class MailReader:
         since: str | None = None,
         before: str | None = None,
         limit: int = 20,
+        account: str | None = None,
     ) -> dict[str, Any]:
+        if account is not None and account != self.account_key:
+            raise ValueError(f"Mail account {account!r} is not available.")
         query = query.strip()
         if not query:
             raise ValueError("A mail search needs a query.")
@@ -287,6 +333,7 @@ class MailReader:
 
         candidates: list[Candidate] = []
         searched = 0
+        failed_folders = 0
         terms = tuple(
             dict.fromkeys((query, *[t for t in _tokens(query) if len(t) > 2]))
         )
@@ -305,6 +352,7 @@ class MailReader:
                 )
                 searched += 1
             except Exception:
+                failed_folders += 1
                 LOGGER.warning("Could not search mail folder %s", folder, exc_info=True)
         if not searched:
             raise RuntimeError("No mail folders could be searched.")
@@ -317,17 +365,36 @@ class MailReader:
         ranked.sort(reverse=True, key=lambda item: item[:2])
         results = []
         for score, _key, candidate in ranked[:limit]:
-            payload = _payload(candidate, 700)
+            payload = _payload(candidate, 700, account_label=self.account_label)
             payload["preview"] = payload.pop("body")
             payload.pop("body_truncated")
             payload.pop("in_reply_to")
             payload.pop("references")
             payload["relevance"] = score
             results.append(payload)
-        return {"query": query, "results": results, "searched_folders": searched}
+        return {
+            "query": query,
+            "results": results,
+            "searched_folders": searched,
+            "failed_folders": failed_folders,
+            "searched_accounts": [
+                {
+                    "key": self.account_key,
+                    "label": self.account_label,
+                    "searched_folders": searched,
+                    "failed_folders": failed_folders,
+                }
+            ],
+            "failed_accounts": [],
+            "partial": bool(failed_folders),
+        }
 
     def _read_candidate(self, value: str) -> Candidate:
         reference = decode_mail_id(value)
+        if reference.account_key != self.account_key:
+            raise ValueError(
+                "That mail id belongs to a different account. Search mail again."
+            )
         selected = self.client.select_folder(reference.folder, readonly=True)
         if _validity(selected) != reference.uidvalidity:
             raise ValueError("That mail id is stale. Search mail again.")
@@ -343,11 +410,13 @@ class MailReader:
         return candidates[0]
 
     def read(self, value: str) -> dict[str, Any]:
-        return _payload(self._read_candidate(value), 50_000)
+        return _payload(
+            self._read_candidate(value), 50_000, account_label=self.account_label
+        )
 
     def read_thread(self, value: str) -> dict[str, Any]:
         target = self._read_candidate(value)
-        target_payload = _payload(target, 1)
+        target_payload = _payload(target, 1, account_label=self.account_label)
         ids = _message_ids(
             target_payload["message_id"],
             target_payload["in_reply_to"],
@@ -390,7 +459,122 @@ class MailReader:
                 ordered.sort(key=_sort_key)
         return {
             "thread_id": value,
-            "messages": [_payload(candidate, 12_000) for candidate in ordered],
+            "account_key": self.account_key,
+            "account_label": self.account_label,
+            "messages": [
+                _payload(candidate, 12_000, account_label=self.account_label)
+                for candidate in ordered
+            ],
             "total_messages": total,
             "thread_truncated": total > THREAD_LIMIT,
         }
+
+
+def _result_sort_key(result: Mapping[str, Any]) -> tuple[int, float, str]:
+    relevance = result.get("relevance")
+    timestamp = result.get("timestamp")
+    try:
+        seconds = (
+            datetime.fromisoformat(timestamp).timestamp()
+            if isinstance(timestamp, str) and timestamp
+            else 0.0
+        )
+    except ValueError:
+        seconds = 0.0
+    return (
+        relevance if isinstance(relevance, int) else 0,
+        seconds,
+        str(result.get("id") or ""),
+    )
+
+
+class MultiAccountMailReader:
+    """Dispatch opaque IDs and merge bounded search across enabled accounts."""
+
+    def __init__(self, registry: MailAccountRegistry) -> None:
+        self.registry = registry
+
+    def search(
+        self,
+        query: str,
+        *,
+        since: str | None = None,
+        before: str | None = None,
+        limit: int = 20,
+        account: str | None = None,
+    ) -> dict[str, Any]:
+        selected = (
+            (self.registry.get(account),)
+            if account is not None
+            else self.registry.accounts
+        )
+        results: list[dict[str, Any]] = []
+        searched_accounts: list[dict[str, Any]] = []
+        failed_accounts: list[dict[str, str]] = []
+        searched_folders = 0
+        degraded = False
+        for configured in selected:
+            try:
+                with self.registry.connect(configured.key) as client:
+                    result = MailReader(
+                        client, configured.key, configured.label
+                    ).search(
+                        query,
+                        since=since,
+                        before=before,
+                        limit=limit,
+                    )
+                folder_count = int(result.get("searched_folders", 0))
+                failed_folder_count = int(result.get("failed_folders", 0))
+                degraded = degraded or bool(result.get("partial"))
+                searched_folders += folder_count
+                searched_accounts.append(
+                    {
+                        "key": configured.key,
+                        "label": configured.label,
+                        "searched_folders": folder_count,
+                        "failed_folders": failed_folder_count,
+                    }
+                )
+                results.extend(result.get("results", []))
+            except ValueError:
+                raise
+            except Exception as error:
+                LOGGER.warning(
+                    "Mail search failed account=%s error_type=%s",
+                    configured.key,
+                    type(error).__name__,
+                )
+                failed_accounts.append(
+                    {
+                        "key": configured.key,
+                        "label": configured.label,
+                        "error": "unavailable",
+                    }
+                )
+        if not searched_accounts:
+            raise RuntimeError("No enabled mail account could be searched.")
+        results.sort(key=_result_sort_key, reverse=True)
+        return {
+            "query": query.strip(),
+            "results": results[:limit],
+            "searched_folders": searched_folders,
+            "searched_accounts": searched_accounts,
+            "failed_accounts": failed_accounts,
+            "partial": bool(failed_accounts) or degraded,
+        }
+
+    def _account_for(self, value: str) -> tuple[str, str]:
+        reference = decode_mail_id(value)
+        account = self.registry.get(reference.account_key)
+        return account.key, account.label
+
+    def read(self, value: str) -> dict[str, Any]:
+        account_key, account_label = self._account_for(value)
+        with self.registry.connect(account_key) as client:
+            return MailReader(client, account_key, account_label).read(value)
+
+    def read_thread(self, value: str) -> dict[str, Any]:
+        account_key, account_label = self._account_for(value)
+        with self.registry.connect(account_key) as client:
+            return MailReader(client, account_key, account_label).read_thread(value)

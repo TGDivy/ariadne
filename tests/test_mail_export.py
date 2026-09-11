@@ -45,6 +45,8 @@ def test_parse_message_keeps_body_and_attachment_metadata_without_binary_attachm
     parsed = parse_message(make_message(), b"12", "INBOX")
 
     assert parsed["uid"] == "12"
+    assert parsed["account_key"] == "icloud"
+    assert parsed["account_label"] == "iCloud"
     assert parsed["from"] == [{"name": "Recruiter", "address": "recruiter@example.com"}]
     assert "availability" in parsed["body_text"]
     assert parsed["attachments"] == [

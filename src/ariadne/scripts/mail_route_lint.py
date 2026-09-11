@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from imapclient import IMAPClient  # type: ignore[import-untyped]
-
 from ariadne.config import load_settings
-from ariadne.mail import IMAP_HOST, RouteLintReport, lint_mail_routes, load_routes
+from ariadne.mail import (
+    RouteLintReport,
+    connect_account,
+    lint_mail_routes,
+    load_routes,
+    select_account,
+)
 from ariadne.scripts.progress import ProgressBar
 
 
@@ -45,6 +49,9 @@ def render_report(report: RouteLintReport) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path)
+    parser.add_argument(
+        "--account", help="stable Mail account key (required when multiple are enabled)"
+    )
     parser.add_argument("--folder", default="INBOX")
     parser.add_argument("--batch-size", type=int, default=100)
     args = parser.parse_args()
@@ -54,11 +61,14 @@ def main() -> None:
     configured = load_settings(args.config).mail_settings
     if configured is None:
         raise RuntimeError("Mail must be enabled to lint routes.")
+    account = select_account(
+        configured.accounts,
+        args.account,
+        require_explicit_when_multiple=True,
+    )
     routes = load_routes(configured.routes)
 
-    client = IMAPClient(IMAP_HOST, port=993, ssl=True)
-    try:
-        client.login(configured.username, configured.app_password.get_secret_value())
+    with connect_account(account, timeout=None) as client:
         with ProgressBar(f"Linting routes in {args.folder!r}") as progress:
             report = lint_mail_routes(
                 client,
@@ -68,11 +78,6 @@ def main() -> None:
                 progress=progress.update,
             )
         print(render_report(report))
-    finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

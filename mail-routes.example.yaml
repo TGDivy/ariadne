@@ -14,6 +14,8 @@ defaults:
   unmatched_keep_in_inbox: true
 
 # Rules are ordered; the first match wins. Match values are case-insensitive.
+# When both accounts are enabled, a `to` predicate can distinguish their recipient
+# addresses while preserving this one shared route policy.
 # Actions are "move", "iris", or "iris_then_move". For the last action, Iris can
 # flag or choose another folder; keeping in INBOX falls back to this route's folder.
 rules:

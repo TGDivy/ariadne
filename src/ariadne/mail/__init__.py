@@ -1,5 +1,19 @@
-"""iCloud Mail event source and deterministic routing."""
+"""Provider-neutral Mail event sources and deterministic routing."""
 
+from .accounts import (
+    OUTLOOK_IMAP_SCOPE,
+    DeviceAuthorization,
+    MailAccountError,
+    MailAccountRegistry,
+    MailAuthenticationError,
+    MailUnavailableError,
+    OutlookAuthorizationRequired,
+    OutlookOAuth,
+    OutlookTokenCache,
+    authenticate_client,
+    connect_account,
+    select_account,
+)
 from .models import (
     BackfillSummary,
     Importance,
@@ -12,7 +26,7 @@ from .models import (
     RuleLint,
     SuggestedAction,
 )
-from .reader import MailReader
+from .reader import MailReader, MultiAccountMailReader, decode_mail_id, encode_mail_id
 from .runtime import (
     FULL_QUERY,
     HEADER_QUERY,
@@ -35,14 +49,24 @@ __all__ = [
     "FULL_QUERY",
     "HEADER_QUERY",
     "IMAP_HOST",
+    "OUTLOOK_IMAP_SCOPE",
     "BackfillSummary",
     "Importance",
     "MailLoop",
+    "MailAccountError",
+    "MailAccountRegistry",
+    "MailAuthenticationError",
     "MailMetadata",
     "MailProcessor",
     "MailRoute",
     "MailRoutes",
     "MailReader",
+    "MailUnavailableError",
+    "MultiAccountMailReader",
+    "OutlookAuthorizationRequired",
+    "OutlookOAuth",
+    "OutlookTokenCache",
+    "DeviceAuthorization",
     "MailState",
     "RestoreSummary",
     "RouteLintReport",
@@ -50,12 +74,17 @@ __all__ = [
     "RuleLint",
     "SuggestedAction",
     "backfill_inbox",
+    "authenticate_client",
     "cheap_triage",
+    "connect_account",
+    "decode_mail_id",
     "ensure_folders",
+    "encode_mail_id",
     "load_routes",
     "lint_mail_routes",
     "move_messages",
     "parse_metadata",
     "record_current_mail_decision",
     "restore_folder_to_inbox",
+    "select_account",
 ]

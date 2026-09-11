@@ -1,4 +1,4 @@
-"""iCloud IMAP routing, durable mail jobs, and ordinary Iris mail turns."""
+"""IMAP routing, account-qualified durable jobs, and ordinary Iris mail turns."""
 
 from __future__ import annotations
 
@@ -23,11 +23,12 @@ from pydantic import ValidationError
 
 from ..codex import CodexConversation, CodexTurnSettings
 from ..codex.resolver import resolve_profile
-from ..config import MailSettings
+from ..config import MailAccountSettings, MailSettings
 from ..profile import MAIL_PROFILE
 from ..prompts.activations import build_mail_turn_prompt
 from ..prompts.mail_evidence import render_mail_evidence
 from ..telemetry import Telemetry
+from .accounts import authenticate_client
 from .models import (
     BackfillSummary,
     Importance,
@@ -156,10 +157,19 @@ class MailState:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as database:
             database.execute("PRAGMA journal_mode=WAL")
+            database.execute("BEGIN IMMEDIATE")
+            jobs_exists = database.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mail_jobs'"
+            ).fetchone()
+            if jobs_exists is not None and "account_key" not in {
+                row["name"] for row in database.execute("PRAGMA table_info(mail_jobs)")
+            }:
+                database.execute("ALTER TABLE mail_jobs RENAME TO mail_jobs_legacy")
             database.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mail_jobs (
                     job_id TEXT PRIMARY KEY,
+                    account_key TEXT NOT NULL,
                     mailbox TEXT NOT NULL,
                     uidvalidity INTEGER NOT NULL,
                     uid INTEGER NOT NULL,
@@ -177,23 +187,76 @@ class MailState:
                     error TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
-                    UNIQUE(mailbox, uidvalidity, uid)
+                    UNIQUE(account_key, mailbox, uidvalidity, uid)
                 )
                 """
             )
+            legacy_jobs = database.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='mail_jobs_legacy'"
+            ).fetchone()
+            if legacy_jobs is not None:
+                database.execute(
+                    """
+                    INSERT INTO mail_jobs (
+                        job_id, account_key, mailbox, uidvalidity, uid, message_id,
+                        status, attempts, route_id, classification, importance,
+                        suggested_action, draft_reply, action, destination, error,
+                        created_at, updated_at
+                    )
+                    SELECT
+                        job_id, 'icloud', mailbox, uidvalidity, uid, message_id,
+                        status, attempts, route_id, classification, importance,
+                        suggested_action, draft_reply, action, destination, error,
+                        created_at, updated_at
+                    FROM mail_jobs_legacy
+                    """
+                )
+                database.execute("DROP TABLE mail_jobs_legacy")
+
+            checkpoints_exists = database.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='mail_checkpoints'"
+            ).fetchone()
+            if checkpoints_exists is not None and "account_key" not in {
+                row["name"]
+                for row in database.execute("PRAGMA table_info(mail_checkpoints)")
+            }:
+                database.execute(
+                    "ALTER TABLE mail_checkpoints RENAME TO mail_checkpoints_legacy"
+                )
             database.execute(
                 """
                 CREATE TABLE IF NOT EXISTS mail_checkpoints (
-                    mailbox TEXT PRIMARY KEY,
+                    account_key TEXT NOT NULL,
+                    mailbox TEXT NOT NULL,
                     uidvalidity INTEGER NOT NULL,
                     last_seen_uid INTEGER NOT NULL,
-                    updated_at REAL NOT NULL
+                    updated_at REAL NOT NULL,
+                    PRIMARY KEY(account_key, mailbox)
                 )
                 """
             )
+            legacy_checkpoints = database.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type='table' AND name='mail_checkpoints_legacy'"
+            ).fetchone()
+            if legacy_checkpoints is not None:
+                database.execute(
+                    """
+                    INSERT INTO mail_checkpoints (
+                        account_key, mailbox, uidvalidity, last_seen_uid, updated_at
+                    )
+                    SELECT
+                        'icloud', mailbox, uidvalidity, last_seen_uid, updated_at
+                    FROM mail_checkpoints_legacy
+                    """
+                )
+                database.execute("DROP TABLE mail_checkpoints_legacy")
             database.execute(
                 "UPDATE mail_jobs SET status = 'pending' WHERE status = 'running'"
             )
+            database.execute("PRAGMA user_version=2")
 
     def _connect(self) -> sqlite3.Connection:
         database = sqlite3.connect(self.path, timeout=10)
@@ -201,21 +264,33 @@ class MailState:
         return database
 
     @staticmethod
-    def job_id(mailbox: str, uidvalidity: int, uid: int) -> str:
-        return f"{mailbox}:{uidvalidity}:{uid}"
+    def job_id(
+        mailbox: str, uidvalidity: int, uid: int, account_key: str = "icloud"
+    ) -> str:
+        legacy = f"{mailbox}:{uidvalidity}:{uid}"
+        return legacy if account_key == "icloud" else f"{account_key}:{legacy}"
 
-    def discover(self, mailbox: str, uidvalidity: int, uids: Iterable[int]) -> None:
+    def discover(
+        self,
+        mailbox: str,
+        uidvalidity: int,
+        uids: Iterable[int],
+        *,
+        account_key: str = "icloud",
+    ) -> None:
         now = time.time()
         with self._connect() as database:
             database.executemany(
                 """
                 INSERT OR IGNORE INTO mail_jobs
-                    (job_id, mailbox, uidvalidity, uid, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                    (job_id, account_key, mailbox, uidvalidity, uid, status,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
                 """,
                 (
                     (
-                        self.job_id(mailbox, uidvalidity, uid),
+                        self.job_id(mailbox, uidvalidity, uid, account_key),
+                        account_key,
                         mailbox,
                         uidvalidity,
                         uid,
@@ -229,10 +304,10 @@ class MailState:
                 """
                 UPDATE mail_jobs SET status = 'failed',
                     error = 'Mailbox UIDVALIDITY changed', updated_at = ?
-                WHERE mailbox = ? AND uidvalidity != ?
+                WHERE account_key = ? AND mailbox = ? AND uidvalidity != ?
                     AND status IN ('pending', 'running', 'failed')
                 """,
-                (now, mailbox, uidvalidity),
+                (now, account_key, mailbox, uidvalidity),
             )
 
     def catch_up(
@@ -242,6 +317,7 @@ class MailState:
         uids: Iterable[int],
         *,
         initial_baseline_uid: int | None = None,
+        account_key: str = "icloud",
     ) -> tuple[int, ...]:
         """Baseline a new mailbox, then durably enqueue UIDs seen afterward."""
         current_uids = tuple(sorted(uids))
@@ -249,7 +325,8 @@ class MailState:
         now = time.time()
         with self._connect() as database:
             checkpoint = database.execute(
-                "SELECT * FROM mail_checkpoints WHERE mailbox = ?", (mailbox,)
+                "SELECT * FROM mail_checkpoints WHERE account_key = ? AND mailbox = ?",
+                (account_key, mailbox),
             ).fetchone()
             checkpoint_changed = (
                 checkpoint is None or checkpoint["uidvalidity"] != uidvalidity
@@ -263,24 +340,24 @@ class MailState:
                 database.execute(
                     """
                     INSERT INTO mail_checkpoints
-                        (mailbox, uidvalidity, last_seen_uid, updated_at)
-                    VALUES (?, ?, ?, ?)
-                    ON CONFLICT(mailbox) DO UPDATE SET
+                        (account_key, mailbox, uidvalidity, last_seen_uid, updated_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(account_key, mailbox) DO UPDATE SET
                         uidvalidity = excluded.uidvalidity,
                         last_seen_uid = excluded.last_seen_uid,
                         updated_at = excluded.updated_at
                     """,
-                    (mailbox, uidvalidity, baseline_uid, now),
+                    (account_key, mailbox, uidvalidity, baseline_uid, now),
                 )
                 if checkpoint is not None:
                     database.execute(
                         """
                         UPDATE mail_jobs SET status = 'failed',
                             error = 'Mailbox UIDVALIDITY changed', updated_at = ?
-                        WHERE mailbox = ? AND uidvalidity != ?
+                        WHERE account_key = ? AND mailbox = ? AND uidvalidity != ?
                             AND status IN ('pending', 'running', 'failed')
                         """,
-                        (now, mailbox, uidvalidity),
+                        (now, account_key, mailbox, uidvalidity),
                     )
                 else:
                     database.execute(
@@ -288,10 +365,10 @@ class MailState:
                         UPDATE mail_jobs SET status = 'done',
                             error = 'Superseded by initial mailbox baseline',
                             updated_at = ?
-                        WHERE mailbox = ?
+                        WHERE account_key = ? AND mailbox = ?
                             AND status IN ('pending', 'running', 'failed')
                         """,
-                        (now, mailbox),
+                        (now, account_key, mailbox),
                     )
                 last_seen_uid = baseline_uid
             else:
@@ -300,12 +377,14 @@ class MailState:
             database.executemany(
                 """
                 INSERT OR IGNORE INTO mail_jobs
-                    (job_id, mailbox, uidvalidity, uid, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                    (job_id, account_key, mailbox, uidvalidity, uid, status,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
                 """,
                 (
                     (
-                        self.job_id(mailbox, uidvalidity, uid),
+                        self.job_id(mailbox, uidvalidity, uid, account_key),
+                        account_key,
                         mailbox,
                         uidvalidity,
                         uid,
@@ -318,22 +397,24 @@ class MailState:
             database.execute(
                 """
                 UPDATE mail_checkpoints SET last_seen_uid = ?, updated_at = ?
-                WHERE mailbox = ?
+                WHERE account_key = ? AND mailbox = ?
                 """,
-                (max(last_seen_uid, newest_uid), now, mailbox),
+                (max(last_seen_uid, newest_uid), now, account_key, mailbox),
             )
         return new_uids
 
-    def retryable(self, mailbox: str, uidvalidity: int) -> tuple[MailJob, ...]:
+    def retryable(
+        self, mailbox: str, uidvalidity: int, *, account_key: str = "icloud"
+    ) -> tuple[MailJob, ...]:
         with self._connect() as database:
             rows = database.execute(
                 """
                 SELECT * FROM mail_jobs
-                WHERE mailbox = ? AND uidvalidity = ?
+                WHERE account_key = ? AND mailbox = ? AND uidvalidity = ?
                     AND status IN ('pending', 'failed')
                 ORDER BY uid
                 """,
-                (mailbox, uidvalidity),
+                (account_key, mailbox, uidvalidity),
             ).fetchall()
         return tuple(_job(row) for row in rows)
 
@@ -367,9 +448,12 @@ class MailState:
                 """
                 SELECT 1 FROM mail_jobs
                 WHERE job_id != ? AND message_id = ? AND status = 'done'
+                    AND account_key = (
+                        SELECT account_key FROM mail_jobs WHERE job_id = ?
+                    )
                 LIMIT 1
                 """,
-                (job_id, message_id),
+                (job_id, message_id, job_id),
             ).fetchone()
         return duplicate is not None
 
@@ -435,6 +519,8 @@ class MailState:
         importance: Importance,
         suggested_action: SuggestedAction,
         draft_reply: str | None,
+        *,
+        account_key: str = "icloud",
     ) -> None:
         if not classification.strip():
             raise ValueError("classification must not be empty")
@@ -442,9 +528,13 @@ class MailState:
             draft_reply = draft_reply.strip() or None
         with self._connect() as database:
             row = database.execute(
-                "SELECT status FROM mail_jobs WHERE job_id = ?", (job_id,)
+                "SELECT status, account_key FROM mail_jobs WHERE job_id = ?", (job_id,)
             ).fetchone()
-            if row is None or row["status"] != "running":
+            if (
+                row is None
+                or row["status"] != "running"
+                or row["account_key"] != account_key
+            ):
                 raise ValueError("The current mail job is not running.")
             database.execute(
                 """
@@ -492,6 +582,7 @@ class MailState:
 def _job(row: sqlite3.Row) -> MailJob:
     return MailJob(
         job_id=cast(str, row["job_id"]),
+        account_key=cast(str, row["account_key"]),
         mailbox=cast(str, row["mailbox"]),
         uidvalidity=cast(int, row["uidvalidity"]),
         uid=cast(int, row["uid"]),
@@ -521,8 +612,14 @@ def record_current_mail_decision(
     except KeyError as error:
         raise ValueError("Mail authority is unavailable in this turn.") from error
     state = MailState(state_path)
+    account_key = os.environ.get("ARIADNE_MAIL_ACCOUNT", "icloud")
     state.record_model_decision(
-        job_id, classification, importance, suggested_action, draft_reply
+        job_id,
+        classification,
+        importance,
+        suggested_action,
+        draft_reply,
+        account_key=account_key,
     )
     return {"status": "recorded", "job_id": job_id}
 
@@ -747,12 +844,17 @@ class MailProcessor:
         state: MailState,
         conversation_factory: Callable[[str], CodexConversation],
         telemetry: Telemetry | None = None,
+        *,
+        account_key: str = "icloud",
+        account_label: str = "iCloud",
     ) -> None:
         self.client = client
         self.routes = routes
         self.state = state
         self.conversation_factory = conversation_factory
         self.telemetry = telemetry or Telemetry()
+        self.account_key = account_key
+        self.account_label = account_label
         self.uidvalidity = 0
 
     async def reconcile(self) -> None:
@@ -769,26 +871,31 @@ class MailProcessor:
             self.uidvalidity,
             (int(uid) for uid in uids),
             initial_baseline_uid=initial_baseline_uid,
+            account_key=self.account_key,
         )
         if new_uids:
             LOGGER.info(
                 "Mail discovered mailbox=%s uidvalidity=%d count=%d first_uid=%d "
-                "last_uid=%d",
+                "last_uid=%d account=%s",
                 MAILBOX,
                 self.uidvalidity,
                 len(new_uids),
                 new_uids[0],
                 new_uids[-1],
+                self.account_key,
             )
 
     async def process_available(self) -> None:
-        jobs = self.state.retryable(MAILBOX, self.uidvalidity)
+        jobs = self.state.retryable(
+            MAILBOX, self.uidvalidity, account_key=self.account_key
+        )
         if jobs:
             LOGGER.info(
-                "Mail queue ready mailbox=%s jobs=%d retries=%d",
+                "Mail queue ready mailbox=%s jobs=%d retries=%d account=%s",
                 MAILBOX,
                 len(jobs),
                 sum(job.attempts > 0 for job in jobs),
+                self.account_key,
             )
         for job in jobs:
             await self._process(job)
@@ -798,16 +905,19 @@ class MailProcessor:
         return _response_value(response, uid, b"BODY[")
 
     async def _process(self, job: MailJob) -> None:
+        if job.account_key != self.account_key:
+            raise RuntimeError("A mail job cannot cross its source account boundary.")
         started_at = time.monotonic()
         self.state.start(job.job_id)
         try:
             current = self.state.get(job.job_id)
             assert current is not None
             LOGGER.info(
-                "Mail job started job_id=%s uid=%d attempt=%d",
+                "Mail job started job_id=%s uid=%d attempt=%d account=%s",
                 job.job_id,
                 job.uid,
                 current.attempts,
+                self.account_key,
             )
             pending_iris_then_move = current.action == "iris_then_move"
             if current.action is not None and not pending_iris_then_move:
@@ -913,12 +1023,13 @@ class MailProcessor:
                 raise RuntimeError("Iris finished without recording a mail decision.")
             LOGGER.info(
                 "Mail decision recorded job_id=%s route=%s classification=%s "
-                "importance=%s suggested_action=%s",
+                "importance=%s suggested_action=%s account=%s",
                 job.job_id,
                 decided.route_id,
                 decided.classification,
                 decided.importance,
                 decided.suggested_action,
+                self.account_key,
             )
             if (
                 move_after_iris is not None
@@ -936,16 +1047,19 @@ class MailProcessor:
         finally:
             finished = self.state.get(job.job_id)
             LOGGER.info(
-                "Mail job finished job_id=%s status=%s action=%s duration=%.2fs",
+                "Mail job finished job_id=%s status=%s action=%s duration=%.2fs "
+                "account=%s",
                 job.job_id,
                 finished.status if finished is not None else "missing",
                 finished.action if finished is not None else None,
                 time.monotonic() - started_at,
+                self.account_key,
             )
             if finished is not None and finished.status in {"done", "failed"}:
                 self.telemetry.background_job(
                     source="mail",
                     status="success" if finished.status == "done" else "failure",
+                    account=self.account_key,
                 )
 
     async def _mail_turn(
@@ -960,6 +1074,8 @@ class MailProcessor:
         conversation = self.conversation_factory(job.job_id)
         prompt = build_mail_turn_prompt(
             render_mail_evidence(raw, metadata),
+            account_key=self.account_key,
+            account_label=self.account_label,
             route_id=route.id if route is not None else None,
             route_classification=(route.classification if route is not None else None),
             move_after_iris=move_after_iris,
@@ -967,10 +1083,11 @@ class MailProcessor:
         )
         started_at = time.monotonic()
         LOGGER.info(
-            "Mail Codex turn started job_id=%s route=%s move_after=%s",
+            "Mail Codex turn started job_id=%s route=%s move_after=%s account=%s",
             job.job_id,
             route.id if route is not None else None,
             move_after_iris,
+            self.account_key,
         )
         try:
             async for _event in conversation.stream_turn(prompt):
@@ -1010,10 +1127,11 @@ class MailProcessor:
             raise RuntimeError(f"Unsupported mailbox action: {job.action}")
         self.state.finish(job.job_id)
         LOGGER.info(
-            "Mail action applied job_id=%s action=%s destination=%s",
+            "Mail action applied job_id=%s action=%s destination=%s account=%s",
             job.job_id,
             job.action,
             job.destination,
+            self.account_key,
         )
 
 
@@ -1034,6 +1152,7 @@ class MailLoop:
         personality: Path | None = None,
         mcp_environment: Mapping[str, str] | None = None,
         network_domains: tuple[str, ...] = (),
+        account: MailAccountSettings | None = None,
         client_factory: ClientFactory | None = None,
         telemetry: Telemetry | None = None,
     ) -> None:
@@ -1046,12 +1165,17 @@ class MailLoop:
         self.mcp_environment = dict(mcp_environment or {})
         self.network_domains = network_domains
         self.telemetry = telemetry or Telemetry()
+        if account is None:
+            if not settings.accounts:
+                raise ValueError("Mail needs at least one enabled account.")
+            account = settings.accounts[0]
+        self.account = account
         self.routes = load_routes(settings.routes)
         self.state = MailState(settings.state)
         self.state.initialize()
         self._stop = asyncio.Event()
         self._client_factory = client_factory or (
-            lambda: IMAPClient(IMAP_HOST, port=993, ssl=True)
+            lambda: IMAPClient(self.account.host, port=993, ssl=True)
         )
 
     def stop(self) -> None:
@@ -1069,6 +1193,7 @@ class MailLoop:
                 mcp_environment={
                     **self.mcp_environment,
                     "ARIADNE_MAIL_JOB_ID": job_id,
+                    "ARIADNE_MAIL_ACCOUNT": self.account.key,
                     "ARIADNE_MAIL_STATE": str(self.settings.state),
                 },
                 network_domains=self.network_domains,
@@ -1082,8 +1207,12 @@ class MailLoop:
                 await self._session()
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                LOGGER.exception("Mail connection failed; reconnecting")
+            except Exception as error:
+                LOGGER.warning(
+                    "Mail connection failed account=%s error_type=%s; reconnecting",
+                    self.account.key,
+                    type(error).__name__,
+                )
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=5)
             except TimeoutError:
@@ -1092,19 +1221,30 @@ class MailLoop:
     async def _session(self) -> None:
         client = await asyncio.to_thread(self._client_factory)
         try:
-            await asyncio.to_thread(
-                client.login,
-                self.settings.username,
-                self.settings.app_password.get_secret_value(),
-            )
+            account = getattr(self, "account", None)
+            if account is None:
+                # Compatibility for callers that construct a test loop manually.
+                await asyncio.to_thread(
+                    client.login,
+                    self.settings.username,
+                    self.settings.app_password.get_secret_value(),
+                )
+                account_key, account_label = "icloud", "iCloud"
+            else:
+                await asyncio.to_thread(authenticate_client, client, account)
+                account_key, account_label = account.key, account.label
             await self._ensure_folders(client)
-            LOGGER.info("iCloud Mail connected; monitored folders are ready")
+            LOGGER.info(
+                "Mail connected account=%s; monitored folders are ready", account_key
+            )
             processor = MailProcessor(
                 client,
                 self.routes,
                 self.state,
                 self._conversation,
                 self.telemetry,
+                account_key=account_key,
+                account_label=account_label,
             )
             while not self._stop.is_set():
                 await processor.reconcile()

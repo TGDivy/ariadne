@@ -18,6 +18,16 @@ short_description = "Somewhere between a rainbow and a labyrinth."
 [icloud]
 # username = "YOUR_ICLOUD_ADDRESS"
 # app_password = ""
+# mail_label = "iCloud"
+
+# One personal Outlook.com account can run alongside iCloud Mail. Register a
+# Microsoft public client first, then run `ariadne mail authorize-outlook`.
+[outlook]
+enabled = false
+# address = "YOUR_OUTLOOK_ADDRESS"
+# client_id = "YOUR_MICROSOFT_PUBLIC_CLIENT_ID"
+token_cache = "~/.local/state/ariadne/outlook-token.json"
+label = "Outlook"
 
 [mail]
 enabled = false

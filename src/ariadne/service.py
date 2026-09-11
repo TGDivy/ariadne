@@ -120,20 +120,24 @@ def run(path: Path | None = None) -> None:
         question_state=telegram_state,
     )
     try:
-        mail_loop = (
-            MailLoop(
-                mail_settings,
-                settings.agent_workspace,
-                settings.vault,
-                settings.mail_turn_settings,
-                human=settings.human_name,
-                personality=settings.personality,
-                mcp_environment=settings.mcp_environment,
-                network_domains=settings.health_network_domains,
-                telemetry=telemetry,
+        mail_loops = (
+            tuple(
+                MailLoop(
+                    mail_settings,
+                    settings.agent_workspace,
+                    settings.vault,
+                    settings.mail_turn_settings,
+                    human=settings.human_name,
+                    personality=settings.personality,
+                    mcp_environment=settings.mcp_environment,
+                    network_domains=settings.health_network_domains,
+                    account=account,
+                    telemetry=telemetry,
+                )
+                for account in mail_settings.accounts
             )
             if mail_settings is not None
-            else None
+            else ()
         )
         revisit_loop = RevisitLoop(
             settings.revisit_settings,
@@ -150,26 +154,27 @@ def run(path: Path | None = None) -> None:
         telemetry.shutdown()
         LOGGER.error("Configuration error: %s", error)
         raise SystemExit(2) from error
-    mail_task: asyncio.Task[None] | None = None
+    mail_tasks: list[asyncio.Task[None]] = []
     revisit_task: asyncio.Task[None] | None = None
 
     async def start_services(application: AriadneApplication) -> None:
-        nonlocal mail_task, revisit_task
+        nonlocal revisit_task
         ariadne.bind_bot(application.bot)
         await ariadne.recover_questions()
         await publish_commands(application)
-        if mail_loop is not None:
-            mail_task = asyncio.create_task(mail_loop.run_forever())
-            LOGGER.info("Started iCloud Mail source")
+        for mail_loop in mail_loops:
+            mail_tasks.append(asyncio.create_task(mail_loop.run_forever()))
+            LOGGER.info("Started Mail source account=%s", mail_loop.account.key)
         revisit_task = asyncio.create_task(revisit_loop.run_forever())
         LOGGER.info("Started one-off revisit source")
 
     async def close_services(_: object) -> None:
-        if mail_loop is not None:
+        for mail_loop in mail_loops:
             mail_loop.stop()
         revisit_loop.stop()
-        if mail_task is not None:
+        for mail_task in mail_tasks:
             mail_task.cancel()
+        for mail_task in mail_tasks:
             with suppress(asyncio.CancelledError):
                 await mail_task
         if revisit_task is not None:

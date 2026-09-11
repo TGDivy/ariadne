@@ -112,6 +112,7 @@ class ICloudConfig(BaseModel):
 
     username: str | None = None
     app_password: SecretStr | None = None
+    mail_label: str = Field(default="iCloud", min_length=1, max_length=80)
 
     @field_validator("username", mode="before")
     @classmethod
@@ -132,9 +133,55 @@ class ICloudConfig(BaseModel):
             raise ValueError("iCloud credentials require username and app_password.")
         return self
 
+    @field_validator("mail_label", mode="before")
+    @classmethod
+    def strip_mail_label(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+
+class OutlookConfig(BaseModel):
+    """Personal Outlook.com OAuth settings for opt-in Mail access."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    enabled: bool = False
+    address: str | None = None
+    client_id: str | None = None
+    token_cache: Path = Field(
+        default_factory=lambda: Path(
+            "~/.local/state/ariadne/outlook-token.json"
+        ).expanduser()
+    )
+    label: str = Field(default="Outlook", min_length=1, max_length=80)
+
+    @field_validator("address", "client_id", mode="before")
+    @classmethod
+    def empty_text_is_absent(cls, value: object) -> object:
+        return value.strip() or None if isinstance(value, str) else value
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def strip_label(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("token_cache", mode="before")
+    @classmethod
+    def expand_token_cache(cls, value: object) -> object:
+        if isinstance(value, str):
+            if not value.strip():
+                raise ValueError("Outlook token_cache must not be empty.")
+            return Path(value).expanduser()
+        return value.expanduser() if isinstance(value, Path) else value
+
+    @model_validator(mode="after")
+    def require_complete_enabled_outlook(self) -> OutlookConfig:
+        if self.enabled and (self.address is None or self.client_id is None):
+            raise ValueError("Enabled Outlook Mail requires address and client_id.")
+        return self
+
 
 class MailConfig(BaseModel):
-    """Opt-in iCloud Mail configuration, including legacy credentials."""
+    """Opt-in provider-neutral Mail configuration, including legacy credentials."""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -357,6 +404,7 @@ class Settings(BaseModel):
     personality: Path | None = None
     telegram: TelegramConfig
     icloud: ICloudConfig = Field(default_factory=ICloudConfig)
+    outlook: OutlookConfig = Field(default_factory=OutlookConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     health: HealthConfig = Field(default_factory=HealthConfig)
@@ -421,11 +469,18 @@ class Settings(BaseModel):
         unknown = self.profiles.keys() - PROFILES.keys()
         if unknown:
             raise ValueError("Unknown turn profiles: " + ", ".join(sorted(unknown)))
-        if (
-            self.mail.enabled or self.calendar.enabled
-        ) and self.icloud_credentials is None:
+        if self.calendar.enabled and self.icloud_credentials is None:
             raise ValueError(
                 "Enabled iCloud services require [icloud] username and app_password."
+            )
+        if (
+            self.mail.enabled
+            and self.icloud_credentials is None
+            and not self.outlook.enabled
+        ):
+            raise ValueError(
+                "Enabled Mail requires iCloud credentials or an enabled Outlook "
+                "account."
             )
         return self
 
@@ -483,15 +538,44 @@ class Settings(BaseModel):
         }
 
     @property
+    def mail_accounts(self) -> tuple[MailAccountSettings, ...]:
+        """Return every fully configured mailbox in stable routing order."""
+        accounts: list[MailAccountSettings] = []
+        if self.icloud_credentials is not None:
+            username, app_password = self.icloud_credentials
+            accounts.append(
+                MailAccountSettings(
+                    key="icloud",
+                    label=self.icloud.mail_label,
+                    provider="icloud",
+                    address=username,
+                    host="imap.mail.me.com",
+                    password=app_password,
+                )
+            )
+        if self.outlook.enabled:
+            assert self.outlook.address is not None
+            assert self.outlook.client_id is not None
+            accounts.append(
+                MailAccountSettings(
+                    key="outlook",
+                    label=self.outlook.label,
+                    provider="outlook",
+                    address=self.outlook.address,
+                    host="outlook.office365.com",
+                    client_id=self.outlook.client_id,
+                    token_cache=self.outlook.token_cache.resolve(),
+                )
+            )
+        return tuple(accounts)
+
+    @property
     def mail_settings(self) -> MailSettings | None:
         if not self.mail.enabled:
             return None
-        assert self.icloud_credentials is not None
-        username, app_password = self.icloud_credentials
         assert self.mail.routes is not None
         return MailSettings(
-            username=username,
-            app_password=app_password,
+            accounts=self.mail_accounts,
             routes=self.mail.routes.resolve(),
             state=self.mail.state.resolve(),
         )
@@ -506,12 +590,38 @@ class Settings(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class MailSettings:
-    """The complete enabled iCloud Mail runtime configuration."""
+    """The complete enabled provider-neutral Mail runtime configuration."""
 
-    username: str
-    app_password: SecretStr
+    accounts: tuple[MailAccountSettings, ...]
     routes: Path
     state: Path
+
+    @property
+    def username(self) -> str:
+        """Preserve the historical single-iCloud settings interface."""
+        account = next(item for item in self.accounts if item.provider == "icloud")
+        return account.address
+
+    @property
+    def app_password(self) -> SecretStr:
+        """Preserve the historical single-iCloud settings interface."""
+        account = next(item for item in self.accounts if item.provider == "icloud")
+        assert account.password is not None
+        return account.password
+
+
+@dataclass(frozen=True, slots=True)
+class MailAccountSettings:
+    """One stable mailbox identity and its private authentication material."""
+
+    key: str
+    label: str
+    provider: Literal["icloud", "outlook"]
+    address: str
+    host: str
+    password: SecretStr | None = None
+    client_id: str | None = None
+    token_cache: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -575,6 +685,14 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             "app_password": (
                 "<redacted>" if settings.icloud.app_password is not None else None
             ),
+            "mail_label": settings.icloud.mail_label,
+        },
+        "outlook": {
+            "enabled": settings.outlook.enabled,
+            "address": settings.outlook.address,
+            "client_id": settings.outlook.client_id,
+            "token_cache": str(settings.outlook.token_cache),
+            "label": settings.outlook.label,
         },
         "mail": {
             "enabled": settings.mail.enabled,
@@ -584,6 +702,23 @@ def settings_payload(settings: Settings) -> dict[str, Any]:
             ),
             "routes": str(settings.mail.routes) if settings.mail.routes else None,
             "state": str(settings.mail.state),
+            "accounts": [
+                {
+                    "key": account.key,
+                    "label": account.label,
+                    "provider": account.provider,
+                    "address": account.address,
+                    "host": account.host,
+                    "token_cache": (
+                        str(account.token_cache)
+                        if account.token_cache is not None
+                        else None
+                    ),
+                }
+                for account in settings.mail_accounts
+            ]
+            if settings.mail.enabled
+            else [],
         },
         "calendar": {
             "enabled": settings.calendar.enabled,
