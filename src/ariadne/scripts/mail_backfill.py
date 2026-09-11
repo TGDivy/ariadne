@@ -9,15 +9,14 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from imapclient import IMAPClient  # type: ignore[import-untyped]
-
 from ariadne.config import load_settings
 from ariadne.mail import (
-    IMAP_HOST,
     backfill_inbox,
+    connect_account,
     ensure_folders,
     load_routes,
     restore_folder_to_inbox,
+    select_account,
 )
 from ariadne.scripts.progress import ProgressBar
 
@@ -25,6 +24,9 @@ from ariadne.scripts.progress import ProgressBar
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path)
+    parser.add_argument(
+        "--account", help="stable Mail account key (required when multiple are enabled)"
+    )
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -48,10 +50,13 @@ def main() -> None:
     configured = load_settings(args.config).mail_settings
     if configured is None:
         raise RuntimeError("Mail must be enabled to run backfill.")
+    account = select_account(
+        configured.accounts,
+        args.account,
+        require_explicit_when_multiple=True,
+    )
 
-    client = IMAPClient(IMAP_HOST, port=993, ssl=True)
-    try:
-        client.login(configured.username, configured.app_password.get_secret_value())
+    with connect_account(account, timeout=None) as client:
         if restore_folders:
             for folder in restore_folders:
                 with ProgressBar(f"Restoring {folder!r}") as progress:
@@ -72,12 +77,6 @@ def main() -> None:
                 summary = backfill_inbox(
                     client, routes, apply=args.apply, progress=progress.update
                 )
-    finally:
-        try:
-            client.logout()
-        except Exception:
-            pass
-
     if restore_folders:
         if not args.apply:
             print(

@@ -148,6 +148,22 @@ def test_background_job_metric_records_source_and_outcome() -> None:
     meter_provider.shutdown()
 
 
+def test_mail_background_job_metric_keeps_the_stable_account_key() -> None:
+    reader = InMemoryMetricReader()
+    meter_provider = MeterProvider(metric_readers=[reader])
+    telemetry = Telemetry(meter_provider=meter_provider)
+
+    telemetry.background_job(source="mail", status="success", account="outlook")
+
+    point = _metrics(reader)["ariadne.background.jobs"].data.data_points[0]
+    assert point.attributes == {
+        "source": "mail",
+        "status": "success",
+        "account": "outlook",
+    }
+    meter_provider.shutdown()
+
+
 def test_unknown_model_usage_is_reported_as_unpriced() -> None:
     reader = InMemoryMetricReader()
     meter_provider = MeterProvider(metric_readers=[reader])

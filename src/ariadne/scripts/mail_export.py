@@ -1,4 +1,4 @@
-"""Export recent iCloud Mail messages for local, read-only mailbox analysis.
+"""Export recent messages from one Mail account for local mailbox analysis.
 
 Run with Ariadne's TOML configuration, for example:
 
@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import argparse
 import email
-import getpass
 import imaplib
 import json
 import re
@@ -25,7 +24,8 @@ from email.utils import getaddresses, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from ariadne.config import Settings, load_settings
+from ariadne.config import MailAccountSettings, load_settings
+from ariadne.mail import OutlookOAuth, select_account
 from ariadne.scripts.progress import ProgressBar
 
 
@@ -84,11 +84,20 @@ def attachment_metadata(message: email.message.Message) -> list[dict[str, Any]]:
     return attachments
 
 
-def parse_message(raw: bytes, uid: bytes | str, folder: str) -> dict[str, Any]:
+def parse_message(
+    raw: bytes,
+    uid: bytes | str,
+    folder: str,
+    *,
+    account_key: str = "icloud",
+    account_label: str = "iCloud",
+) -> dict[str, Any]:
     message = email.message_from_bytes(raw)
     date = decode(message.get("Date"))
     text, truncated = body_text(message, limit=12_000)
     return {
+        "account_key": account_key,
+        "account_label": account_label,
         "folder": folder,
         "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
         "message_id": decode(message.get("Message-ID")),
@@ -151,6 +160,9 @@ def fetch_messages(
     limit: int,
     batch_size: int = 25,
     progress: Callable[[int, int], None] | None = None,
+    *,
+    account_key: str = "icloud",
+    account_label: str = "iCloud",
 ) -> list[dict[str, Any]]:
     status, _ = mail.select(folder, readonly=True)
     if status != "OK":
@@ -171,7 +183,15 @@ def fetch_messages(
             uid_text = uid.decode()
             raw = payloads.get(uid_text) or fetch_one(mail, uid)
             if raw:
-                results.append(parse_message(raw, uid, folder))
+                results.append(
+                    parse_message(
+                        raw,
+                        uid,
+                        folder,
+                        account_key=account_key,
+                        account_label=account_label,
+                    )
+                )
         if progress is not None:
             progress(min(start + len(batch), len(uids)), len(uids))
     return results
@@ -188,26 +208,31 @@ def write_jsonl(path: Path, messages: list[dict[str, Any]]) -> None:
     temporary_path.replace(path)
 
 
-def load_credentials(settings: Settings) -> tuple[str, str]:
-    configured = settings.icloud_credentials
-    username = (
-        configured[0]
-        if configured is not None
-        else input("iCloud Mail username: ").strip()
-    )
-    password = (
-        configured[1].get_secret_value()
-        if configured is not None
-        else getpass.getpass("App-specific password (hidden): ")
-    )
-    if not username or not password:
-        raise RuntimeError("Mail username and app_password are required in TOML")
-    return username, password
+def authenticate(mail: imaplib.IMAP4_SSL, account: MailAccountSettings) -> None:
+    """Authenticate an export connection without putting credentials in output."""
+    try:
+        if account.provider == "icloud":
+            if account.password is None:
+                raise RuntimeError("The selected iCloud account has no app password.")
+            mail.login(account.address, account.password.get_secret_value())
+            return
+        access_token = OutlookOAuth(account).access_token()
+        response = (
+            f"user={account.address}\x01auth=Bearer {access_token}\x01\x01".encode()
+        )
+        mail.authenticate("XOAUTH2", lambda _challenge: response)
+    except imaplib.IMAP4.error:
+        raise RuntimeError(
+            f"{account.label} rejected the configured Mail credentials."
+        ) from None
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path)
+    parser.add_argument(
+        "--account", help="stable Mail account key (required when multiple are enabled)"
+    )
     parser.add_argument("--folder", default="INBOX")
     parser.add_argument("--limit", type=int, default=1000)
     parser.add_argument(
@@ -223,10 +248,17 @@ def main() -> None:
     if args.batch_size < 1:
         parser.error("--batch-size must be positive")
 
-    username, password = load_credentials(load_settings(args.config))
-    mail = imaplib.IMAP4_SSL("imap.mail.me.com", 993)
+    configured = load_settings(args.config).mail_settings
+    if configured is None:
+        raise RuntimeError("Mail must be enabled to export messages.")
+    account = select_account(
+        configured.accounts,
+        args.account,
+        require_explicit_when_multiple=True,
+    )
+    mail = imaplib.IMAP4_SSL(account.host, 993)
     try:
-        mail.login(username, password)
+        authenticate(mail, account)
         with ProgressBar(f"Fetching {args.folder!r}") as progress:
             messages = fetch_messages(
                 mail,
@@ -234,9 +266,14 @@ def main() -> None:
                 args.limit,
                 args.batch_size,
                 progress=progress.update,
+                account_key=account.key,
+                account_label=account.label,
             )
         write_jsonl(args.output, messages)
-        print(f"Wrote {len(messages)} messages to {args.output}")
+        print(
+            f"Wrote {len(messages)} messages from account={account.key} "
+            f"to {args.output}"
+        )
     finally:
         try:
             mail.logout()
