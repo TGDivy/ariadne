@@ -9,7 +9,7 @@ An ordinary Ariadne deployment or process restart does not make Iris silently lo
 ## Durable shared thread
 
 - Persist the active Telegram `AsyncThread.id` in Ariadne's existing private Telegram state, scoped to the configured owner/chat and Telegram conversation profile.
-- Once a new shared thread is started, save its identifier before treating the turn as durably established. On ordinary startup, use `AsyncCodex.thread_resume(thread_id, ...)` with the current profile's working directory, permissions, instructions, MCP configuration, model, effort, and web setting.
+- Once a new shared thread is started, save its identifier before treating the turn as durably established. On ordinary startup, use `AsyncCodex.thread_resume(...)` with the current profile's working directory, permissions, instructions, MCP configuration, model, effort, and web setting.
 - Keep the identifier synchronized when Ariadne deliberately replaces the shared thread. Do not apply this policy to mail, revisit, stewardship, evaluation, or other `fresh-per-event` conversations.
 - Durable Telegram message history remains useful shared evidence but is not replayed as a fabricated replacement conversation when a thread should be fresh.
 
