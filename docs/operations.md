@@ -37,6 +37,12 @@ uv run python -m ariadne.scripts.profile revisit-focused
 
 Add `--json` for machine-readable output. Inspection never prints environment values. The declarative profile definitions are in `src/ariadne/profile.py`; polling, queues, retries, and state live in the relevant runtime modules.
 
+### Telegram conversation continuity
+
+The Telegram profile resumes its active Codex thread across normal service restarts. Ariadne stores the versioned opaque thread identifier in the configured `[telegram].state` SQLite file; it is private runtime state and should follow the same protected backup policy as that database. Clean shutdown does not clear it. `/new` and model, effort, or web-research changes intentionally clear it before starting a fresh conversation, without deleting Telegram history or the Thread knowledge repository.
+
+If the remote thread no longer exists or its saved state is incompatible, Ariadne invalidates only that reference, starts fresh, and tells the owner once. Logs contain the bounded failure class, never the saved identifier. Do not edit or transplant the row manually to resume an arbitrary Codex thread.
+
 ## Behaviour scenarios
 
 The behaviour lab replays synthetic stories without contacting a real Telegram chat, mailbox, Calendar, or private Thread. Listing and inspection are deterministic and CI-safe; a real run is an explicit local command and may incur model usage.

@@ -27,6 +27,7 @@ from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
 from .revisit.runtime import RevisitLoop
 from .telegram.bot import AriadneBot
+from .telegram.continuity import TelegramConversationThreadStore
 from .telemetry import configure_telemetry
 
 LOGGER = logging.getLogger(__name__)
@@ -91,24 +92,32 @@ def run(path: Path | None = None) -> None:
     mail_settings = settings.mail_settings
     telemetry = configure_telemetry(settings.telemetry)
 
+    telegram_profile = resolve_profile(
+        TELEGRAM_PROFILE,
+        workspace=settings.agent_workspace,
+        settings=settings.codex_turn_settings,
+        human=settings.human_name,
+        personality=settings.personality,
+        mcp_environment=settings.mcp_environment,
+        knowledge_root=settings.vault,
+        network_domains=settings.health_network_domains,
+    )
+    telegram_state = settings.telegram.state.resolve()
     conversation = CodexConversation(
-        resolve_profile(
-            TELEGRAM_PROFILE,
-            workspace=settings.agent_workspace,
-            settings=settings.codex_turn_settings,
-            human=settings.human_name,
-            personality=settings.personality,
-            mcp_environment=settings.mcp_environment,
-            knowledge_root=settings.vault,
-            network_domains=settings.health_network_domains,
-        ),
+        telegram_profile,
         telemetry=telemetry,
+        thread_store=TelegramConversationThreadStore(
+            telegram_state,
+            owner_id=settings.allowed_user_id,
+            chat_id=settings.allowed_user_id,
+            profile_name=telegram_profile.name,
+        ),
     )
     ariadne = AriadneBot(
         settings.allowed_user_id,
         conversation,
         bot_token=settings.telegram_bot_token,
-        question_state=settings.telegram.state.resolve(),
+        question_state=telegram_state,
     )
     try:
         mail_loop = (

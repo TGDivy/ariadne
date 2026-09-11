@@ -24,7 +24,13 @@ from telegram.constants import FileSizeLimit, ParseMode
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
-from ..codex import CodexConversation, CodexModel, TurnInterrupted, WebSearchSetting
+from ..codex import (
+    CodexConversation,
+    CodexModel,
+    CodexTurnSettings,
+    TurnInterrupted,
+    WebSearchSetting,
+)
 from ..prompts.activations import (
     EMPTY_TELEGRAM_REPLY,
     build_document_turn_prompt,
@@ -74,6 +80,11 @@ SETTINGS_UNAVAILABLE_MESSAGE = (
     "I couldn't load the available Codex settings. Please try again."
 )
 SETTINGS_BUSY_MESSAGE = "Settings can't change while Ariadne is working."
+CONTINUITY_LOST_MESSAGE = (
+    "I couldn't recover our previous conversation after the restart, so I've "
+    "started a fresh one. Your shared memory is still available."
+)
+RESET_FAILED_MESSAGE = "I couldn't safely start a fresh conversation. Please retry."
 
 SETTINGS_CALLBACK_PREFIX = "settings:"
 SETTINGS_MODELS_CALLBACK = "settings:models"
@@ -525,7 +536,12 @@ class AriadneBot:
             await self._reply_safely(message, BUSY_MESSAGE)
             return
 
-        self._conversation.reset()
+        try:
+            self._conversation.reset()
+        except Exception:
+            LOGGER.exception("Persistent Codex conversation reset failed")
+            await self._reply_safely(message, RESET_FAILED_MESSAGE)
+            return
         await self._reply_safely(message, NEW_CONVERSATION_MESSAGE)
 
     async def handle_stop(self, message: Message, user_id: int | None) -> None:
@@ -689,9 +705,10 @@ class AriadneBot:
             if settings.effort in model.supported_efforts
             else model.default_effort
         )
-        self._conversation.set_settings(
-            replace(settings, model=model.identifier, effort=effort)
-        )
+        if not await self._apply_settings(
+            message, replace(settings, model=model.identifier, effort=effort)
+        ):
+            return
         await self._show_settings(message)
 
     async def _select_effort(self, message: Message, value: str) -> None:
@@ -708,9 +725,10 @@ class AriadneBot:
             await self._show_effort_choices(message)
             return
 
-        self._conversation.set_settings(
-            replace(self._conversation.settings, effort=effort)
-        )
+        if not await self._apply_settings(
+            message, replace(self._conversation.settings, effort=effort)
+        ):
+            return
         await self._show_settings(message)
 
     async def _select_web_mode(self, message: Message, value: str) -> None:
@@ -724,10 +742,23 @@ class AriadneBot:
             await self._show_web_choices(message)
             return
 
-        self._conversation.set_settings(
-            replace(self._conversation.settings, web_search=web_search)
-        )
+        if not await self._apply_settings(
+            message, replace(self._conversation.settings, web_search=web_search)
+        ):
+            return
         await self._show_settings(message)
+
+    async def _apply_settings(
+        self, message: Message, settings: CodexTurnSettings
+    ) -> bool:
+        """Change settings only after the durable old thread is forgotten."""
+        try:
+            self._conversation.set_settings(settings)
+        except Exception:
+            LOGGER.exception("Persistent Codex conversation reset failed")
+            await self._edit_safely(message, RESET_FAILED_MESSAGE)
+            return False
+        return True
 
     async def _settings_can_change(self, message: Message) -> bool:
         if not self._busy:
@@ -848,11 +879,12 @@ class AriadneBot:
         self._live_response = live
         try:
             await live.start()
-            if self._stopping:
-                await self._send_stopped()
-                return
-
             try:
+                if await self._conversation.prepare_thread():
+                    await self._reply_safely(message, CONTINUITY_LOST_MESSAGE)
+                if self._stopping:
+                    await self._send_stopped()
+                    return
                 await self._stream_response(live, prompt, image_paths)
                 status = "success"
             except TurnInterrupted:
@@ -1158,7 +1190,7 @@ class AriadneBot:
             f"Model: {settings.model}\n"
             f"Reasoning: {settings.effort.value}\n"
             f"Web research: {web_search}\n\n"
-            "Changes start a new in-memory Codex conversation."
+            "Changes start a fresh Codex conversation."
         )
 
     def _settings_keyboard(self) -> InlineKeyboardMarkup:

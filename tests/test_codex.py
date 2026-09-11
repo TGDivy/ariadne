@@ -58,6 +58,8 @@ from ariadne.codex import (
     CapabilityCallCompleted,
     CodexConversation,
     CodexTurnSettings,
+    ConversationThreadStore,
+    PersistedConversationThread,
     TurnInterrupted,
     WorkStarted,
     WorkSummaryUpdated,
@@ -328,7 +330,9 @@ class FakeThread:
         final_answer: str | None = None,
         turn: FakeTurn | InterruptibleTurn | None = None,
         turns: list[FakeTurn | InterruptibleTurn] | None = None,
+        thread_id: str = "thread",
     ) -> None:
+        self.id = thread_id
         self._final_answer = final_answer
         self._turn = turn
         self._turns = turns
@@ -348,16 +352,44 @@ class FakeThread:
 
 
 class FakeCodex:
-    def __init__(self, *threads: FakeThread) -> None:
+    def __init__(
+        self, *threads: FakeThread, resume_error: Exception | None = None
+    ) -> None:
         self._threads = threads
+        self._resume_error = resume_error
         self.thread_start_options: list[dict[str, object]] = []
+        self.thread_resume_options: list[tuple[str, dict[str, object]]] = []
 
     async def thread_start(self, **options: object) -> FakeThread:
         self.thread_start_options.append(options)
         return self._threads[len(self.thread_start_options) - 1]
 
+    async def thread_resume(self, thread_id: str, **options: object) -> FakeThread:
+        self.thread_resume_options.append((thread_id, options))
+        if self._resume_error is not None:
+            raise self._resume_error
+        return next(thread for thread in self._threads if thread.id == thread_id)
+
     async def close(self) -> None:
         return None
+
+
+class MemoryThreadStore(ConversationThreadStore):
+    def __init__(self, state: PersistedConversationThread | None = None) -> None:
+        self.state = state
+        self.saved: list[PersistedConversationThread] = []
+        self.clear_calls = 0
+
+    def load(self) -> PersistedConversationThread | None:
+        return self.state
+
+    def save(self, state: PersistedConversationThread) -> None:
+        self.state = state
+        self.saved.append(state)
+
+    def clear(self) -> None:
+        self.state = None
+        self.clear_calls += 1
 
 
 async def test_codex_conversation_accumulates_deltas_and_reuses_its_thread(
@@ -1067,6 +1099,198 @@ async def test_codex_conversation_starts_a_new_thread_after_reset(
     assert first_thread.inputs == ["First message"]
     assert second_thread.inputs == ["Second message"]
     assert len(client.thread_start_options) == 2
+
+
+async def test_shared_conversation_persists_and_resumes_the_same_thread(
+    tmp_path: Path,
+) -> None:
+    thread = FakeThread(thread_id="thread-persisted")
+    store = MemoryThreadStore()
+    first_client = FakeCodex(thread)
+    first = CodexConversation(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            workspace=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        ),
+        client=cast(AsyncCodex, first_client),
+        thread_store=store,
+    )
+
+    assert await first.prepare_thread() is False
+    _ = [event async for event in first.stream_turn("First message")]
+    await first.close()
+
+    second_client = FakeCodex(thread)
+    second = CodexConversation(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            workspace=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        ),
+        client=cast(AsyncCodex, second_client),
+        thread_store=store,
+    )
+
+    assert await second.prepare_thread() is False
+    _ = [event async for event in second.stream_turn("Second message")]
+
+    assert store.state == PersistedConversationThread(1, "thread-persisted")
+    assert len(first_client.thread_start_options) == 1
+    assert second_client.thread_start_options == []
+    assert second_client.thread_resume_options == [
+        (
+            "thread-persisted",
+            {
+                "approval_mode": ApprovalMode.auto_review,
+                "base_instructions": second.profile.base_instructions,
+                "config": {
+                    "model_reasoning_effort": "low",
+                    "web_search": "disabled",
+                },
+                "cwd": str(tmp_path),
+                "developer_instructions": second.profile.developer_instructions,
+                "model": "gpt-5.6-luna",
+            },
+        )
+    ]
+    assert thread.inputs == ["First message", "Second message"]
+
+
+async def test_explicit_reset_forgets_persisted_thread_before_replacement(
+    tmp_path: Path,
+) -> None:
+    first_thread = FakeThread(thread_id="first")
+    second_thread = FakeThread(thread_id="second")
+    store = MemoryThreadStore()
+    client = FakeCodex(first_thread, second_thread)
+    conversation = CodexConversation(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            workspace=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        ),
+        client=cast(AsyncCodex, client),
+        thread_store=store,
+    )
+
+    await conversation.prepare_thread()
+    conversation.reset()
+
+    assert store.state is None
+    assert store.clear_calls == 1
+
+    await conversation.prepare_thread()
+
+    assert store.state == PersistedConversationThread(1, "second")
+    assert len(client.thread_start_options) == 2
+    assert client.thread_resume_options == []
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        PersistedConversationThread(2, "old-version"),
+        PersistedConversationThread(1, ""),
+        PersistedConversationThread(1, " thread-with-space"),
+        PersistedConversationThread(1, "bad\nthread"),
+    ],
+)
+async def test_incompatible_thread_state_falls_back_once_and_reports_loss(
+    tmp_path: Path, state: PersistedConversationThread
+) -> None:
+    replacement = FakeThread(thread_id="replacement")
+    store = MemoryThreadStore(state)
+    client = FakeCodex(replacement)
+    conversation = CodexConversation(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            workspace=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        ),
+        client=cast(AsyncCodex, client),
+        thread_store=store,
+    )
+
+    assert await conversation.prepare_thread() is True
+    assert await conversation.prepare_thread() is False
+    assert store.state == PersistedConversationThread(1, "replacement")
+    assert client.thread_resume_options == []
+
+
+async def test_resume_failure_falls_back_without_exposing_saved_identifier(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    replacement = FakeThread(thread_id="replacement")
+    store = MemoryThreadStore(PersistedConversationThread(1, "private-thread-id"))
+    client = FakeCodex(replacement, resume_error=RuntimeError("gone"))
+    conversation = CodexConversation(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            workspace=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        ),
+        client=cast(AsyncCodex, client),
+        thread_store=store,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        assert await conversation.prepare_thread() is True
+
+    assert store.state == PersistedConversationThread(1, "replacement")
+    assert "private-thread-id" not in caplog.text
+    assert client.thread_resume_options[0][0] == "private-thread-id"
+
+
+async def test_state_read_failure_does_not_overwrite_possible_saved_thread(
+    tmp_path: Path,
+) -> None:
+    class UnreadableStore(MemoryThreadStore):
+        def load(self) -> PersistedConversationThread | None:
+            raise OSError("temporarily unavailable")
+
+    client = FakeCodex(FakeThread(thread_id="replacement"))
+    conversation = CodexConversation(
+        resolve_profile(
+            TELEGRAM_PROFILE,
+            workspace=tmp_path,
+            settings=DEFAULT_SETTINGS,
+            human=HUMAN,
+        ),
+        client=cast(AsyncCodex, client),
+        thread_store=UnreadableStore(),
+    )
+
+    with pytest.raises(OSError, match="temporarily unavailable"):
+        await conversation.prepare_thread()
+
+    assert client.thread_start_options == []
+    assert client.thread_resume_options == []
+
+
+def test_fresh_per_event_conversation_rejects_thread_persistence(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="Only shared"):
+        CodexConversation(
+            resolve_profile(
+                MAIL_PROFILE,
+                workspace=tmp_path,
+                settings=DEFAULT_SETTINGS,
+                human=HUMAN,
+                mcp_environment={
+                    "ARIADNE_MAIL_JOB_ID": "job",
+                    "ARIADNE_MAIL_STATE": str(tmp_path / "mail.sqlite3"),
+                },
+            ),
+            client=cast(AsyncCodex, FakeCodex(FakeThread())),
+            thread_store=MemoryThreadStore(),
+        )
 
 
 async def test_fresh_per_event_profile_starts_a_new_thread_after_each_turn(
