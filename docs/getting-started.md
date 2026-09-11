@@ -74,6 +74,11 @@ Mail, Calendar, health, proactive stewardship, and telemetry are off in `config.
 - **Browser:** install Chromium, enable `[browser]`, and run the separate private
   browser daemon before Ariadne. Named profiles preserve owner-created logins;
   see [Browser control](browser-control.md) before creating one.
+- **Grocery:** enable `[grocery]` only after `[browser]` works and you have signed
+  into Waitrose in its named profile through takeover. Basket building is reversible
+  and on by default once enabled; real spending stays behind `checkout_enabled`,
+  which should remain `false` until the dry runs in
+  [Grocery ordering](grocery-shopping.md) pass.
 
 The implementation details and operational contracts for Mail, Calendar, health, and stewardship live in the source and their nearby documentation. They are intentionally not required for a first private conversation.
 

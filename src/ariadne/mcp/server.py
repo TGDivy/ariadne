@@ -3,6 +3,7 @@
 from fastmcp import FastMCP
 
 from .errors import install_safe_tool_error_handling
+from .grocery import register_tools as register_grocery_tools
 from .handoff import register_tools as register_handoff_tools
 from .knowledge import register_tools as register_knowledge_tools
 from .mail import register_tools as register_mail_tools
@@ -17,7 +18,8 @@ def create_server() -> FastMCP:
         "Ariadne",
         instructions=(
             "Private memory, Telegram, conversational background handoffs, "
-            "turn-scoped mail decisions, and future wake-up capabilities for Iris."
+            "turn-scoped mail decisions, future wake-up, and Waitrose grocery "
+            "capabilities for Iris."
         ),
         version="0.1.0",
         strict_input_validation=True,
@@ -29,6 +31,7 @@ def create_server() -> FastMCP:
     register_knowledge_tools(server)
     register_revisit_tools(server)
     register_stewardship_tools(server)
+    register_grocery_tools(server)
     return server
 
 

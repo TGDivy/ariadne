@@ -45,7 +45,7 @@ The agent does not receive a vague integration-level permission. Ariadne owns st
 
 | Surface | Current capability families | Why it belongs there |
 | --- | --- | --- |
-| **First-class MCP** | Telegram conversation controls, semantic knowledge, and one-off revisits | These are fundamental to Iris’s identity and follow-through, are commonly needed without prior discovery, and include interactive or stateful turn semantics. |
+| **First-class MCP** | Telegram conversation controls, semantic knowledge, one-off revisits, and Waitrose grocery ordering | These are fundamental to Iris’s identity and follow-through, are commonly needed without prior discovery, and include interactive or stateful turn semantics. |
 | **Dedicated MCP** | Persistent browser task sessions | Chromium is long-lived and stateful, while browser authority belongs only in selected turn profiles. A private Unix socket separates its small semantic tools from the browser daemon and profiles. |
 | **Turn-scoped MCP** | `record_current_mail_decision`, `record_stewardship_outcome`, and `hand_off_to_telegram_conversation` | These operations are bound to the background job that activated the turn. A handoff stages internal context; it has no direct delivery authority and becomes ready only at the job's successful commit boundary. |
 | **Discoverable CLI** | Mail search/read/thread, all Calendar operations, and Ithaca health reads | These are query-shaped, lower-frequency families whose growing schemas would otherwise consume every turn’s tool context. Conventional nested help loads their contract only when it is useful. |
@@ -80,6 +80,18 @@ confirmation bound to the current material page state. A lost final-action respo
 is recorded as uncertain and blocks retry until the site's definitive state is
 inspected. Browser profiles and retained evidence remain in configured private paths;
 the public repository and ordinary logs never contain them.
+
+### Spending stays behind an exact approval
+
+Grocery ordering is the first capability that can spend money, so it treats the
+basket as the unit of consent rather than the request. Building a basket is
+reversible preparation and needs no approval. Checkout needs a trusted Telegram
+approval from the configured owner bound to the retailer, items, quantities,
+fulfilment mode, slot, location, substitutions, fees, and total; that binding is a
+digest stored beside the approval, expires on a clock, and is invalidated by any
+material change. Checkout is exactly-once in SQLite, and a lost response is recorded
+as uncertain rather than retried. Retailer page knowledge stays in one adapter so
+ordinary conversation never depends on selectors.
 
 ### Revisit, do not nag
 

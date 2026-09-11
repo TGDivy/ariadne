@@ -22,9 +22,15 @@ from telegram.ext import (
     filters,
 )
 
+from .browser.client import BrowserClient
 from .codex import CodexConversation
 from .codex.resolver import resolve_profile
 from .config import CONFIG_PATH_ENVIRONMENT, Settings, config_path, load_settings
+from .grocery.service import GroceryService
+from .grocery.store import GroceryStore
+from .grocery.telegram import CALLBACK_PREFIX as GROCERY_CALLBACK_PREFIX
+from .grocery.telegram import GroceryApprovalController
+from .grocery.waitrose import WaitroseAdapter
 from .handoff import HandoffCoordinator, HandoffState
 from .mail import MailLoop
 from .profile import TELEGRAM_PROFILE
@@ -118,6 +124,42 @@ def _configure_cli_environment(path: Path | None) -> None:
         os.environ["PATH"] = os.pathsep.join((executable_directory, *entries))
 
 
+def _grocery_controller(settings: Settings) -> GroceryApprovalController | None:
+    """Build the owner-only grocery approval boundary when it is switched on."""
+    if not settings.grocery.enabled:
+        return None
+    store = GroceryStore(settings.grocery.state.resolve())
+    adapter = WaitroseAdapter(
+        store,
+        BrowserClient(settings.browser.socket.resolve()),
+        profile=settings.grocery.browser_profile,
+        base_url=str(settings.grocery.base_url),
+    )
+    service = GroceryService(
+        store,
+        adapter,
+        weighted_tolerance=settings.grocery.weighted_tolerance,
+        approval_ttl_seconds=settings.grocery.approval_ttl_seconds,
+        checkout_enabled=settings.grocery.checkout_enabled,
+    )
+    return GroceryApprovalController(service, settings.allowed_user_id)
+
+
+def _recover_grocery_checkouts(controller: GroceryApprovalController) -> None:
+    """Never resume a submission the previous process may already have sent."""
+    try:
+        uncertain = controller.service.store.recover_interrupted_checkouts()
+    except Exception:
+        LOGGER.exception("Grocery checkout recovery failed")
+        return
+    for operation in uncertain:
+        LOGGER.warning(
+            "Grocery checkout needs owner verification draft_id=%s status=%s",
+            operation.draft_id,
+            operation.status.value,
+        )
+
+
 def run(path: Path | None = None) -> None:
     """Start Ariadne using the selected private TOML configuration."""
     # PTB is migrating media durations from integer seconds to timedelta. Opt
@@ -155,6 +197,7 @@ def run(path: Path | None = None) -> None:
     handoff_coordinator = HandoffCoordinator(
         HandoffState(settings.telegram.state.resolve())
     )
+    grocery = _grocery_controller(settings)
     try:
         mail_loops = (
             tuple(
@@ -232,6 +275,8 @@ def run(path: Path | None = None) -> None:
         ariadne.bind_bot(application.bot)
         await ariadne.recover_questions()
         await ariadne.recover_panel()
+        if grocery is not None:
+            _recover_grocery_checkouts(grocery)
         await publish_commands(application)
         for mail_loop in mail_loops:
             mail_tasks.append(asyncio.create_task(mail_loop.run_forever()))
@@ -313,6 +358,12 @@ def run(path: Path | None = None) -> None:
     # PTB 22.8 predates Rich Messages, but retains the raw field in
     # Message.api_kwargs. A second handler group lets us inspect those updates
     # without competing with the native text/media handlers above.
+    if grocery is not None:
+        application.add_handler(
+            CallbackQueryHandler(
+                grocery.callback, pattern=rf"^{GROCERY_CALLBACK_PREFIX}"
+            )
+        )
     application.add_handler(TypeHandler(Update, ariadne.rich_message), group=1)
 
     LOGGER.info("Starting Ariadne with private knowledge at %s", settings.vault)

@@ -8,6 +8,8 @@ from openai_codex.generated.v2_all import ReasoningEffort
 from .browser.capability import SOCKET_ENVIRONMENT as BROWSER_SOCKET_ENVIRONMENT
 from .browser.capability import TOOLS as BROWSER_TOOLS
 from .codex.models import TurnProfile
+from .grocery.capability import ENVIRONMENT_NAMES as GROCERY_ENVIRONMENT_NAMES
+from .grocery.capability import TOOLS as GROCERY_TOOLS
 from .handoff import (
     ACTIVATION_KEY_ENVIRONMENT,
     ACTIVATION_SOURCE_ENVIRONMENT,
@@ -55,6 +57,7 @@ TELEGRAM_PROFILE = TurnProfile(
         "request_telegram_file_delivery",
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
+        *GROCERY_TOOLS,
     ),
     thread_policy="shared",
     browser_tools=BROWSER_TOOLS,
@@ -72,6 +75,7 @@ TELEGRAM_PROFILE = TurnProfile(
         REVISIT_STATE_ENVIRONMENT,
         KNOWLEDGE_ROOT_ENVIRONMENT,
         BROWSER_SOCKET_ENVIRONMENT,
+        *GROCERY_ENVIRONMENT_NAMES,
     ),
 )
 

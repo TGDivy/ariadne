@@ -73,6 +73,20 @@ profile with `ariadne-browser profile create personal`. Full setup, takeover, ba
 recovery, and conservative live validation are in
 [Browser control](browser-control.md).
 
+## Grocery ordering
+
+Grocery ordering rides on the browser service and adds one private SQLite database
+of order drafts, approvals, and checkout outcomes. There is no operator CLI: drafts
+are read and repaired conversationally, because every consequential step needs the
+owner in the loop anyway.
+
+Two switches matter. `[grocery].enabled` turns on basket building, which is
+reversible. `[grocery].checkout_enabled` turns on real spending and should stay
+`false` until the documented dry runs pass. A checkout interrupted by a restart is
+recovered as **uncertain** on the next start and logged for owner verification; it is
+never retried automatically. Setup, the order lifecycle, failure handling, and the
+exact home-server smoke tests are in [Grocery ordering](grocery-shopping.md).
+
 ## Behaviour scenarios
 
 The behaviour lab replays synthetic stories without contacting a real Telegram chat, mailbox, Calendar, or private Thread. Listing and inspection are deterministic and CI-safe; a real run is an explicit local command and may incur model usage.

@@ -101,6 +101,20 @@ async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
         "update_wakeup",
         "cancel_wakeup",
         "record_stewardship_outcome",
+        "start_grocery_order",
+        "read_grocery_order",
+        "set_grocery_fulfilment",
+        "search_grocery_products",
+        "add_grocery_product",
+        "omit_grocery_item",
+        "list_grocery_slots",
+        "choose_grocery_slot",
+        "review_and_approve_grocery_order",
+        "checkout_grocery_order",
+        "cancel_grocery_order",
+        "request_grocery_takeover",
+        "resume_grocery_order",
+        "repair_grocery_follow_through",
     ]
 
 

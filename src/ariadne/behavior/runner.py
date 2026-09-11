@@ -30,6 +30,7 @@ from ariadne.codex.conversation import (
 )
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
+from ariadne.grocery.capability import TOOLS as GROCERY_TOOLS
 from ariadne.knowledge import KnowledgeMetadata
 from ariadne.knowledge.documents import render_document
 from ariadne.knowledge.paths import slug
@@ -205,13 +206,16 @@ def _fake_mcp_overrides(
     knowledge: Path,
     telegram: Path,
 ) -> tuple[str, ...]:
+    # The disposable lab has no browser or retailer, so grocery tools are not
+    # faked. Offering names the fake server does not serve would break the run.
+    served = tuple(tool for tool in enabled_tools if tool not in GROCERY_TOOLS)
     return (
         f"mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(sys.executable)}",
         f"mcp_servers.{MCP_SERVER_NAME}.args="
         + json.dumps(["-m", "ariadne.behavior.fake_mcp"]),
         f"mcp_servers.{MCP_SERVER_NAME}.enabled=true",
         f"mcp_servers.{MCP_SERVER_NAME}.tool_timeout_sec={MCP_TOOL_TIMEOUT_SECONDS}",
-        f"mcp_servers.{MCP_SERVER_NAME}.enabled_tools=" + json.dumps(enabled_tools),
+        f"mcp_servers.{MCP_SERVER_NAME}.enabled_tools=" + json.dumps(served),
         f"mcp_servers.{MCP_SERVER_NAME}.env.ARIADNE_PROFILE="
         + json.dumps(profile_name),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{STATE_ENVIRONMENT}="
