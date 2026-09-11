@@ -14,9 +14,18 @@ from .accounts import (
     connect_account,
     select_account,
 )
+from .classify import MailClassifier
+from .drafts import (
+    MailDrafts,
+    build_message,
+    build_reply,
+    drafts_folder,
+    validated_address,
+)
 from .models import (
     BackfillSummary,
     Importance,
+    MailClassification,
     MailMetadata,
     MailRoute,
     MailRoutes,
@@ -25,6 +34,8 @@ from .models import (
     RouteOverlap,
     RuleLint,
     SuggestedAction,
+    cheap_triage,
+    classify_message,
 )
 from .reader import MailReader, MultiAccountMailReader, decode_mail_id, encode_mail_id
 from .runtime import (
@@ -35,8 +46,8 @@ from .runtime import (
     MailProcessor,
     MailState,
     backfill_inbox,
-    cheap_triage,
     ensure_folders,
+    fetch_route_headers,
     lint_mail_routes,
     load_routes,
     move_messages,
@@ -56,6 +67,9 @@ __all__ = [
     "MailAccountError",
     "MailAccountRegistry",
     "MailAuthenticationError",
+    "MailClassification",
+    "MailClassifier",
+    "MailDrafts",
     "MailMetadata",
     "MailProcessor",
     "MailRoute",
@@ -75,11 +89,16 @@ __all__ = [
     "SuggestedAction",
     "backfill_inbox",
     "authenticate_client",
+    "build_message",
+    "build_reply",
     "cheap_triage",
+    "classify_message",
     "connect_account",
     "decode_mail_id",
+    "drafts_folder",
     "ensure_folders",
     "encode_mail_id",
+    "fetch_route_headers",
     "load_routes",
     "lint_mail_routes",
     "move_messages",
@@ -87,4 +106,5 @@ __all__ = [
     "record_current_mail_decision",
     "restore_folder_to_inbox",
     "select_account",
+    "validated_address",
 ]

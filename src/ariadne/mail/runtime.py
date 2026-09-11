@@ -14,7 +14,7 @@ from email.parser import BytesParser
 from email.utils import getaddresses
 from itertools import combinations
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 import yaml  # type: ignore[import-untyped]
 from imapclient import IMAPClient  # type: ignore[import-untyped]
@@ -50,6 +50,7 @@ from .models import (
     RouteOverlap,
     RuleLint,
     SuggestedAction,
+    classify_message,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -61,23 +62,6 @@ HEADER_QUERY = (
     b"LIST-UNSUBSCRIBE PRECEDENCE AUTO-SUBMITTED)]"
 )
 FULL_QUERY = b"BODY.PEEK[]"
-IMPORTANT_SUBJECT_WORDS = (
-    "action required",
-    "action needed",
-    "urgent",
-    "important",
-    "deadline",
-    "interview",
-    "security alert",
-    "verify",
-    "verification",
-    "password",
-    "sign-in",
-    "login",
-    "appointment",
-    "reservation",
-    "booking confirmation",
-)
 _UNEXPECTED_IDLE_RESPONSE = "Unexpected IDLE response:"
 
 
@@ -139,20 +123,6 @@ def parse_metadata(raw: bytes) -> MailMetadata:
         precedence=str(message.get("Precedence", "")),
         auto_submitted=str(message.get("Auto-Submitted", "")),
     )
-
-
-def cheap_triage(message: MailMetadata) -> Literal["routine", "important", "inspect"]:
-    """Classify unmatched headers without spending a model turn."""
-    subject = message.subject.casefold()
-    if any(word in subject for word in IMPORTANT_SUBJECT_WORDS):
-        return "important"
-    if message.has_list_unsubscribe:
-        return "routine"
-    if message.precedence.casefold() in {"bulk", "list", "junk"}:
-        return "routine"
-    if message.auto_submitted and message.auto_submitted.casefold() != "no":
-        return "routine"
-    return "inspect"
 
 
 class MailState:
@@ -651,6 +621,27 @@ def _response_value(
     return None
 
 
+def fetch_route_headers(
+    client: IMAPClient, folder: str, uidvalidity: int, uid: int
+) -> bytes:
+    """Read exactly the header set mail ingestion routes on, without mutating.
+
+    The selection is read-only and the fetch peeks, so classifying a message
+    cannot mark it read or otherwise disturb the mailbox.
+    """
+    selected = client.select_folder(folder, readonly=True)
+    current = selected.get(b"UIDVALIDITY", selected.get("UIDVALIDITY"))
+    if current is None:
+        raise RuntimeError("IMAP did not return UIDVALIDITY.")
+    if int(current) != uidvalidity:
+        raise ValueError("That mail id is stale. Search mail again.")
+    response = client.fetch([uid], [HEADER_QUERY])
+    raw = _response_value(response, uid, b"BODY[")
+    if raw is None:
+        raise ValueError("That message is no longer available. Search mail again.")
+    return raw
+
+
 def ensure_folders(client: IMAPClient, routes: MailRoutes) -> None:
     """Create the configured filing folders without touching any messages."""
     listed = client.list_folders()
@@ -959,13 +950,15 @@ class MailProcessor:
                 self.state.finish(job.job_id)
                 return
 
-            route = self.routes.match(metadata)
+            decision = classify_message(self.routes, metadata)
+            route = decision.route
             if (
                 not pending_iris_then_move
                 and route is not None
-                and route.action == "move"
+                and decision.action == "move"
             ):
-                destination = self.routes.folders[route.classification]
+                if decision.destination is None:
+                    raise RuntimeError("A move classification needs a destination.")
                 self.state.set_runtime_decision(
                     job.job_id,
                     route_id=route.id,
@@ -975,7 +968,7 @@ class MailProcessor:
                         SuggestedAction, f"move_to_{route.classification}"
                     ),
                     action="move",
-                    destination=destination,
+                    destination=decision.destination,
                 )
                 await self._apply(cast(MailJob, self.state.get(job.job_id)))
                 return
@@ -988,9 +981,11 @@ class MailProcessor:
             if (
                 not pending_iris_then_move
                 and route is not None
-                and route.action == "iris_then_move"
+                and decision.action == "iris_then_move"
             ):
-                move_after_iris = self.routes.folders[route.classification]
+                if decision.destination is None:
+                    raise RuntimeError("An iris_then_move route needs a destination.")
+                move_after_iris = decision.destination
                 self.state.set_pending_route_action(
                     job.job_id,
                     route_id=route.id,
@@ -999,23 +994,21 @@ class MailProcessor:
                     destination=move_after_iris,
                 )
 
-            if route is None and not pending_iris_then_move:
-                defaults = self.routes.defaults
-                if (
-                    defaults.unmatched_action == "cheap_triage"
-                    and defaults.unmatched_keep_in_inbox
-                    and cheap_triage(metadata) == "routine"
-                ):
-                    self.state.set_runtime_decision(
-                        job.job_id,
-                        route_id=None,
-                        classification="routine",
-                        importance="routine",
-                        suggested_action="keep_in_inbox",
-                        action="keep",
-                    )
-                    self.state.finish(job.job_id)
-                    return
+            if (
+                route is None
+                and not pending_iris_then_move
+                and decision.action == "keep"
+            ):
+                self.state.set_runtime_decision(
+                    job.job_id,
+                    route_id=None,
+                    classification="routine",
+                    importance="routine",
+                    suggested_action="keep_in_inbox",
+                    action="keep",
+                )
+                self.state.finish(job.job_id)
+                return
 
             raw = await self._fetch(job.uid, FULL_QUERY)
             if raw is None:

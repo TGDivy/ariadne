@@ -24,6 +24,26 @@ SuggestedAction = Literal[
     "move_to_travel",
     "move_to_notifications",
 ]
+TriageVerdict = Literal["routine", "important", "inspect"]
+ClassifiedAction = Literal["move", "iris", "iris_then_move", "keep"]
+
+IMPORTANT_SUBJECT_WORDS = (
+    "action required",
+    "action needed",
+    "urgent",
+    "important",
+    "deadline",
+    "interview",
+    "security alert",
+    "verify",
+    "verification",
+    "password",
+    "sign-in",
+    "login",
+    "appointment",
+    "reservation",
+    "booking confirmation",
+)
 
 
 class RouteMatch(BaseModel):
@@ -158,6 +178,87 @@ def _matches(match: RouteMatch, message: MailMetadata) -> bool:
     ):
         return False
     return True
+
+
+def cheap_triage(message: MailMetadata) -> TriageVerdict:
+    """Classify unmatched headers without spending a model turn."""
+    subject = message.subject.casefold()
+    if any(word in subject for word in IMPORTANT_SUBJECT_WORDS):
+        return "important"
+    if message.has_list_unsubscribe:
+        return "routine"
+    if message.precedence.casefold() in {"bulk", "list", "junk"}:
+        return "routine"
+    if message.auto_submitted and message.auto_submitted.casefold() != "no":
+        return "routine"
+    return "inspect"
+
+
+@dataclass(frozen=True, slots=True)
+class MailClassification:
+    """What ordered routing and cheap triage decide about one fresh message."""
+
+    route: MailRoute | None
+    matched_route_ids: tuple[str, ...]
+    classification: str | None
+    action: ClassifiedAction
+    destination: str | None
+    wakes_iris: bool
+    triage: TriageVerdict | None
+
+    @property
+    def route_id(self) -> str | None:
+        return self.route.id if self.route is not None else None
+
+
+def classify_message(routes: MailRoutes, message: MailMetadata) -> MailClassification:
+    """Decide the fate of one newly seen message, without contacting a model.
+
+    Mail ingestion and the standalone classify command share this single
+    decision so the reported outcome cannot drift from the applied one.
+    """
+    matched = routes.matches(message)
+    matched_route_ids = tuple(rule.id for rule in matched)
+    route = matched[0] if matched else None
+    if route is not None:
+        destination = (
+            routes.folders[route.classification]
+            if route.action in {"move", "iris_then_move"}
+            else None
+        )
+        return MailClassification(
+            route=route,
+            matched_route_ids=matched_route_ids,
+            classification=route.classification,
+            action=route.action,
+            destination=destination,
+            wakes_iris=route.action != "move",
+            triage=None,
+        )
+    triage = cheap_triage(message)
+    if (
+        routes.defaults.unmatched_action == "cheap_triage"
+        and routes.defaults.unmatched_keep_in_inbox
+        and triage == "routine"
+    ):
+        return MailClassification(
+            route=None,
+            matched_route_ids=matched_route_ids,
+            classification="routine",
+            action="keep",
+            destination=None,
+            wakes_iris=False,
+            triage=triage,
+        )
+    return MailClassification(
+        route=None,
+        matched_route_ids=matched_route_ids,
+        classification=None,
+        action="iris",
+        destination=None,
+        wakes_iris=True,
+        triage=triage,
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -51,12 +51,16 @@ from .mail import (
     DeviceAuthorization,
     MailAccountRegistry,
     MailAuthenticationError,
+    MailClassifier,
+    MailDrafts,
     MailReader,
     MailUnavailableError,
     MultiAccountMailReader,
     OutlookAuthorizationRequired,
     OutlookOAuth,
     connect_account,
+    load_routes,
+    validated_address,
 )
 from .redaction import redact_sensitive_text
 
@@ -84,6 +88,25 @@ class MailCommands(Protocol):
     def read(self, value: str) -> dict[str, Any]: ...
 
     def read_thread(self, value: str) -> dict[str, Any]: ...
+
+
+class MailDraftCommands(Protocol):
+    def create_draft(
+        self,
+        *,
+        body: str,
+        reply_to: str | None = None,
+        account: str | None = None,
+        to: Sequence[str] = (),
+        cc: Sequence[str] = (),
+        subject: str | None = None,
+    ) -> dict[str, Any]: ...
+
+
+class MailClassifyCommands(Protocol):
+    def classify(
+        self, *, mail_id: str | None = None, path: Path | None = None
+    ) -> dict[str, Any]: ...
 
 
 class CalendarCommands(Protocol):
@@ -205,6 +228,10 @@ class CliBackend(Protocol):
     def serve(self) -> None: ...
 
     def mail(self) -> AbstractContextManager[MailCommands]: ...
+
+    def mail_drafts(self) -> AbstractContextManager[MailDraftCommands]: ...
+
+    def mail_classification(self) -> AbstractContextManager[MailClassifyCommands]: ...
 
     def authorize_outlook(self) -> dict[str, object]: ...
 
@@ -349,6 +376,35 @@ class ProductionBackend:
                 retryable=True,
             ) from error
 
+    def _mail_registry(self) -> MailAccountRegistry:
+        settings = self._load()
+        configured = settings.mail_settings
+        if configured is None:
+            raise CliError(
+                "mail_not_configured",
+                "Mail is not enabled in Ariadne's private configuration.",
+                EXIT_USAGE,
+            )
+
+        @contextmanager
+        def connector(account: MailAccountSettings) -> Iterator[IMAPClient]:
+            with connect_account(account, client_factory=IMAPClient) as client:
+                yield client
+
+        return MailAccountRegistry(configured.accounts, connector=connector)
+
+    @contextmanager
+    def mail_drafts(self) -> Iterator[MailDraftCommands]:
+        yield MailDrafts(self._mail_registry())
+
+    @contextmanager
+    def mail_classification(self) -> Iterator[MailClassifyCommands]:
+        registry = self._mail_registry()
+        settings = self._load()
+        configured = settings.mail_settings
+        assert configured is not None
+        yield MailClassifier(load_routes(configured.routes), registry)
+
     def authorize_outlook(self) -> dict[str, object]:
         settings = self._load()
         account = next(
@@ -450,6 +506,38 @@ def _mail_authorize_outlook(
     _: argparse.Namespace, backend: CliBackend
 ) -> dict[str, object]:
     return backend.authorize_outlook()
+
+
+def _mail_draft(args: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
+    body = _draft_body(args)
+    if args.reply_to is not None:
+        if args.to or args.cc or args.subject is not None or args.account is not None:
+            raise CliError(
+                "invalid_arguments",
+                "A reply draft takes its account, recipients, and subject from the "
+                "message it answers.",
+                EXIT_USAGE,
+            )
+    elif not args.to or args.subject is None:
+        raise CliError(
+            "invalid_arguments",
+            "A new draft needs --subject and at least one --to recipient.",
+            EXIT_USAGE,
+        )
+    with backend.mail_drafts() as drafts:
+        return drafts.create_draft(
+            body=body,
+            reply_to=args.reply_to,
+            account=args.account,
+            to=args.to or (),
+            cc=args.cc or (),
+            subject=args.subject,
+        )
+
+
+def _mail_classify(args: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
+    with backend.mail_classification() as classifier:
+        return classifier.classify(mail_id=args.id, path=args.file)
 
 
 def _mail_read(args: argparse.Namespace, backend: CliBackend) -> dict[str, Any]:
@@ -726,6 +814,27 @@ def _bounded_text(maximum: int, label: str) -> Callable[[str], str]:
     return parse
 
 
+def _mail_address(value: str) -> str:
+    try:
+        return validated_address(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def _draft_body(args: argparse.Namespace) -> str:
+    if args.body is not None:
+        return cast(str, args.body)
+    path = cast(Path, args.body_file)
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise CliError(
+            "invalid_arguments",
+            f"The draft body file could not be read: {path}",
+            EXIT_USAGE,
+        ) from error
+
+
 def _workout_id(value: str) -> UUID:
     try:
         return UUID(value)
@@ -836,7 +945,9 @@ def build_parser() -> AriadneArgumentParser:
     )
     config_show.set_defaults(_handler=_config_show)
 
-    mail = commands.add_parser("mail", help="search and read enabled Mail accounts")
+    mail = commands.add_parser(
+        "mail", help="search, read, classify, and draft enabled Mail accounts"
+    )
     mail_actions = mail.add_subparsers(dest="mail_action", required=True)
     mail_search = mail_actions.add_parser(
         "search",
@@ -874,6 +985,70 @@ def build_parser() -> AriadneArgumentParser:
     )
     mail_thread.add_argument("id", help="opaque id returned by mail search")
     mail_thread.set_defaults(_handler=_mail_thread)
+    mail_draft = mail_actions.add_parser(
+        "draft",
+        help="leave an unsent draft in the mailbox",
+        description=(
+            "Create an editable draft in the account's Drafts folder. Ariadne "
+            "never sends mail."
+        ),
+        epilog=(
+            "Reply to a message with --reply-to, or start a new one with --to and "
+            "--subject. A reply is addressed to everyone on the original message; "
+            "trim the recipients in your mail client before sending it yourself."
+        ),
+    )
+    mail_draft.add_argument(
+        "--reply-to", metavar="ID", help="opaque id returned by mail search"
+    )
+    mail_draft.add_argument(
+        "--account",
+        metavar="KEY",
+        help="account for a new draft; required when several are enabled",
+    )
+    mail_draft.add_argument(
+        "--to",
+        action="append",
+        metavar="EMAIL",
+        type=_mail_address,
+        help="new-draft recipient; repeat for more than one",
+    )
+    mail_draft.add_argument(
+        "--cc",
+        action="append",
+        metavar="EMAIL",
+        type=_mail_address,
+        help="new-draft copy recipient; repeat for more than one",
+    )
+    mail_draft.add_argument(
+        "--subject",
+        type=_bounded_text(500, "subject"),
+        help="new-draft subject",
+    )
+    draft_body = mail_draft.add_mutually_exclusive_group(required=True)
+    draft_body.add_argument(
+        "--body", type=_bounded_text(100_000, "body"), help="draft body text"
+    )
+    draft_body.add_argument(
+        "--body-file", type=Path, metavar="PATH", help="UTF-8 file holding the body"
+    )
+    mail_draft.set_defaults(_handler=_mail_draft)
+
+    mail_classify = mail_actions.add_parser(
+        "classify",
+        help="report how mail routing would handle one message",
+        description=(
+            "Run the ingestion routing rules against one message without moving, "
+            "marking, filing, or waking Iris."
+        ),
+    )
+    classify_source = mail_classify.add_mutually_exclusive_group(required=True)
+    classify_source.add_argument("--id", help="opaque id returned by mail search")
+    classify_source.add_argument(
+        "--file", type=Path, metavar="PATH", help="raw RFC 822 message file"
+    )
+    mail_classify.set_defaults(_handler=_mail_classify)
+
     mail_authorize = mail_actions.add_parser(
         "authorize-outlook",
         help="authorize personal Outlook.com Mail using a browser on any device",

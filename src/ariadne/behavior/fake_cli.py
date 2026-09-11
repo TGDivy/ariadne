@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Never, cast
 
 from fastmcp.exceptions import ToolError
@@ -47,6 +48,42 @@ class FakeMail:
     def read_thread(self, value: str) -> dict[str, Any]:
         record_call("cli.mail.thread", {"id": value})
         raise ToolError("That scenario mail id is not available.")
+
+
+class FakeMailDrafts:
+    def create_draft(
+        self,
+        *,
+        body: str,
+        reply_to: str | None = None,
+        account: str | None = None,
+        to: Sequence[str] = (),
+        cc: Sequence[str] = (),
+        subject: str | None = None,
+    ) -> dict[str, Any]:
+        record_call(
+            "cli.mail.draft",
+            {
+                "reply_to": reply_to,
+                "account": account,
+                "to": list(to),
+                "cc": list(cc),
+                "subject": subject,
+                "body_characters": len(body),
+            },
+        )
+        raise ToolError("A scenario cannot write to a real mailbox.")
+
+
+class FakeMailClassifier:
+    def classify(
+        self, *, mail_id: str | None = None, path: Path | None = None
+    ) -> dict[str, Any]:
+        record_call(
+            "cli.mail.classify",
+            {"id": mail_id, "file": str(path) if path is not None else None},
+        )
+        raise ToolError("Scenario mail routing rules are not available.")
 
 
 class FakeCalendar:
@@ -199,6 +236,20 @@ class BehaviorBackend:
     def mail(self) -> Iterator[FakeMail]:
         try:
             yield FakeMail()
+        except ToolError as error:
+            raise CliError("invalid_request", str(error), EXIT_USAGE) from error
+
+    @contextmanager
+    def mail_drafts(self) -> Iterator[FakeMailDrafts]:
+        try:
+            yield FakeMailDrafts()
+        except ToolError as error:
+            raise CliError("invalid_request", str(error), EXIT_USAGE) from error
+
+    @contextmanager
+    def mail_classification(self) -> Iterator[FakeMailClassifier]:
+        try:
+            yield FakeMailClassifier()
         except ToolError as error:
             raise CliError("invalid_request", str(error), EXIT_USAGE) from error
 

@@ -161,6 +161,35 @@ Search queries every enabled account by default, merges and ranks a global bound
 
 Routes are ordered and first-match-wins. A `move` rule does not invoke the agent. For `iris_then_move`, an explicit agent decision to flag or move elsewhere wins; `keep_in_inbox` falls back to the route’s configured folder. By default, unmatched mail is inspected and kept in `INBOX`; set `defaults.unmatched_action` to `cheap_triage` to retain clearly routine unmatched mail without starting an agent turn.
 
+### Drafting a reply or a new message
+
+`ariadne mail draft` leaves an ordinary editable draft in the account's own Drafts folder. It is the only Mail command that writes a message, and the write is a single IMAP `APPEND` carrying the `\Draft` flag. Ariadne has no mail-sending path at all: you review, edit, and send from your own mail client.
+
+```bash
+ariadne mail draft --reply-to 'mail:OPAQUE_ID' --body "Tuesday at 14:00 works."
+ariadne mail draft --reply-to 'mail:OPAQUE_ID' --body-file /tmp/reply.txt
+ariadne mail draft --account outlook \
+  --to alex@example.com --cc team@example.com \
+  --subject "Thursday" --body "Are you free on Thursday?"
+```
+
+A reply derives everything but the body from the message it answers: the account from the opaque ID, `In-Reply-To` and `References` from its threading headers, one `Re:` prefix, and the original quoted beneath an attribution line and bounded in size. It is addressed to everyone on the original message — the sender in `To`, the remaining recipients in `Cc`, minus the account's own address — so trim the recipients in your client before sending. Recipient and subject flags belong to a new message only; the two forms cannot be mixed.
+
+A new message needs `--to` and `--subject`, and `--account` when more than one account is enabled. Repeat `--to` and `--cc` for more than one recipient. The body comes from `--body` or a UTF-8 `--body-file`. The result reports the account, folder, generated `Message-ID`, resolved recipients, and whether the original was quoted or truncated, alongside an explicit `"sent": false`.
+
+The Drafts folder is discovered from the IMAP `\Drafts` special-use flag, falling back to an ordinary `Drafts` name. Ariadne never creates that folder; an account without one fails clearly instead.
+
+### Checking how a message would be routed
+
+`ariadne mail classify` reports what mail ingestion would do with one message, using the same ordered routing and cheap-triage decision the live loop uses, without moving anything, marking anything, or spending a model turn:
+
+```bash
+ariadne mail classify --id 'mail:OPAQUE_ID'
+ariadne mail classify --file /tmp/message.eml
+```
+
+The `--id` form selects the folder read-only and peeks at exactly the header set ingestion routes on. The `--file` form reads a raw RFC 822 message and needs no mailbox or credentials at all, which makes it convenient for testing a rule before mail like it arrives. Results name every matching rule in configured order, not just the winner, so a shadowed rule is visible: `matched_route_ids` alongside the selected `route_id`, the resulting `classification`, `action`, `destination`, whether it `wakes_iris`, the `cheap_triage` verdict for unmatched mail, and the effective unmatched defaults. Nothing is recorded and no mail job is created; use the route-lint script below to measure rules across a whole mailbox instead.
+
 ### Safe maintenance commands
 
 Lint the configured rules against the mailbox without mutations:
