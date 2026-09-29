@@ -103,6 +103,33 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 + "</main>"
             )
             return
+        if self.path == "/option-heavy":
+            menuitems = "".join(
+                f'<div role="menuitem">Nationality {index}</div>'
+                for index in range(350)
+            )
+            self._html(
+                """
+                <title>Option-heavy form</title>
+                <main>
+                  <div role="menu" aria-label="Other nationalities">
+                """
+                + menuitems
+                + """
+                  </div>
+                  <label for="profession">Profession</label>
+                  <input id="profession">
+                  <label for="passport-type">Passport type</label>
+                  <select id="passport-type">
+                    <option value="ordinary">Ordinary</option>
+                    <option value="diplomatic">Diplomatic</option>
+                  </select>
+                  <label for="supporting-document">Supporting document</label>
+                  <input id="supporting-document" type="file">
+                </main>
+                """
+            )
+            return
         if self.path == "/submit":
             self._html(
                 """
@@ -374,6 +401,80 @@ async def test_observation_is_bounded_and_redacts_payment_numbers(
         assert "4111 1111 1111 1111" not in observed["text"]
         assert "[PAYMENT FIELD REDACTED]" in observed["text"]
         assert len(observed["elements"]) == 30
+    finally:
+        await runtime.close()
+
+
+async def test_large_option_list_does_not_hide_lower_form_controls(
+    tmp_path: Path, fixture_site: str
+) -> None:
+    runtime = BrowserRuntime(browser_config(tmp_path))
+    await runtime.start()
+    try:
+        await runtime.create_profile("personal")
+        started = await runtime.start_session("personal", "option-heavy-task")
+        token = started["lease"]["lease_token"]
+        observed = await runtime.navigate(
+            "option-heavy-task", token, f"{fixture_site}/option-heavy"
+        )
+
+        assert len(observed["elements"]) == 30
+        profession_ref = ref_named(observed, "Profession")
+        stale_passport_type_ref = ref_named(observed, "Passport type")
+        assert ref_named(observed, "Supporting document")
+
+        typed = await runtime.type_text(
+            "option-heavy-task", token, profession_ref, "Software engineer"
+        )
+        assert typed["page_revision"] > observed["page_revision"]
+        assert typed["state_digest"] != observed["state_digest"]
+        assert len(typed["elements"]) == 30
+        assert (
+            await runtime._tasks["option-heavy-task"]
+            .page.locator(  # noqa: SLF001
+                "#profession"
+            )
+            .input_value()
+            == "Software engineer"
+        )
+        with pytest.raises(BrowserReferenceError, match="stale"):
+            await runtime.select(
+                "option-heavy-task", token, stale_passport_type_ref, ["ordinary"]
+            )
+
+        passport_type_ref = ref_named(typed, "Passport type")
+        selected = await runtime.select(
+            "option-heavy-task", token, passport_type_ref, ["diplomatic"]
+        )
+        assert selected["page_revision"] > typed["page_revision"]
+        assert selected["state_digest"] != typed["state_digest"]
+        assert len(selected["elements"]) == 30
+        assert (
+            await runtime._tasks["option-heavy-task"]
+            .page.locator(  # noqa: SLF001
+                "#passport-type"
+            )
+            .input_value()
+            == "diplomatic"
+        )
+
+        document_ref = ref_named(selected, "Supporting document")
+        document = tmp_path / "supporting-document.txt"
+        document.write_text("synthetic fixture", encoding="utf-8")
+        uploaded = await runtime.upload(
+            "option-heavy-task", token, document_ref, str(document)
+        )
+        assert uploaded["page_revision"] > selected["page_revision"]
+        assert uploaded["state_digest"] != selected["state_digest"]
+        assert len(uploaded["elements"]) == 30
+        assert (
+            await runtime._tasks["option-heavy-task"]
+            .page.locator(  # noqa: SLF001
+                "#supporting-document"
+            )
+            .evaluate("element => element.files.length")
+            == 1
+        )
     finally:
         await runtime.close()
 
