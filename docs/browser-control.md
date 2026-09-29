@@ -115,12 +115,14 @@ resuming it invalidates old semantic references. Takeover itself is never approv
 submit a consequential action.
 
 The model inspects bounded page text and interactive semantic references, then uses a
-fresh reference for one action. Page changes invalidate references. Screenshots are
-private fallback evidence; coordinate interaction requires a screenshot from the
-current revision and must not be used for uncertain final submission. Password and
-payment values are excluded from observations, and the action journal contains only
-task/time/origin/operation/outcome plus deliberately retained artifact paths—not DOM,
-keystrokes, cookies, or request bodies.
+fresh reference for one action. Within the element bound, native form controls and
+useful actions are prioritised ahead of individual option and menu items so a large
+custom list cannot hide later labelled fields. The full DOM is never returned. Page
+changes invalidate references. Screenshots are private fallback evidence; coordinate
+interaction requires a screenshot from the current revision and must not be used for
+uncertain final submission. Password and payment values are excluded from observations,
+and the action journal contains only task/time/origin/operation/outcome plus deliberately
+retained artifact paths—not DOM, keystrokes, cookies, or request bodies.
 
 Downloads stay inert in the private artifact directory until another explicit
 Ariadne flow reads or shares them. Uploads must name one intended local file. Dialogs,

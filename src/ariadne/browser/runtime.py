@@ -43,6 +43,34 @@ from .state import BrowserState, state_digest
 _INTERACTIVE_SELECTOR = (
     "a[href], button, input, select, textarea, [role], [contenteditable='true']"
 )
+_PRIORITIZED_ELEMENT_INDEXES = """(elements, maximum) => {
+    const actionableRoles = new Set([
+        'button', 'checkbox', 'combobox', 'link', 'radio', 'searchbox',
+        'slider', 'spinbutton', 'switch', 'tab', 'textbox', 'treeitem'
+    ]);
+    const collectionItemRoles = new Set([
+        'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option'
+    ]);
+    const tiers = [[], [], []];
+    for (const [index, element] of elements.entries()) {
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden' ||
+                element.getClientRects().length === 0) {
+            continue;
+        }
+        const tag = element.tagName.toLowerCase();
+        const role = (element.getAttribute('role') || '').toLowerCase();
+        const isNativeControl = ['input', 'select', 'textarea'].includes(tag);
+        const isNativeAction = tag === 'button' ||
+            (tag === 'a' && element.hasAttribute('href')) ||
+            element.getAttribute('contenteditable') === 'true';
+        const tier = isNativeControl || isNativeAction || actionableRoles.has(role)
+            ? 0
+            : collectionItemRoles.has(role) ? 2 : 1;
+        tiers[tier].push(index);
+    }
+    return tiers.flat().slice(0, maximum);
+}"""
 _CARD_NUMBER = re.compile(r"(?<!\d)(?:\d[ -]*?){13,19}(?!\d)")
 _SENSITIVE_FIELD = re.compile(
     r"(?:password|passcode|one.?time|otp|card|credit|debit|cvv|cvc|security.?code)",
@@ -1026,9 +1054,15 @@ class BrowserRuntime:
         runtime.references.clear()
         dom_revision = await self._dom_revision(runtime.page)
         candidates = runtime.page.locator(_INTERACTIVE_SELECTOR)
-        count = min(await candidates.count(), self.config.observation_max_elements)
+        indexes = cast(
+            list[int],
+            await candidates.evaluate_all(
+                _PRIORITIZED_ELEMENT_INDEXES,
+                self.config.observation_max_elements,
+            ),
+        )
         elements: list[dict[str, Any]] = []
-        for index in range(count):
+        for index in indexes:
             locator = candidates.nth(index)
             try:
                 if not await locator.is_visible():
