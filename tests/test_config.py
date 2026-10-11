@@ -12,12 +12,7 @@ from ariadne.revisit import Attention
 from ariadne.stewardship import STATE_ENVIRONMENT as STEWARDSHIP_STATE_ENVIRONMENT
 
 
-def write_config(
-    tmp_path: Path,
-    *,
-    telegram: str = 'bot_token = "token"\nallowed_user_id = 12345',
-    extra: str = "",
-) -> Path:
+def write_config(tmp_path: Path, *, extra: str = "") -> Path:
     vault = tmp_path / "vault"
     (vault / ".git").mkdir(parents=True, exist_ok=True)
     config = tmp_path / "config.toml"
@@ -26,9 +21,6 @@ def write_config(
 version = 1
 human_name = "Example User"
 vault = "{vault}"
-
-[telegram]
-{telegram}
 {extra}
 ''',
         encoding="utf-8",
@@ -165,7 +157,7 @@ def test_ariadne_config_selects_an_alternate_toml(tmp_path: Path) -> None:
 
     settings = load_settings(environ={"ARIADNE_CONFIG": str(config)})
 
-    assert settings.allowed_user_id == 12345
+    assert settings.vault == (tmp_path / "vault").resolve()
 
 
 def test_environment_variables_do_not_override_toml(tmp_path: Path) -> None:
@@ -173,64 +165,10 @@ def test_environment_variables_do_not_override_toml(tmp_path: Path) -> None:
 
     settings = load_settings(
         config,
-        environ={
-            "ARIADNE_HUMAN_NAME": "Legacy",
-            "TELEGRAM_BOT_TOKEN": "legacy-token",
-        },
+        environ={"ARIADNE_HUMAN_NAME": "Legacy"},
     )
 
     assert settings.human_name == "Example User"
-    assert settings.telegram_bot_token == "token"
-
-
-def test_voice_transcription_command_is_explicit_argv_configuration(
-    tmp_path: Path,
-) -> None:
-    config = write_config(
-        tmp_path,
-        telegram="""\
-bot_token = "token"
-allowed_user_id = 12345
-voice_transcription_command = ["local-whisper", "--input", "{input}"]
-voice_transcription_timeout_seconds = 45""",
-    )
-
-    settings = load_settings(config, environ={})
-
-    assert settings.telegram.voice_transcription_command == (
-        "local-whisper",
-        "--input",
-        "{input}",
-    )
-    assert settings.telegram.voice_transcription_timeout_seconds == 45
-    assert settings_payload(settings)["telegram"][  # type: ignore[index]
-        "voice_transcription_command"
-    ] == ["local-whisper", "--input", "{input}"]
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        '"local-whisper"',
-        '["local-whisper"]',
-        '["local-whisper", "{input}", "{input}"]',
-        '["local-whisper", ""]',
-    ],
-)
-def test_voice_transcription_command_rejects_ambiguous_execution(
-    tmp_path: Path, command: str
-) -> None:
-    config = write_config(
-        tmp_path,
-        telegram=(
-            'bot_token = "token"\n'
-            "allowed_user_id = 12345\n"
-            f"voice_transcription_command = {command}"
-        ),
-    )
-
-    with pytest.raises(ValidationError, match="voice_transcription_command"):
-        load_settings(config, environ={})
 
 
 def test_missing_config_is_rejected(tmp_path: Path) -> None:
@@ -342,9 +280,7 @@ default_calendar = "Personal"
 
     assert settings.calendar.enabled is True
     assert settings.mcp_environment == {
-        "TELEGRAM_BOT_TOKEN": "token",
-        "TELEGRAM_ALLOWED_USER_ID": "12345",
-        "ARIADNE_TELEGRAM_STATE": str(settings.telegram.state.resolve()),
+        "ARIADNE_CONVERSATION_STATE": str(settings.conversation.state.resolve()),
         REVISIT_STATE_ENVIRONMENT: str(settings.revisits.state.resolve()),
         STEWARDSHIP_STATE_ENVIRONMENT: str(settings.stewardship.state.resolve()),
     }
@@ -482,7 +418,8 @@ def test_default_mail_state_expands_the_home_directory(
 
     assert settings.mail.state == fake_home / ".local/state/ariadne/mail.sqlite3"
     assert (
-        settings.telegram.state == fake_home / ".local/state/ariadne/telegram.sqlite3"
+        settings.conversation.state
+        == fake_home / ".local/state/ariadne/conversation.sqlite3"
     )
     assert (
         settings.revisits.state == fake_home / ".local/state/ariadne/revisits.sqlite3"
@@ -491,8 +428,8 @@ def test_default_mail_state_expands_the_home_directory(
         settings.stewardship.state
         == fake_home / ".local/state/ariadne/stewardship.sqlite3"
     )
-    assert settings.mcp_environment["ARIADNE_TELEGRAM_STATE"] == str(
-        settings.telegram.state.resolve()
+    assert settings.mcp_environment["ARIADNE_CONVERSATION_STATE"] == str(
+        settings.conversation.state.resolve()
     )
 
 
@@ -564,8 +501,12 @@ endpoint = "https://otlp.example.com/otlp"
 def test_redacted_configuration_never_contains_secrets(tmp_path: Path) -> None:
     config = write_config(
         tmp_path,
-        telegram='bot_token = "secret"\nallowed_user_id = 7',
-        extra="""\
+        extra=f"""\
+
+[[app.devices]]
+id = "iphone"
+name = "iPhone"
+token_sha256 = "{"b" * 64}"
 
 [icloud]
 username = "person@example.com"
@@ -585,7 +526,7 @@ read_token = "health-read-secret-that-is-long-enough"
 
     serialized = json.dumps(settings_payload(load_settings(config, environ={})))
 
-    assert "secret" not in serialized
+    assert "b" * 64 not in serialized
     assert "icloud-secret" not in serialized
     assert "telemetry-secret" not in serialized
     assert "health-read-secret" not in serialized
@@ -618,10 +559,37 @@ def test_unknown_configuration_keys_are_rejected(tmp_path: Path) -> None:
         load_settings(config, environ={})
 
 
-def test_settings_requires_a_positive_user_id(tmp_path: Path) -> None:
-    config = write_config(tmp_path, telegram='bot_token = "token"\nallowed_user_id = 0')
+def test_retired_telegram_section_explains_the_replacement(tmp_path: Path) -> None:
+    config = write_config(
+        tmp_path, extra='[telegram]\nbot_token = "token"\nallowed_user_id = 7'
+    )
 
-    with pytest.raises(ValidationError, match="greater than 0"):
+    with pytest.raises(ValidationError, match="retired"):
+        load_settings(config, environ={})
+
+
+@pytest.mark.parametrize(
+    ("app", "error"),
+    [
+        ('host = "0.0.0.0"', "loopback"),
+        (
+            '[[app.devices]]\nid = "a"\nname = "A"\ntoken_sha256 = "short"',
+            "token_sha256",
+        ),
+        (
+            f'[[app.devices]]\nid = "a"\nname = "A"\ntoken_sha256 = "{"c" * 64}"\n'
+            f'[[app.devices]]\nid = "b"\nname = "B"\ntoken_sha256 = "{"c" * 64}"',
+            "unique",
+        ),
+    ],
+)
+def test_app_api_stays_on_loopback_with_distinct_device_tokens(
+    tmp_path: Path, app: str, error: str
+) -> None:
+    section = app if app.startswith("[[") else f"[app]\n{app}"
+    config = write_config(tmp_path, extra=section)
+
+    with pytest.raises(ValidationError, match=error):
         load_settings(config, environ={})
 
 
@@ -647,15 +615,9 @@ def test_settings_requires_a_git_vault(tmp_path: Path) -> None:
 
 
 def test_workspace_is_an_optional_existing_launch_directory(tmp_path: Path) -> None:
-    config = write_config(tmp_path)
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    config.write_text(
-        config.read_text(encoding="utf-8").replace(
-            "\n[telegram]", f'\nworkspace = "{workspace}"\n\n[telegram]'
-        ),
-        encoding="utf-8",
-    )
+    config = write_config(tmp_path, extra=f'workspace = "{workspace}"')
 
     settings = load_settings(config, environ={})
 

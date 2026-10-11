@@ -67,7 +67,7 @@ from ariadne.codex import (
 )
 from ariadne.codex.activity import describe_activity
 from ariadne.codex.resolver import resolve_profile
-from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
+from ariadne.profile import CONVERSATION_PROFILE, MAIL_PROFILE
 from ariadne.telemetry import Telemetry
 
 HUMAN = "Example User"
@@ -89,7 +89,7 @@ def make_conversation(
 ) -> CodexConversation:
     return CodexConversation(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=vault,
             settings=settings,
             human=human,
@@ -99,43 +99,41 @@ def make_conversation(
     )
 
 
-def test_mcp_config_forwards_its_required_environment(
-    tmp_path: Path, monkeypatch
-) -> None:
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "123")
-
+def test_mcp_config_forwards_its_required_environment(tmp_path: Path) -> None:
     overrides = _mcp_config_overrides(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
             mcp_environment={
-                "TELEGRAM_BOT_TOKEN": "token-for-test",
-                "TELEGRAM_ALLOWED_USER_ID": "123",
+                "ARIADNE_CONVERSATION_STATE": "/private/conversation.sqlite3",
+                "UNRELATED_SECRET": "never-forwarded",
             },
         )
     )
 
     assert not any("ARIADNE_VAULT" in value for value in overrides)
-    assert 'mcp_servers.ariadne.env.ARIADNE_PROFILE="telegram"' in overrides
+    assert not any("never-forwarded" in value for value in overrides)
+    assert 'mcp_servers.ariadne.env.ARIADNE_PROFILE="conversation"' in overrides
     assert 'mcp_servers.ariadne.args=["-m", "ariadne.mcp"]' in overrides
     assert "mcp_servers.ariadne.enabled=true" in overrides
     assert "mcp_servers.ariadne.tool_timeout_sec=960" in overrides
     assert (
         "mcp_servers.ariadne.enabled_tools="
-        + json.dumps(TELEGRAM_PROFILE.enabled_tools)
+        + json.dumps(CONVERSATION_PROFILE.enabled_tools)
         in overrides
     )
-    assert 'mcp_servers.ariadne.env.TELEGRAM_BOT_TOKEN="token-for-test"' in overrides
-    assert 'mcp_servers.ariadne.env.TELEGRAM_ALLOWED_USER_ID="123"' in overrides
+    assert (
+        'mcp_servers.ariadne.env.ARIADNE_CONVERSATION_STATE="/private/conversation.sqlite3"'
+        in overrides
+    )
 
 
 def test_permission_config_enables_profile_network_access(tmp_path: Path) -> None:
     overrides = conversation_module._permission_config_overrides(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
@@ -155,7 +153,7 @@ def test_default_permission_profile_controls_the_effective_runtime_sandbox(
     tmp_path: Path,
 ) -> None:
     declaration = replace(
-        TELEGRAM_PROFILE,
+        CONVERSATION_PROFILE,
         writable_roots=(tmp_path,),
         network_domains=("ithaca.example",),
         allow_local_binding=False,
@@ -781,7 +779,7 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
         id="mcp",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="request_telegram_file_delivery",
+        tool="share_files",
         type="mcpToolCall",
     )
     completed_mcp_item = mcp_item.model_copy(
@@ -803,11 +801,11 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     events = [event async for event in conversation.stream_turn("Prepare the file")]
     activities = [event.text for event in events if isinstance(event, ActivityUpdated)]
 
-    assert activities == ["Preparing files…"]
+    assert activities == ["Sharing files…"]
     assert (
         CapabilityCallCompleted(
             server="ariadne",
-            tool="request_telegram_file_delivery",
+            tool="share_files",
             status="completed",
             error=None,
         )
@@ -815,29 +813,29 @@ async def test_codex_conversation_reports_mcp_activity_without_tool_details(
     )
     assert "private" not in activities[0]
     assert (
-        "Codex MCP call started source=telegram server=ariadne "
-        "tool=request_telegram_file_delivery call_id=mcp" in caplog.text
+        "Codex MCP call started source=conversation server=ariadne "
+        "tool=share_files call_id=mcp" in caplog.text
     )
     assert (
-        "Codex MCP call finished source=telegram server=ariadne "
-        "tool=request_telegram_file_delivery call_id=mcp status=completed "
+        "Codex MCP call finished source=conversation server=ariadne "
+        "tool=share_files call_id=mcp status=completed "
         "duration=1.25s" in caplog.text
     )
     assert "/private/path" not in caplog.text
 
 
-def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
+def test_policy_rejected_mcp_call_logs_its_failure_class_without_arguments(
     caplog, monkeypatch
 ) -> None:
     caplog.set_level(logging.INFO)
     clock = iter((10.0, 21.0))
     monkeypatch.setattr(conversation_module.time, "monotonic", lambda: next(clock))
     started = McpToolCallThreadItem(
-        arguments={"text": "private message"},
+        arguments={"paths": ["/private/report.md"]},
         id="mcp",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="send_telegram_message",
+        tool="share_files",
         type="mcpToolCall",
     )
     failed = started.model_copy(
@@ -850,12 +848,11 @@ def test_policy_rejected_telegram_mcp_call_logs_duration_request_and_error(
         }
     )
 
-    started_at = conversation_module._log_mcp_started(started, "mail")
-    conversation_module._log_mcp_finished(failed, "mail", started_at)
+    started_at = conversation_module._log_mcp_started(started, "conversation")
+    conversation_module._log_mcp_finished(failed, "conversation", started_at)
 
     assert "status=failed failure=policy_rejected duration=11.00s" in caplog.text
-    assert 'request={"text": "private message"}' in caplog.text
-    assert "This action was rejected due to unacceptable risk." in caplog.text
+    assert "/private/report.md" not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -895,7 +892,7 @@ async def test_codex_conversation_reports_specific_service_activity(
     assert activities == [expected]
 
 
-async def test_telegram_question_is_not_announced_as_a_tool(
+async def test_a_waiting_question_is_announced_as_waiting_for_the_owner(
     tmp_path: Path,
 ) -> None:
     mcp_item = McpToolCallThreadItem(
@@ -903,7 +900,7 @@ async def test_telegram_question_is_not_announced_as_a_tool(
         id="mcp",
         server="ariadne",
         status=McpToolCallStatus.in_progress,
-        tool="ask_telegram_question",
+        tool="ask_question",
         type="mcpToolCall",
     )
     thread = FakeThread(
@@ -918,7 +915,7 @@ async def test_telegram_question_is_not_announced_as_a_tool(
     events = [event async for event in conversation.stream_turn("Choose")]
     activities = [event.text for event in events if isinstance(event, ActivityUpdated)]
 
-    assert activities == []
+    assert activities == ["Waiting for your answer…"]
 
 
 async def test_codex_conversation_turns_an_sdk_interrupt_into_a_safe_exception(
@@ -1109,7 +1106,7 @@ async def test_shared_conversation_persists_and_resumes_the_same_thread(
     first_client = FakeCodex(thread)
     first = CodexConversation(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
@@ -1125,7 +1122,7 @@ async def test_shared_conversation_persists_and_resumes_the_same_thread(
     second_client = FakeCodex(thread)
     second = CodexConversation(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
@@ -1168,7 +1165,7 @@ async def test_explicit_reset_forgets_persisted_thread_before_replacement(
     client = FakeCodex(first_thread, second_thread)
     conversation = CodexConversation(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
@@ -1207,7 +1204,7 @@ async def test_incompatible_thread_state_falls_back_once_and_reports_loss(
     client = FakeCodex(replacement)
     conversation = CodexConversation(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
@@ -1230,7 +1227,7 @@ async def test_resume_failure_falls_back_without_exposing_saved_identifier(
     client = FakeCodex(replacement, resume_error=RuntimeError("gone"))
     conversation = CodexConversation(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,
@@ -1257,7 +1254,7 @@ async def test_state_read_failure_does_not_overwrite_possible_saved_thread(
     client = FakeCodex(FakeThread(thread_id="replacement"))
     conversation = CodexConversation(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=DEFAULT_SETTINGS,
             human=HUMAN,

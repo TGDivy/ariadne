@@ -19,7 +19,7 @@ from ariadne.behavior.runner import (
     run_scenario,
 )
 from ariadne.config import load_settings
-from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE, profile_for_attention
+from ariadne.profile import CONVERSATION_PROFILE, MAIL_PROFILE, profile_for_attention
 
 
 def _render_scenario(identifier: str) -> str:
@@ -99,8 +99,8 @@ def main() -> None:
         return
 
     scenario = get_scenario(args.scenario)
-    if scenario.telegram_prompt is not None:
-        declaration = TELEGRAM_PROFILE
+    if scenario.message is not None:
+        declaration = CONVERSATION_PROFILE
     elif scenario.revisit is not None:
         declaration = profile_for_attention(scenario.revisit.attention)
     else:
@@ -112,7 +112,7 @@ def main() -> None:
             personality=settings.personality,
             settings=(
                 settings.codex_turn_settings
-                if scenario.telegram_prompt is not None
+                if scenario.message is not None
                 else (
                     settings.revisit_turn_settings(scenario.revisit.attention)
                     if scenario.revisit is not None

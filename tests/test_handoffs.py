@@ -1,27 +1,18 @@
 from __future__ import annotations
 
-import logging
 import sqlite3
-from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import pytest
 from fastmcp.exceptions import ToolError
-from openai_codex.generated.v2_all import MessagePhase
 
-from ariadne.codex import AgentMessageCompleted, AgentMessageStarted
 from ariadne.handoff import HandoffCoordinator, HandoffError, HandoffState
-from ariadne.mcp.handoff import hand_off_to_telegram_conversation
+from ariadne.mcp.handoff import hand_off_to_conversation
 from ariadne.prompts.activations import (
     SILENT_HANDOFF_RESPONSE,
     build_direct_turn_with_handoffs,
     build_proactive_handoff_turn_prompt,
 )
-from ariadne.telegram.history import TelegramHistoryMessage, TelegramMessageStore
-from ariadne.telegram.proactive import ProactiveTurn
-from ariadne.telegram.rich import RichBotAPI
 
 
 class MutableClock:
@@ -35,7 +26,7 @@ class MutableClock:
 def handoff_state(tmp_path: Path, clock: MutableClock) -> HandoffState:
     identifiers = (f"handoff-{index}" for index in range(100))
     state = HandoffState(
-        tmp_path / "telegram.sqlite3",
+        tmp_path / "conversation.sqlite3",
         clock=clock,
         id_factory=lambda: next(identifiers),
     )
@@ -43,9 +34,8 @@ def handoff_state(tmp_path: Path, clock: MutableClock) -> HandoffState:
     return state
 
 
-def test_schema_shares_private_telegram_state_and_is_additive(tmp_path: Path) -> None:
-    path = tmp_path / "private" / "telegram.sqlite3"
-    TelegramMessageStore(path).initialize()
+def test_schema_lives_in_private_conversation_state(tmp_path: Path) -> None:
+    path = tmp_path / "private" / "conversation.sqlite3"
     HandoffState(path).initialize()
 
     with sqlite3.connect(path) as database:
@@ -56,7 +46,7 @@ def test_schema_shares_private_telegram_state_and_is_additive(tmp_path: Path) ->
             )
         }
 
-    assert {"telegram_messages", "telegram_handoffs"} <= tables
+    assert "conversation_handoffs" in tables
     assert path.stat().st_mode & 0o777 == 0o600
 
 
@@ -254,13 +244,13 @@ async def test_failed_proactive_turn_retains_the_claimed_batch(tmp_path: Path) -
 def test_mcp_stages_against_its_turn_scoped_activation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    path = tmp_path / "telegram.sqlite3"
-    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(path))
+    path = tmp_path / "conversation.sqlite3"
+    monkeypatch.setenv("ARIADNE_CONVERSATION_STATE", str(path))
     monkeypatch.setenv("ARIADNE_ACTIVATION_KEY", "mail:42")
     monkeypatch.setenv("ARIADNE_ACTIVATION_SOURCE", "mail")
 
-    first = hand_off_to_telegram_conversation("First context")
-    second = hand_off_to_telegram_conversation("Replacement context")
+    first = hand_off_to_conversation("First context")
+    second = hand_off_to_conversation("Replacement context")
 
     handoff = HandoffState(path).for_activation("mail:42")
     assert first["handoff_id"] != second["handoff_id"]
@@ -275,7 +265,7 @@ def test_mcp_handoff_requires_background_authority(
     monkeypatch.delenv("ARIADNE_ACTIVATION_KEY", raising=False)
 
     with pytest.raises(ToolError, match="authority is unavailable"):
-        hand_off_to_telegram_conversation("No activation")
+        hand_off_to_conversation("No activation")
 
 
 def test_prompt_preserves_fifo_free_form_context_without_making_it_prose(
@@ -296,96 +286,7 @@ def test_prompt_preserves_fifo_free_form_context_without_making_it_prose(
     assert direct.endswith(
         "<current_human_message>\nDoes 9am work?\n</current_human_message>"
     )
-    assert "not Telegram prose" in direct
+    assert "not prewritten" in direct
     assert proactive.index("Train moved") < proactive.index("Calendar updated")
     assert SILENT_HANDOFF_RESPONSE in proactive
     assert "obsolete or duplicative" in proactive
-
-
-class FakeRichAPI:
-    def __init__(self) -> None:
-        self.sent: list[dict[str, object]] = []
-
-    async def send(self, **kwargs: object) -> SimpleNamespace:
-        self.sent.append(kwargs)
-        return SimpleNamespace(message_id=100 + len(self.sent))
-
-
-class RejectingHistory(TelegramMessageStore):
-    def record(self, message: TelegramHistoryMessage) -> None:
-        del message
-        raise sqlite3.OperationalError("history unavailable")
-
-
-async def test_proactive_renderer_has_no_fake_input_or_thinking_placeholder(
-    tmp_path: Path,
-) -> None:
-    rich = FakeRichAPI()
-    history = TelegramMessageStore(tmp_path / "telegram.sqlite3")
-    renderer = ProactiveTurn(cast(RichBotAPI, rich), history, chat_id=7)
-
-    assert rich.sent == []
-    await renderer.apply(AgentMessageStarted("final", MessagePhase.final_answer))
-    assert rich.sent == []
-    await renderer.apply(
-        AgentMessageCompleted(
-            "final",
-            MessagePhase.final_answer,
-            "Also—the train now leaves at 08:40. Does that still work?",
-        )
-    )
-    renderer.complete()
-
-    assert [item["markdown"] for item in rich.sent] == [
-        "Also—the train now leaves at 08:40. Does that still work?"
-    ]
-    page = history.read(7, since=datetime.min.replace(tzinfo=UTC))
-    assert [(item.speaker, item.source, item.text) for item in page.messages] == [
-        (
-            "iris",
-            "telegram",
-            "Also—the train now leaves at 08:40. Does that still work?",
-        )
-    ]
-
-
-async def test_proactive_renderer_can_suppress_an_obsolete_batch(
-    tmp_path: Path,
-) -> None:
-    rich = FakeRichAPI()
-    renderer = ProactiveTurn(
-        cast(RichBotAPI, rich),
-        TelegramMessageStore(tmp_path / "telegram.sqlite3"),
-        chat_id=7,
-    )
-
-    await renderer.apply(AgentMessageStarted("final", MessagePhase.final_answer))
-    await renderer.apply(
-        AgentMessageCompleted(
-            "final", MessagePhase.final_answer, SILENT_HANDOFF_RESPONSE
-        )
-    )
-    renderer.complete()
-
-    assert rich.sent == []
-
-
-async def test_accepted_proactive_send_is_not_retried_when_history_fails(
-    tmp_path: Path, caplog
-) -> None:
-    caplog.set_level(logging.ERROR)
-    rich = FakeRichAPI()
-    history = RejectingHistory(tmp_path / "telegram.sqlite3")
-    renderer = ProactiveTurn(cast(RichBotAPI, rich), history, chat_id=7)
-
-    await renderer.apply(AgentMessageStarted("final", MessagePhase.final_answer))
-    await renderer.apply(
-        AgentMessageCompleted(
-            "final", MessagePhase.final_answer, "One authoritative update"
-        )
-    )
-    renderer.complete()
-
-    assert [item["markdown"] for item in rich.sent] == ["One authoritative update"]
-    assert renderer.delivered_messages == 1
-    assert "suppressing automatic retry" in caplog.text

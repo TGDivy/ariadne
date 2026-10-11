@@ -1,4 +1,4 @@
-"""Durable background handoffs into the shared Telegram conversation."""
+"""Durable background handoffs into the shared conversation."""
 
 from .coordinator import HandoffCoordinator, HandoffTurnTarget
 from .models import ConversationHandoff, HandoffStatus

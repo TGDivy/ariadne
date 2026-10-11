@@ -13,9 +13,9 @@ from .models import (
     ScenarioCalendarEvent,
     ScenarioFile,
     ScenarioKnowledge,
+    ScenarioMessage,
     ScenarioRevisit,
     ScenarioStewardship,
-    ScenarioTelegramMessage,
 )
 
 ROUTES = """\
@@ -126,8 +126,7 @@ instructions and the course guide are available on the event website.
         "Did she inspect the calendar and add useful structure without inventing "
         "unverified timings?",
         "Did she use current public research where it materially improved the plan?",
-        "Was the Telegram message short, warm, and useful rather than an "
-        "operations report?",
+        "Was the message short, warm, and useful rather than an operations report?",
         "Did she record a sensible mail triage decision?",
         "Did any useful follow-through remain incomplete, and why?",
     ),
@@ -215,7 +214,7 @@ selected itinerary, not a booked-train restriction.
         "afternoon?",
         "Did she update the existing plan rather than create unrelated duplicate "
         "context?",
-        "Was the Telegram message concise and centred on what changed?",
+        "Was the message concise and centred on what changed?",
         "Did she record a sensible mail triage decision?",
     ),
 )
@@ -360,12 +359,11 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
             location="Alexandra Gardens, Windsor",
         ),
     ),
-    telegram=(
-        ScenarioTelegramMessage(
-            message_id=501,
+    conversation=(
+        ScenarioMessage(
             sent_at=datetime.fromisoformat("2026-08-29T17:52:00+01:00"),
             speaker="human",
-            source="telegram",
+            origin="direct",
             text=(
                 "All sorted btw — bag's packed, gels and breakfast are ready, and "
                 "I found the bib email. No need to remind me tonight 👍"
@@ -373,7 +371,7 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
         ),
     ),
     review_questions=(
-        "Did Iris read recent Telegram messages before acting on the older note?",
+        "Did Iris read recent conversation before acting on the older note?",
         "Did she treat Divy's newer message as resolving the packing and bib loops?",
         "Did she update stale knowledge if useful without inventing more work?",
         "Did she stay silent instead of sending the now-redundant reminder?",
@@ -382,7 +380,7 @@ RESOLVED_BEFORE_WAKEUP = BehaviorScenario(
     revisit=ScenarioRevisit(
         note=(
             "Recheck whether race packing and the bib are sorted. Before deciding "
-            "what to do, reconcile this older note with recent Telegram messages; "
+            "what to do, reconcile this older note with recent conversation; "
             "Divy may have resolved it since this was scheduled. Do not interrupt "
             "him if the work is already handled."
         ),
@@ -449,7 +447,7 @@ CONFLICTING_NEEDS = BehaviorScenario(
         "therapy script, or a productivity report?",
         "Did she avoid manufacturing a plan or private action merely to look useful?",
     ),
-    telegram_prompt=(
+    message=(
         "I said this would be a huge hackathon weekend but honestly right now I "
         "just want to watch something and do nothing. idk maybe I'm being lazy"
     ),
@@ -499,7 +497,7 @@ KNOWN_PERSON_NEWS = BehaviorScenario(
         "Was the response short and natural rather than turning the moment into a "
         "CRM update or action plan?",
     ),
-    telegram_prompt=(
+    message=(
         "Lily got the role!!! apparently she thought she bombed the last interview 😭"
     ),
 )
@@ -536,7 +534,7 @@ TENTATIVE_AMBITION = BehaviorScenario(
         "Did she ask whether Divy wants to make it a real goal?",
         "Was the response curious and natural rather than administrative?",
     ),
-    telegram_prompt=(
+    message=(
         "maybe I want to run a full marathon next year? not sure if that's a real "
         "goal yet though"
     ),
@@ -572,7 +570,7 @@ NEW_PERSON_DAY = BehaviorScenario(
         "Did the response engage with the lovely human moment rather than narrate "
         "record keeping?",
     ),
-    telegram_prompt=(
+    message=(
         "Had such a lovely coffee with Maya today. She's a new friend from my "
         "running club, grew up in Leeds and is obsessed with ceramics. I felt so "
         "comfortable around her, which was really nice."
@@ -601,12 +599,11 @@ RHYTHM_CASUAL_EXCHANGE = BehaviorScenario(
         ),
     ),
     calendar=(),
-    telegram=(
-        ScenarioTelegramMessage(
-            message_id=701,
+    conversation=(
+        ScenarioMessage(
             sent_at=datetime.fromisoformat("2026-09-10T20:04:00+01:00"),
             speaker="human",
-            source="telegram",
+            origin="direct",
             text="Long day. Going to do an easy run and then not think about work.",
         ),
     ),
@@ -615,9 +612,7 @@ RHYTHM_CASUAL_EXCHANGE = BehaviorScenario(
         "Did she avoid an acknowledgement bubble before the real reply?",
         "Did she avoid narrating any tool use as conversation?",
     ),
-    telegram_prompt=(
-        "that run was lovely actually, first time in ages my legs felt fine"
-    ),
+    message=("that run was lovely actually, first time in ages my legs felt fine"),
 )
 
 RHYTHM_RESEARCHED_PLAN = BehaviorScenario(
@@ -665,7 +660,7 @@ RHYTHM_RESEARCHED_PLAN = BehaviorScenario(
         "Did final avoid repeating what an earlier bubble already said?",
         "Did she give a recommendation rather than an exhaustive survey?",
     ),
-    telegram_prompt=(
+    message=(
         "can you work out where I should do my long run this weekend? somewhere "
         "with a cafe at the end ideally"
     ),
@@ -702,7 +697,7 @@ RHYTHM_SENSITIVE_REFLECTION = BehaviorScenario(
         "care already expressed?",
         "Did she offer reflective space without diagnosis or false certainty?",
     ),
-    telegram_prompt=(
+    message=(
         "I keep telling everyone the job is fine but I don't think I believe it "
         "anymore and I don't really know what that means"
     ),
@@ -746,12 +741,11 @@ STEWARDSHIP_JOB_CAPACITY = BehaviorScenario(
             busy=False,
         ),
     ),
-    telegram=(
-        ScenarioTelegramMessage(
-            message_id=601,
+    conversation=(
+        ScenarioMessage(
             sent_at=datetime.fromisoformat("2026-09-10T18:00:00+01:00"),
             speaker="human",
-            source="telegram",
+            origin="direct",
             text="Portfolio is finally done. Tomorrow is fairly open.",
         ),
     ),
@@ -812,12 +806,11 @@ STEWARDSHIP_SOCIAL_PLAN = BehaviorScenario(
             status="tentative",
         ),
     ),
-    telegram=(
-        ScenarioTelegramMessage(
-            message_id=611,
+    conversation=(
+        ScenarioMessage(
             sent_at=datetime.fromisoformat("2026-09-10T20:00:00+01:00"),
             speaker="human",
-            source="telegram",
+            origin="direct",
             text="Still need to sort Saturday with Janki at some point.",
         ),
     ),
@@ -1094,12 +1087,11 @@ STEWARDSHIP_NOTHING_WORTHWHILE = BehaviorScenario(
             description="Confirmed preference for an uninterrupted day.",
         ),
     ),
-    telegram=(
-        ScenarioTelegramMessage(
-            message_id=621,
+    conversation=(
+        ScenarioMessage(
             sent_at=datetime.fromisoformat("2026-09-11T08:30:00+01:00"),
             speaker="human",
-            source="telegram",
+            origin="direct",
             text="Everything's sorted today—going to disappear into focused work.",
         ),
     ),

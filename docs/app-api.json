@@ -1,0 +1,3190 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Ariadne app API",
+    "version": "1",
+    "description": "Commands are HTTP; the conversation streams over the WebSocket described in x-stream. Every route except /health needs a paired device's bearer token."
+  },
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness, without authentication.",
+        "responses": {
+          "200": {
+            "description": "Liveness, without authentication.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/v1/identity": {
+      "get": {
+        "summary": "The agent's name and avatar.",
+        "responses": {
+          "200": {
+            "description": "The agent's name and avatar.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/avatar": {
+      "get": {
+        "summary": "The agent's avatar image.",
+        "responses": {
+          "200": {
+            "description": "File contents.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "summary": "What is enabled and running.",
+        "responses": {
+          "200": {
+            "description": "What is enabled and running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/messages": {
+      "get": {
+        "summary": "Committed messages, newest page first, each page oldest first.",
+        "responses": {
+          "200": {
+            "description": "Committed messages, newest page first, each page oldest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessagesPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "Only messages with a smaller id.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 200 (default 50).",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      },
+      "post": {
+        "summary": "Send a message; it starts, steers, queues, or answers.",
+        "responses": {
+          "200": {
+            "description": "Send a message; it starts, steers, queues, or answers.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SendMessageResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/messages/{message_id}/reactions": {
+      "put": {
+        "summary": "Replace the owner's reactions on one of Iris's messages.",
+        "responses": {
+          "200": {
+            "description": "Replace the owner's reactions on one of Iris's messages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionsResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "required": true,
+            "description": "The message id.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReactionsRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/turn/stop": {
+      "post": {
+        "summary": "Interrupt the active turn.",
+        "responses": {
+          "200": {
+            "description": "Interrupt the active turn.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StopResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/questions/{question_id}/answer": {
+      "post": {
+        "summary": "Answer a presented question by choice; typed answers are messages.",
+        "responses": {
+          "200": {
+            "description": "Answer a presented question by choice; typed answers are messages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "question_id",
+            "in": "path",
+            "required": true,
+            "description": "The question id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/attachments": {
+      "put": {
+        "summary": "Upload one file as the raw body; name it with an X-Filename header.",
+        "responses": {
+          "201": {
+            "description": "Upload one file as the raw body; name it with an X-Filename header.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttachmentUploaded"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "X-Filename",
+            "in": "header",
+            "required": false,
+            "description": "The original file name.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/files/{attachment_id}": {
+      "get": {
+        "summary": "Download an attachment or a file Iris shared.",
+        "responses": {
+          "200": {
+            "description": "File contents.",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "attachment_id",
+            "in": "path",
+            "required": true,
+            "description": "The attachment id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/conversation/new": {
+      "post": {
+        "summary": "Start a fresh Codex conversation.",
+        "responses": {
+          "200": {
+            "description": "Start a fresh Codex conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/settings": {
+      "get": {
+        "summary": "Current settings and choices.",
+        "responses": {
+          "200": {
+            "description": "Current settings and choices.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsOptions"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Change model, effort, or web research; starts a fresh conversation.",
+        "responses": {
+          "200": {
+            "description": "Change model, effort, or web research; starts a fresh conversation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsUpdate"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/upcoming": {
+      "get": {
+        "summary": "Scheduled activations.",
+        "responses": {
+          "200": {
+            "description": "Scheduled activations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpcomingView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/activity": {
+      "get": {
+        "summary": "What Iris did, newest first.",
+        "responses": {
+          "200": {
+            "description": "What Iris did, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ActivityPage"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "description": "Only items older than this item id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1 to 200 (default 50).",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/goals": {
+      "get": {
+        "summary": "Active and completed goals from the Thread.",
+        "responses": {
+          "200": {
+            "description": "Active and completed goals from the Thread.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GoalsView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/library": {
+      "get": {
+        "summary": "One level of the Thread.",
+        "responses": {
+          "200": {
+            "description": "One level of the Thread.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "folder",
+            "in": "query",
+            "required": false,
+            "description": "Semantic folder; empty for the root.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "archived",
+            "in": "query",
+            "required": false,
+            "description": "Browse archived records instead.",
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/records/{record_id}": {
+      "get": {
+        "summary": "One Thread record with Markdown body.",
+        "responses": {
+          "200": {
+            "description": "One Thread record with Markdown body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordView"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "description": "The record id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/devices": {
+      "post": {
+        "summary": "Register this phone's push token.",
+        "responses": {
+          "200": {
+            "description": "Register this phone's push token.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "A refused request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceRegistration"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    },
+    "schemas": {
+      "ActivityChanged": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "activity.changed",
+            "default": "activity.changed",
+            "title": "Type",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          }
+        },
+        "required": [
+          "turn_id",
+          "label"
+        ],
+        "title": "ActivityChanged",
+        "type": "object"
+      },
+      "ActivityItemView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "wakeup",
+                  "delegated",
+                  "daily",
+                  "weekly"
+                ],
+                "type": "string"
+              },
+              {
+                "enum": [
+                  "conversation",
+                  "mail"
+                ],
+                "type": "string"
+              }
+            ],
+            "title": "Kind"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Finished At"
+          },
+          "outcome": {
+            "enum": [
+              "running",
+              "spoke",
+              "handed_off",
+              "quiet",
+              "failed",
+              "stopped",
+              "skipped"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "account": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Account"
+          },
+          "effects": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EffectView"
+            },
+            "title": "Effects",
+            "type": "array"
+          },
+          "about": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RecordRef"
+            },
+            "title": "About",
+            "type": "array"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "started_at",
+          "outcome"
+        ],
+        "title": "ActivityItemView",
+        "type": "object"
+      },
+      "ActivityPage": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ActivityItemView"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "has_more"
+        ],
+        "title": "ActivityPage",
+        "type": "object"
+      },
+      "AnswerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "choice_index": {
+            "maximum": 5,
+            "minimum": 0,
+            "title": "Choice Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "choice_index"
+        ],
+        "title": "AnswerRequest",
+        "type": "object"
+      },
+      "AnswerResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome": {
+            "enum": [
+              "accepted",
+              "already_answered",
+              "inactive",
+              "stale"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "question": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "AnswerResponse",
+        "type": "object"
+      },
+      "AttachmentUploaded": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "document"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "filename",
+          "mime_type",
+          "size_bytes"
+        ],
+        "title": "AttachmentUploaded",
+        "type": "object"
+      },
+      "AttachmentView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "image",
+              "document",
+              "file"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "mime_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mime Type"
+          },
+          "size_bytes": {
+            "title": "Size Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "filename",
+          "mime_type",
+          "size_bytes"
+        ],
+        "title": "AttachmentView",
+        "type": "object"
+      },
+      "ConversationReset": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "conversation.reset",
+            "default": "conversation.reset",
+            "title": "Type",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "new",
+              "settings",
+              "continuity_lost"
+            ],
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ConversationReset",
+        "type": "object"
+      },
+      "DeviceRegistration": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "pattern": "^[0-9a-fA-F]{32,256}$",
+            "title": "Token",
+            "type": "string"
+          },
+          "environment": {
+            "enum": [
+              "sandbox",
+              "production"
+            ],
+            "title": "Environment",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token",
+          "environment"
+        ],
+        "title": "DeviceRegistration",
+        "type": "object"
+      },
+      "EffectView": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Record Id"
+          }
+        },
+        "required": [
+          "type",
+          "label"
+        ],
+        "title": "EffectView",
+        "type": "object"
+      },
+      "ErrorDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "ErrorDetail",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "FolderView": {
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "title": "Folder",
+            "type": "string"
+          },
+          "record_count": {
+            "title": "Record Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "folder",
+          "record_count"
+        ],
+        "title": "FolderView",
+        "type": "object"
+      },
+      "GoalView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "folder": {
+            "title": "Folder",
+            "type": "string"
+          },
+          "next": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScheduledView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          },
+          "last_activity_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Activity At"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "summary",
+          "folder"
+        ],
+        "title": "GoalView",
+        "type": "object"
+      },
+      "GoalsView": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "items": {
+              "$ref": "#/components/schemas/GoalView"
+            },
+            "title": "Active",
+            "type": "array"
+          },
+          "completed": {
+            "items": {
+              "$ref": "#/components/schemas/RecordRef"
+            },
+            "title": "Completed",
+            "type": "array"
+          }
+        },
+        "required": [
+          "active",
+          "completed"
+        ],
+        "title": "GoalsView",
+        "type": "object"
+      },
+      "Heartbeat": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "heartbeat",
+            "default": "heartbeat",
+            "title": "Type",
+            "type": "string"
+          },
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at"
+        ],
+        "title": "Heartbeat",
+        "type": "object"
+      },
+      "IdentityView": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_name": {
+            "title": "Agent Name",
+            "type": "string"
+          },
+          "human_name": {
+            "title": "Human Name",
+            "type": "string"
+          },
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Avatar Url"
+          }
+        },
+        "required": [
+          "agent_name",
+          "human_name"
+        ],
+        "title": "IdentityView",
+        "type": "object"
+      },
+      "InitiativeView": {
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "paused": {
+            "title": "Paused",
+            "type": "boolean"
+          },
+          "paused_until": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paused Until"
+          },
+          "running": {
+            "title": "Running",
+            "type": "boolean"
+          },
+          "last_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Completed At"
+          },
+          "next_expected_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Expected At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          },
+          "waking_start": {
+            "title": "Waking Start",
+            "type": "string"
+          },
+          "waking_end": {
+            "title": "Waking End",
+            "type": "string"
+          }
+        },
+        "required": [
+          "enabled",
+          "paused",
+          "paused_until",
+          "running",
+          "last_completed_at",
+          "next_expected_at",
+          "last_error",
+          "timezone",
+          "waking_start",
+          "waking_end"
+        ],
+        "title": "InitiativeView",
+        "type": "object"
+      },
+      "InputAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "input.accepted",
+            "default": "input.accepted",
+            "title": "Type",
+            "type": "string"
+          },
+          "client_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Client Message Id"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "integer"
+          },
+          "disposition": {
+            "enum": [
+              "started",
+              "steered",
+              "queued",
+              "answered",
+              "duplicate"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "required": [
+          "client_message_id",
+          "message_id",
+          "disposition"
+        ],
+        "title": "InputAccepted",
+        "type": "object"
+      },
+      "LibraryView": {
+        "additionalProperties": false,
+        "properties": {
+          "folder": {
+            "title": "Folder",
+            "type": "string"
+          },
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "folders": {
+            "items": {
+              "$ref": "#/components/schemas/FolderView"
+            },
+            "title": "Folders",
+            "type": "array"
+          },
+          "records": {
+            "items": {
+              "$ref": "#/components/schemas/RecordRef"
+            },
+            "title": "Records",
+            "type": "array"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "folder",
+          "archived",
+          "folders",
+          "records",
+          "truncated"
+        ],
+        "title": "LibraryView",
+        "type": "object"
+      },
+      "LiveTurnView": {
+        "additionalProperties": false,
+        "properties": {
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "direct",
+              "proactive"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "waiting_input",
+              "stopping"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Activity"
+          },
+          "work_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Work Summary"
+          },
+          "speech": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeechView"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null
+          }
+        },
+        "required": [
+          "turn_id",
+          "kind",
+          "state"
+        ],
+        "title": "LiveTurnView",
+        "type": "object"
+      },
+      "MessageCommitted": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "message.committed",
+            "default": "message.committed",
+            "title": "Type",
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/MessageView"
+          },
+          "notify": {
+            "anyOf": [
+              {
+                "enum": [
+                  "passive",
+                  "active",
+                  "time_sensitive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Notify"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "title": "MessageCommitted",
+        "type": "object"
+      },
+      "MessageView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "sent_at": {
+            "format": "date-time",
+            "title": "Sent At",
+            "type": "string"
+          },
+          "speaker": {
+            "enum": [
+              "human",
+              "iris"
+            ],
+            "title": "Speaker",
+            "type": "string"
+          },
+          "origin": {
+            "enum": [
+              "direct",
+              "proactive"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "text",
+              "voice",
+              "question",
+              "answer"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "client_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Client Message Id"
+          },
+          "reply_to_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reply To Id"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Turn Id"
+          },
+          "phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "commentary",
+                  "final"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Phase"
+          },
+          "stopped": {
+            "default": false,
+            "title": "Stopped",
+            "type": "boolean"
+          },
+          "question_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Question Id"
+          },
+          "attachments": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AttachmentView"
+            },
+            "title": "Attachments",
+            "type": "array"
+          },
+          "reactions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Reactions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "sent_at",
+          "speaker",
+          "origin",
+          "kind",
+          "text"
+        ],
+        "title": "MessageView",
+        "type": "object"
+      },
+      "MessagesPage": {
+        "additionalProperties": false,
+        "properties": {
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/MessageView"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "messages",
+          "has_more"
+        ],
+        "title": "MessagesPage",
+        "type": "object"
+      },
+      "ModelView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "default_effort": {
+            "title": "Default Effort",
+            "type": "string"
+          },
+          "supported_efforts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Efforts",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "display_name",
+          "default_effort",
+          "supported_efforts"
+        ],
+        "title": "ModelView",
+        "type": "object"
+      },
+      "Notice": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "notice",
+            "default": "notice",
+            "title": "Type",
+            "type": "string"
+          },
+          "level": {
+            "enum": [
+              "info",
+              "error"
+            ],
+            "title": "Level",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "text"
+        ],
+        "title": "Notice",
+        "type": "object"
+      },
+      "OkResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "const": true,
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "title": "OkResponse",
+        "type": "object"
+      },
+      "QuestionAsked": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "question.asked",
+            "default": "question.asked",
+            "title": "Type",
+            "type": "string"
+          },
+          "question": {
+            "$ref": "#/components/schemas/QuestionView"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "QuestionAsked",
+        "type": "object"
+      },
+      "QuestionSettled": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "question.settled",
+            "default": "question.settled",
+            "title": "Type",
+            "type": "string"
+          },
+          "question": {
+            "$ref": "#/components/schemas/QuestionView"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "QuestionSettled",
+        "type": "object"
+      },
+      "QuestionView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "choices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Choices",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "answered",
+              "cancelled",
+              "expired"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "message_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message Id"
+          },
+          "answer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answer"
+          },
+          "answer_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "button",
+                  "text"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Answer Source"
+          }
+        },
+        "required": [
+          "id",
+          "prompt",
+          "choices",
+          "status",
+          "expires_at"
+        ],
+        "title": "QuestionView",
+        "type": "object"
+      },
+      "ReactionsChanged": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "reactions.changed",
+            "default": "reactions.changed",
+            "title": "Type",
+            "type": "string"
+          },
+          "message_id": {
+            "title": "Message Id",
+            "type": "integer"
+          },
+          "reactions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reactions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message_id",
+          "reactions"
+        ],
+        "title": "ReactionsChanged",
+        "type": "object"
+      },
+      "ReactionsRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "reactions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "title": "Reactions",
+            "type": "array"
+          }
+        },
+        "title": "ReactionsRequest",
+        "type": "object"
+      },
+      "ReactionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "title": "Message Id",
+            "type": "integer"
+          },
+          "reactions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reactions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "message_id",
+          "reactions"
+        ],
+        "title": "ReactionsResponse",
+        "type": "object"
+      },
+      "RecordRef": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title"
+        ],
+        "title": "RecordRef",
+        "type": "object"
+      },
+      "RecordView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "folder": {
+            "title": "Folder",
+            "type": "string"
+          },
+          "archived": {
+            "title": "Archived",
+            "type": "boolean"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Aliases",
+            "type": "array"
+          },
+          "body": {
+            "description": "GitHub-flavoured Markdown.",
+            "title": "Body",
+            "type": "string"
+          },
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/RecordRef"
+            },
+            "title": "Links",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "summary",
+          "folder",
+          "archived",
+          "aliases",
+          "body",
+          "links"
+        ],
+        "title": "RecordView",
+        "type": "object"
+      },
+      "ScheduledView": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "wakeup",
+              "delegated",
+              "daily",
+              "weekly"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Note"
+          },
+          "due_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Due At"
+          },
+          "attention": {
+            "anyOf": [
+              {
+                "enum": [
+                  "light",
+                  "focused",
+                  "deep"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Attention"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "running",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          },
+          "about": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RecordRef"
+            },
+            "title": "About",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "status"
+        ],
+        "title": "ScheduledView",
+        "type": "object"
+      },
+      "SendMessageRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "client_message_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Client Message Id",
+            "type": "string"
+          },
+          "text": {
+            "default": "",
+            "maxLength": 20000,
+            "title": "Text",
+            "type": "string"
+          },
+          "attachment_ids": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "title": "Attachment Ids",
+            "type": "array"
+          },
+          "reply_to_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Reply To Id"
+          },
+          "voice": {
+            "default": false,
+            "title": "Voice",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "client_message_id"
+        ],
+        "title": "SendMessageRequest",
+        "type": "object"
+      },
+      "SendMessageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "$ref": "#/components/schemas/MessageView"
+          },
+          "disposition": {
+            "enum": [
+              "started",
+              "steered",
+              "queued",
+              "answered",
+              "duplicate"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message",
+          "disposition"
+        ],
+        "title": "SendMessageResponse",
+        "type": "object"
+      },
+      "ServerEvent": {
+        "discriminator": {
+          "mapping": {
+            "activity.changed": "#/components/schemas/ActivityChanged",
+            "conversation.reset": "#/components/schemas/ConversationReset",
+            "heartbeat": "#/components/schemas/Heartbeat",
+            "input.accepted": "#/components/schemas/InputAccepted",
+            "message.committed": "#/components/schemas/MessageCommitted",
+            "notice": "#/components/schemas/Notice",
+            "question.asked": "#/components/schemas/QuestionAsked",
+            "question.settled": "#/components/schemas/QuestionSettled",
+            "reactions.changed": "#/components/schemas/ReactionsChanged",
+            "snapshot": "#/components/schemas/Snapshot",
+            "speech.started": "#/components/schemas/SpeechStarted",
+            "speech.updated": "#/components/schemas/SpeechUpdated",
+            "status.changed": "#/components/schemas/StatusChanged",
+            "turn.finished": "#/components/schemas/TurnFinished",
+            "turn.started": "#/components/schemas/TurnStarted",
+            "turn.state": "#/components/schemas/TurnStateChanged",
+            "work.summary": "#/components/schemas/WorkSummary"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Snapshot"
+          },
+          {
+            "$ref": "#/components/schemas/Heartbeat"
+          },
+          {
+            "$ref": "#/components/schemas/TurnStarted"
+          },
+          {
+            "$ref": "#/components/schemas/TurnStateChanged"
+          },
+          {
+            "$ref": "#/components/schemas/TurnFinished"
+          },
+          {
+            "$ref": "#/components/schemas/ActivityChanged"
+          },
+          {
+            "$ref": "#/components/schemas/WorkSummary"
+          },
+          {
+            "$ref": "#/components/schemas/SpeechStarted"
+          },
+          {
+            "$ref": "#/components/schemas/SpeechUpdated"
+          },
+          {
+            "$ref": "#/components/schemas/MessageCommitted"
+          },
+          {
+            "$ref": "#/components/schemas/InputAccepted"
+          },
+          {
+            "$ref": "#/components/schemas/QuestionAsked"
+          },
+          {
+            "$ref": "#/components/schemas/QuestionSettled"
+          },
+          {
+            "$ref": "#/components/schemas/ReactionsChanged"
+          },
+          {
+            "$ref": "#/components/schemas/ConversationReset"
+          },
+          {
+            "$ref": "#/components/schemas/StatusChanged"
+          },
+          {
+            "$ref": "#/components/schemas/Notice"
+          }
+        ]
+      },
+      "SettingsOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "$ref": "#/components/schemas/SettingsView"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelView"
+            },
+            "title": "Models",
+            "type": "array"
+          }
+        },
+        "required": [
+          "current",
+          "models"
+        ],
+        "title": "SettingsOptions",
+        "type": "object"
+      },
+      "SettingsUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Model"
+          },
+          "effort": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Effort"
+          },
+          "web_search": {
+            "anyOf": [
+              {
+                "enum": [
+                  "disabled",
+                  "live"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Web Search"
+          }
+        },
+        "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "SettingsView": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "effort": {
+            "title": "Effort",
+            "type": "string"
+          },
+          "web_search": {
+            "enum": [
+              "disabled",
+              "live"
+            ],
+            "title": "Web Search",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "effort",
+          "web_search"
+        ],
+        "title": "SettingsView",
+        "type": "object"
+      },
+      "Snapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "snapshot",
+            "default": "snapshot",
+            "title": "Type",
+            "type": "string"
+          },
+          "last_message_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Message Id"
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LiveTurnView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "question": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queued_inputs": {
+            "title": "Queued Inputs",
+            "type": "integer"
+          },
+          "reset": {
+            "description": "True when missed events are gone; refetch messages from scratch.",
+            "title": "Reset",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "last_message_id",
+          "turn",
+          "question",
+          "queued_inputs",
+          "reset"
+        ],
+        "title": "Snapshot",
+        "type": "object"
+      },
+      "SourceView": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "enabled"
+        ],
+        "title": "SourceView",
+        "type": "object"
+      },
+      "SpeechStarted": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "speech.started",
+            "default": "speech.started",
+            "title": "Type",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "commentary",
+              "final"
+            ],
+            "title": "Phase",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "item_id",
+          "phase"
+        ],
+        "title": "SpeechStarted",
+        "type": "object"
+      },
+      "SpeechUpdated": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "speech.updated",
+            "default": "speech.updated",
+            "title": "Type",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "commentary",
+              "final"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "text": {
+            "description": "The complete provisional text so far.",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "item_id",
+          "phase",
+          "text"
+        ],
+        "title": "SpeechUpdated",
+        "type": "object"
+      },
+      "SpeechView": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "phase": {
+            "enum": [
+              "commentary",
+              "final"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item_id",
+          "phase",
+          "text"
+        ],
+        "title": "SpeechView",
+        "type": "object"
+      },
+      "StatusChanged": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "status.changed",
+            "default": "status.changed",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "title": "StatusChanged",
+        "type": "object"
+      },
+      "StatusView": {
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "enum": [
+              "idle",
+              "working"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "turn_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "direct",
+                  "proactive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Kind"
+          },
+          "activity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activity"
+          },
+          "wakeups_upcoming": {
+            "title": "Wakeups Upcoming",
+            "type": "integer"
+          },
+          "wakeups_failed": {
+            "title": "Wakeups Failed",
+            "type": "integer"
+          },
+          "waiting_handoffs": {
+            "title": "Waiting Handoffs",
+            "type": "integer"
+          },
+          "initiative": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InitiativeView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SourceView"
+            },
+            "title": "Sources",
+            "type": "array"
+          },
+          "settings": {
+            "$ref": "#/components/schemas/SettingsView"
+          },
+          "timezone": {
+            "title": "Timezone",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "turn_kind",
+          "activity",
+          "wakeups_upcoming",
+          "wakeups_failed",
+          "waiting_handoffs",
+          "initiative",
+          "sources",
+          "settings",
+          "timezone"
+        ],
+        "title": "StatusView",
+        "type": "object"
+      },
+      "StopResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "stopping": {
+            "title": "Stopping",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "stopping"
+        ],
+        "title": "StopResponse",
+        "type": "object"
+      },
+      "TurnFinished": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "turn.finished",
+            "default": "turn.finished",
+            "title": "Type",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "direct",
+              "proactive"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "completed",
+              "silent",
+              "stopped",
+              "failed"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Error"
+          }
+        },
+        "required": [
+          "turn_id",
+          "kind",
+          "outcome"
+        ],
+        "title": "TurnFinished",
+        "type": "object"
+      },
+      "TurnStarted": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "turn.started",
+            "default": "turn.started",
+            "title": "Type",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "direct",
+              "proactive"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "kind"
+        ],
+        "title": "TurnStarted",
+        "type": "object"
+      },
+      "TurnStateChanged": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "turn.state",
+            "default": "turn.state",
+            "title": "Type",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "running",
+              "waiting_input",
+              "stopping"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "state"
+        ],
+        "title": "TurnStateChanged",
+        "type": "object"
+      },
+      "UpcomingView": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ScheduledView"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "UpcomingView",
+        "type": "object"
+      },
+      "WorkSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "seq": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Seq"
+          },
+          "boot_id": {
+            "default": "",
+            "title": "Boot Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "work.summary",
+            "default": "work.summary",
+            "title": "Type",
+            "type": "string"
+          },
+          "turn_id": {
+            "title": "Turn Id",
+            "type": "string"
+          },
+          "item_id": {
+            "title": "Item Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "turn_id",
+          "item_id",
+          "text"
+        ],
+        "title": "WorkSummary",
+        "type": "object"
+      }
+    }
+  },
+  "x-stream": {
+    "path": "/v1/stream",
+    "protocol": "websocket",
+    "query": {
+      "after": "Optional sequence number of the last committed event the client applied. Without it, or when the server no longer has those events, the snapshot has reset=true and the client should refetch /v1/messages."
+    },
+    "events": {
+      "$ref": "#/components/schemas/ServerEvent"
+    },
+    "notes": [
+      "The first frame is always a snapshot.",
+      "Committed events carry a monotonic seq; live events carry null.",
+      "boot_id changes when the server restarts.",
+      "A heartbeat arrives at least every 25 seconds.",
+      "Close code 4401 means unauthorized; 4409 means the client fell behind and must reconnect with its cursor."
+    ]
+  }
+}

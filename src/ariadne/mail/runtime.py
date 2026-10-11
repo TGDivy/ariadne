@@ -19,6 +19,7 @@ from typing import Any, cast
 import yaml  # type: ignore[import-untyped]
 from imapclient import IMAPClient  # type: ignore[import-untyped]
 from imapclient.exceptions import IMAPClientError  # type: ignore[import-untyped]
+from openai_codex import AsyncCodex
 from pydantic import ValidationError
 
 from ..codex import CodexConversation, CodexTurnSettings
@@ -910,6 +911,10 @@ class MailProcessor:
             raise RuntimeError("A mail job cannot cross its source account boundary.")
         started_at = time.monotonic()
         self.state.start(job.job_id)
+        if self.handoffs is not None:
+            # An interrupted earlier attempt may have staged context about work
+            # that never committed; only this attempt may release a handoff.
+            self.handoffs.discard(job.job_id, "Superseded by a new attempt")
         try:
             current = self.state.get(job.job_id)
             assert current is not None
@@ -1174,6 +1179,7 @@ class MailLoop:
         account: MailAccountSettings | None = None,
         client_factory: ClientFactory | None = None,
         telemetry: Telemetry | None = None,
+        codex_client: AsyncCodex | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = workspace
@@ -1184,6 +1190,7 @@ class MailLoop:
         self.mcp_environment = dict(mcp_environment or {})
         self.network_domains = network_domains
         self.telemetry = telemetry or Telemetry()
+        self._codex_client = codex_client
         if account is None:
             if not settings.accounts:
                 raise ValueError("Mail needs at least one enabled account.")
@@ -1225,6 +1232,7 @@ class MailLoop:
                 },
                 network_domains=self.network_domains,
             ),
+            client=self._codex_client,
             telemetry=self.telemetry,
         )
 

@@ -9,9 +9,14 @@ from typing import Any
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
+from ariadne.conversation.models import MessageOrigin, Speaker
 from ariadne.mail import Importance, SuggestedAction
+from ariadne.mcp.conversation import (
+    read_recent_conversation as real_read_recent_conversation,
+)
+from ariadne.mcp.conversation import share_files as real_share_files
 from ariadne.mcp.handoff import (
-    hand_off_to_telegram_conversation as real_hand_off_to_telegram_conversation,
+    hand_off_to_conversation as real_hand_off_to_conversation,
 )
 from ariadne.mcp.mail import (
     record_current_mail_decision as real_record_current_mail_decision,
@@ -23,75 +28,50 @@ from ariadne.mcp.revisit import update_wakeup as real_update_wakeup
 from ariadne.mcp.stewardship import (
     record_stewardship_outcome as real_record_stewardship_outcome,
 )
-from ariadne.mcp.telegram import (
-    read_recent_telegram_messages as real_read_recent_telegram_messages,
-)
-from ariadne.mcp.telegram import (
-    request_telegram_file_delivery as real_request_telegram_file_delivery,
-)
-from ariadne.mcp.telegram import send_telegram_message as real_send_telegram_message
 from ariadne.revisit import Attention
-from ariadne.telegram.history import TelegramMessageSource, TelegramSpeaker
 
 from .fake_knowledge import register_tools as register_knowledge_tools
 from .recording import STATE_ENVIRONMENT as STATE_ENVIRONMENT
 from .recording import record_call
 
 
-@wraps(real_send_telegram_message)
-async def send_telegram_message(text: str) -> list[int]:
-    if not text.strip():
-        raise ToolError("A message needs something to say.")
-    record_call("send_telegram_message", {"text": text})
-    return [1001]
-
-
-@wraps(real_read_recent_telegram_messages)
-def read_recent_telegram_messages(
+@wraps(real_read_recent_conversation)
+def read_recent_conversation(
     since: str,
     before: str | None = None,
-    speakers: list[TelegramSpeaker] | None = None,
-    sources: list[TelegramMessageSource] | None = None,
+    speakers: list[Speaker] | None = None,
+    origins: list[MessageOrigin] | None = None,
     query: str | None = None,
     limit: int = 50,
 ) -> dict[str, object]:
     record_call(
-        "read_recent_telegram_messages",
+        "read_recent_conversation",
         {
             "since": since,
             "before": before,
             "speakers": speakers,
-            "sources": sources,
+            "origins": origins,
             "query": query,
             "limit": limit,
         },
     )
-    return real_read_recent_telegram_messages(
-        since,
-        before,
-        speakers,
-        sources,
-        query,
-        limit,
-    )
+    return real_read_recent_conversation(since, before, speakers, origins, query, limit)
 
 
-@wraps(real_request_telegram_file_delivery)
-async def request_telegram_file_delivery(paths: list[str]) -> dict[str, Any]:
-    record_call("request_telegram_file_delivery", {"paths": paths})
+@wraps(real_share_files)
+def share_files(paths: list[str], caption: str | None = None) -> dict[str, Any]:
+    record_call("share_files", {"paths": paths, "caption": caption})
     return {
-        "approval_id": "scenario-approval",
-        "expires_in_seconds": 900,
-        "approval_requested": True,
-        "files": [{"path": path, "filename": Path(path).name} for path in paths],
+        "status": "shared",
+        "files": [{"filename": Path(path).name, "path": path} for path in paths],
     }
 
 
-@wraps(real_hand_off_to_telegram_conversation)
-def hand_off_to_telegram_conversation(text: str) -> dict[str, str]:
+@wraps(real_hand_off_to_conversation)
+def hand_off_to_conversation(text: str) -> dict[str, str]:
     if not text.strip():
         raise ToolError("A handoff needs something to say.")
-    record_call("hand_off_to_telegram_conversation", {"text": text})
+    record_call("hand_off_to_conversation", {"text": text})
     return {
         "status": "staged",
         "handoff_id": "handoff_scenario",
@@ -215,10 +195,9 @@ def create_server() -> FastMCP:
         "idempotentHint": True,
         "openWorldHint": False,
     }
-    server.tool(send_telegram_message, annotations=harmless)
-    server.tool(read_recent_telegram_messages, annotations=harmless)
-    server.tool(request_telegram_file_delivery, annotations=harmless)
-    server.tool(hand_off_to_telegram_conversation, annotations=harmless)
+    server.tool(read_recent_conversation, annotations=harmless)
+    server.tool(share_files, annotations=harmless)
+    server.tool(hand_off_to_conversation, annotations=harmless)
     server.tool(record_stewardship_outcome, annotations=harmless)
     server.tool(record_current_mail_decision, annotations=harmless)
     register_knowledge_tools(server, harmless)

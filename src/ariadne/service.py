@@ -1,98 +1,28 @@
-"""Run Ariadne's Telegram conversation and optional background loops."""
+"""Run Ariadne's app API and its background services."""
 
 import asyncio
 import logging
 import os
 import sys
-from contextlib import suppress
 from pathlib import Path
-from typing import Any
-from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
-from telegram import BotCommand, Update
-from telegram.ext import (
-    Application,
-    ApplicationBuilder,
-    CallbackQueryHandler,
-    CommandHandler,
-    MessageHandler,
-    MessageReactionHandler,
-    TypeHandler,
-    filters,
-)
 
-from .codex import CodexConversation
-from .codex.resolver import resolve_profile
 from .config import CONFIG_PATH_ENVIRONMENT, Settings, config_path, load_settings
-from .handoff import HandoffCoordinator, HandoffState
-from .mail import MailLoop
-from .profile import TELEGRAM_PROFILE
-from .revisit.runtime import RevisitLoop
-from .stewardship.runtime import StewardshipLoop
-from .telegram.bot import AriadneBot
-from .telegram.continuity import TelegramConversationThreadStore
-from .telegram.status import PrivateSource, StatusSources
-from .telegram.voice import CommandVoiceTranscriber
+from .runtime import bind_socket, build_runtime, serve
 from .telemetry import configure_telemetry
 
 LOGGER = logging.getLogger(__name__)
 
-AriadneApplication = Application[Any, Any, Any, Any, Any, Any]
-
-COMMANDS = (
-    BotCommand("status", "What Ariadne is doing and what is scheduled"),
-    BotCommand("wakeups", "Scheduled one-off wake-ups"),
-    BotCommand("new", "Start a fresh conversation"),
-    BotCommand("stop", "Interrupt the turn Ariadne is working on"),
-    BotCommand("settings", "Model, reasoning effort, and web research"),
-)
-
-
-def status_timezone(settings: Settings) -> ZoneInfo:
-    """Choose the owner's local zone from whichever surface actually sets one.
-
-    There is no single local-timezone setting; stewardship, Calendar, and health
-    each carry their own and each defaults to UTC. Prefer the first that has
-    been configured so a `/status` panel reads in real local time even when
-    daily initiative is switched off.
-    """
-    for candidate in (
-        settings.stewardship.timezone,
-        settings.calendar.timezone,
-        settings.health.timezone,
-    ):
-        if candidate != "UTC":
-            return ZoneInfo(candidate)
-    return ZoneInfo("UTC")
-
-
-def _private_sources(settings: Settings) -> tuple[PrivateSource, ...]:
-    """Report which major private capabilities are switched on, not reachable."""
-    return (
-        PrivateSource("Mail", settings.mail.enabled),
-        PrivateSource("Calendar", settings.calendar.enabled),
-        PrivateSource("Health", settings.health.enabled),
-        PrivateSource("Knowledge", True),
-    )
-
-
-async def publish_commands(application: AriadneApplication) -> None:
-    """Put Ariadne's commands in Telegram's menu so they can be found."""
-    try:
-        await application.bot.set_my_commands(COMMANDS)
-    except Exception:
-        LOGGER.exception("Telegram command menu could not be published")
-
 
 def configure_logging() -> None:
-    """Configure Ariadne logs without exposing Telegram request URLs."""
+    """Configure Ariadne logs without exposing request URLs or headers."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    for noisy in ("httpx", "httpcore", "uvicorn.access"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
 def _load_configuration(path: Path | None) -> Settings:
@@ -120,204 +50,31 @@ def _configure_cli_environment(path: Path | None) -> None:
 
 def run(path: Path | None = None) -> None:
     """Start Ariadne using the selected private TOML configuration."""
-    # PTB is migrating media durations from integer seconds to timedelta. Opt
-    # into the future representation now; Ariadne accepts both during rollout.
-    os.environ.setdefault("PTB_TIMEDELTA", "true")
     configure_logging()
     settings = _load_configuration(path)
     # The model process inherits this path; provider credentials remain in the
     # private file and are loaded by the `ariadne` CLI on demand.
     _configure_cli_environment(path)
-    mail_settings = settings.mail_settings
     telemetry = configure_telemetry(settings.telemetry)
-
-    telegram_profile = resolve_profile(
-        TELEGRAM_PROFILE,
-        workspace=settings.agent_workspace,
-        settings=settings.codex_turn_settings,
-        human=settings.human_name,
-        personality=settings.personality,
-        mcp_environment=settings.mcp_environment,
-        knowledge_root=settings.vault,
-        network_domains=settings.health_network_domains,
-    )
-    telegram_state = settings.telegram.state.resolve()
-    conversation = CodexConversation(
-        telegram_profile,
-        telemetry=telemetry,
-        thread_store=TelegramConversationThreadStore(
-            telegram_state,
-            owner_id=settings.allowed_user_id,
-            chat_id=settings.allowed_user_id,
-            profile_name=telegram_profile.name,
-        ),
-    )
-    handoff_coordinator = HandoffCoordinator(
-        HandoffState(settings.telegram.state.resolve())
-    )
     try:
-        mail_loops = (
-            tuple(
-                MailLoop(
-                    mail_settings,
-                    settings.agent_workspace,
-                    settings.vault,
-                    settings.mail_turn_settings,
-                    human=settings.human_name,
-                    personality=settings.personality,
-                    mcp_environment=settings.mcp_environment,
-                    network_domains=settings.health_network_domains,
-                    account=account,
-                    telemetry=telemetry,
-                )
-                for account in mail_settings.accounts
-            )
-            if mail_settings is not None
-            else ()
-        )
-        revisit_loop = RevisitLoop(
-            settings.revisit_settings,
-            settings.agent_workspace,
-            settings.vault,
-            settings.revisit_turn_settings,
-            human=settings.human_name,
-            personality=settings.personality,
-            mcp_environment=settings.mcp_environment,
-            network_domains=settings.health_network_domains,
-            telemetry=telemetry,
-        )
-        stewardship_loop = StewardshipLoop(
-            settings.stewardship_settings,
-            settings.agent_workspace,
-            settings.vault,
-            settings.stewardship_turn_settings,
-            human=settings.human_name,
-            personality=settings.personality,
-            mcp_environment=settings.mcp_environment,
-            network_domains=settings.health_network_domains,
-            telemetry=telemetry,
-        )
-    except ValueError as error:
+        runtime = build_runtime(settings, telemetry=telemetry)
+        sock = bind_socket(settings.app.host, settings.app.port)
+    except (OSError, ValueError) as error:
         telemetry.shutdown()
-        LOGGER.error("Configuration error: %s", error)
+        LOGGER.error("Startup error: %s", error)
         raise SystemExit(2) from error
-    ariadne = AriadneBot(
-        settings.allowed_user_id,
-        conversation,
-        bot_token=settings.telegram_bot_token,
-        question_state=telegram_state,
-        handoff_coordinator=handoff_coordinator,
-        voice_transcriber=(
-            CommandVoiceTranscriber(
-                settings.telegram.voice_transcription_command,
-                timeout_seconds=settings.telegram.voice_transcription_timeout_seconds,
-            )
-            if settings.telegram.voice_transcription_command is not None
-            else None
-        ),
-        status_sources=StatusSources(
-            timezone=status_timezone(settings),
-            sources=_private_sources(settings),
-            initiative=stewardship_loop,
-            wakeups=revisit_loop.state,
-        ),
+    if not settings.app.devices:
+        LOGGER.warning(
+            "No phone is paired yet; run `ariadne-app pair` and add the printed "
+            "[[app.devices]] entry to the private configuration."
+        )
+    LOGGER.info(
+        "Starting Ariadne on %s:%d with private knowledge at %s",
+        settings.app.host,
+        settings.app.port,
+        settings.vault,
     )
-    mail_tasks: list[asyncio.Task[None]] = []
-    revisit_task: asyncio.Task[None] | None = None
-    handoff_task: asyncio.Task[None] | None = None
-    stewardship_task: asyncio.Task[None] | None = None
-
-    async def start_services(application: AriadneApplication) -> None:
-        nonlocal revisit_task, handoff_task, stewardship_task
-        ariadne.bind_bot(application.bot)
-        await ariadne.recover_questions()
-        await ariadne.recover_panel()
-        await publish_commands(application)
-        for mail_loop in mail_loops:
-            mail_tasks.append(asyncio.create_task(mail_loop.run_forever()))
-            LOGGER.info("Started Mail source account=%s", mail_loop.account.key)
-        revisit_task = asyncio.create_task(revisit_loop.run_forever())
-        LOGGER.info("Started one-off revisit source")
-        handoff_task = asyncio.create_task(handoff_coordinator.run_forever(ariadne))
-        LOGGER.info("Started conversational handoff coordinator")
-        if settings.stewardship.enabled:
-            stewardship_task = asyncio.create_task(stewardship_loop.run_forever())
-            LOGGER.info("Started daily proactive stewardship source")
-
-    async def close_services(_: object) -> None:
-        for mail_loop in mail_loops:
-            mail_loop.stop()
-        revisit_loop.stop()
-        handoff_coordinator.stop()
-        stewardship_loop.stop()
-        for mail_task in mail_tasks:
-            mail_task.cancel()
-        for mail_task in mail_tasks:
-            with suppress(asyncio.CancelledError):
-                await mail_task
-        if revisit_task is not None:
-            revisit_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await revisit_task
-        if handoff_task is not None:
-            handoff_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await handoff_task
-        if stewardship_task is not None:
-            stewardship_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await stewardship_task
-        try:
-            await conversation.close()
-        except Exception:
-            LOGGER.exception("Failed to close Codex client")
-        await asyncio.to_thread(telemetry.shutdown)
-
-    application = (
-        ApplicationBuilder()
-        .token(settings.telegram_bot_token)
-        .concurrent_updates(True)
-        .post_init(start_services)
-        .post_shutdown(close_services)
-        .build()
-    )
-    application.add_handler(CommandHandler("start", ariadne.start))
-    application.add_handler(CommandHandler("new", ariadne.new))
-    application.add_handler(CommandHandler("stop", ariadne.stop))
-    application.add_handler(CommandHandler("settings", ariadne.settings))
-    application.add_handler(CommandHandler("status", ariadne.status))
-    application.add_handler(CommandHandler("wakeups", ariadne.wakeups))
-    application.add_handler(
-        CallbackQueryHandler(ariadne.settings_callback, pattern=r"^settings:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(ariadne.status_callback, pattern=r"^status:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(ariadne.file_delivery_callback, pattern=r"^file-delivery:")
-    )
-    application.add_handler(
-        CallbackQueryHandler(ariadne.question_callback, pattern=r"^question:")
-    )
-    application.add_handler(MessageReactionHandler(ariadne.reaction))
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, ariadne.text)
-    )
-    application.add_handler(
-        MessageHandler(filters.PHOTO | filters.Document.IMAGE, ariadne.image)
-    )
-    application.add_handler(
-        MessageHandler(filters.Document.ALL & ~filters.Document.IMAGE, ariadne.document)
-    )
-    application.add_handler(MessageHandler(filters.VOICE, ariadne.voice))
-    # PTB 22.8 predates Rich Messages, but retains the raw field in
-    # Message.api_kwargs. A second handler group lets us inspect those updates
-    # without competing with the native text/media handlers above.
-    application.add_handler(TypeHandler(Update, ariadne.rich_message), group=1)
-
-    LOGGER.info("Starting Ariadne with private knowledge at %s", settings.vault)
     try:
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception:
-        LOGGER.exception("Telegram polling stopped unexpectedly")
-        raise
+        asyncio.run(serve(runtime, sock=sock))
+    finally:
+        telemetry.shutdown()

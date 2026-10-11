@@ -1,4 +1,4 @@
-"""Small coordinator joining ready handoffs to the shared Telegram Iris."""
+"""Small coordinator joining ready handoffs to the shared conversation."""
 
 from __future__ import annotations
 

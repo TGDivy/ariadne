@@ -1,4 +1,4 @@
-"""Durable handoffs in Ariadne's private Telegram SQLite state."""
+"""Durable handoffs in Ariadne's private conversation SQLite state."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import cast
 
 from .models import ConversationHandoff, HandoffStatus
 
-STATE_ENVIRONMENT = "ARIADNE_TELEGRAM_STATE"
+STATE_ENVIRONMENT = "ARIADNE_CONVERSATION_STATE"
 ACTIVATION_KEY_ENVIRONMENT = "ARIADNE_ACTIVATION_KEY"
 ACTIVATION_SOURCE_ENVIRONMENT = "ARIADNE_ACTIVATION_SOURCE"
 MAX_HANDOFF_BODY_LENGTH = 65_536
@@ -52,7 +52,7 @@ class HandoffState:
             database.execute("PRAGMA journal_mode=WAL")
             database.execute(
                 """
-                CREATE TABLE IF NOT EXISTS telegram_handoffs (
+                CREATE TABLE IF NOT EXISTS conversation_handoffs (
                     id TEXT PRIMARY KEY,
                     activation_key TEXT NOT NULL UNIQUE,
                     source TEXT NOT NULL,
@@ -71,14 +71,14 @@ class HandoffState:
             )
             database.execute(
                 """
-                CREATE INDEX IF NOT EXISTS telegram_handoffs_ready
-                ON telegram_handoffs(status, created_at, id)
+                CREATE INDEX IF NOT EXISTS conversation_handoffs_ready
+                ON conversation_handoffs(status, created_at, id)
                 """
             )
             if recover_claimed:
                 database.execute(
                     """
-                    UPDATE telegram_handoffs
+                    UPDATE conversation_handoffs
                     SET status = 'ready',
                         error = 'Interrupted before shared conversation completed',
                         claimed_at = NULL, updated_at = ?
@@ -106,7 +106,7 @@ class HandoffState:
         with self._connect() as database:
             database.execute("BEGIN IMMEDIATE")
             existing = database.execute(
-                "SELECT status FROM telegram_handoffs WHERE activation_key = ?",
+                "SELECT status FROM conversation_handoffs WHERE activation_key = ?",
                 (activation_key,),
             ).fetchone()
             if existing is not None and existing["status"] not in {
@@ -118,7 +118,7 @@ class HandoffState:
                 )
             database.execute(
                 """
-                INSERT INTO telegram_handoffs (
+                INSERT INTO conversation_handoffs (
                     id, activation_key, source, body, status, error,
                     created_at, updated_at, released_at, claimed_at, completed_at
                 ) VALUES (?, ?, ?, ?, 'staged', NULL, ?, ?, NULL, NULL, NULL)
@@ -143,7 +143,7 @@ class HandoffState:
     def for_activation(self, activation_key: str) -> ConversationHandoff | None:
         with self._connect() as database:
             row = database.execute(
-                "SELECT * FROM telegram_handoffs WHERE activation_key = ?",
+                "SELECT * FROM conversation_handoffs WHERE activation_key = ?",
                 (activation_key,),
             ).fetchone()
         return _handoff(row) if row is not None else None
@@ -151,7 +151,7 @@ class HandoffState:
     def get(self, identifier: str) -> ConversationHandoff | None:
         with self._connect() as database:
             row = database.execute(
-                "SELECT * FROM telegram_handoffs WHERE id = ?", (identifier,)
+                "SELECT * FROM conversation_handoffs WHERE id = ?", (identifier,)
             ).fetchone()
         return _handoff(row) if row is not None else None
 
@@ -161,7 +161,7 @@ class HandoffState:
         with self._connect() as database:
             database.execute(
                 """
-                UPDATE telegram_handoffs
+                UPDATE conversation_handoffs
                 SET status = 'ready', error = NULL, released_at = ?, updated_at = ?
                 WHERE activation_key = ? AND status = 'staged'
                 """,
@@ -176,7 +176,7 @@ class HandoffState:
         with self._connect() as database:
             database.execute(
                 """
-                UPDATE telegram_handoffs
+                UPDATE conversation_handoffs
                 SET status = 'discarded', error = ?, updated_at = ?
                 WHERE activation_key = ? AND status = 'staged'
                 """,
@@ -192,7 +192,7 @@ class HandoffState:
             database.execute("BEGIN IMMEDIATE")
             rows = database.execute(
                 """
-                SELECT * FROM telegram_handoffs
+                SELECT * FROM conversation_handoffs
                 WHERE status = 'ready'
                 ORDER BY created_at, id
                 LIMIT ?
@@ -204,14 +204,14 @@ class HandoffState:
                 placeholders = ",".join("?" for _ in identifiers)
                 database.execute(
                     f"""
-                    UPDATE telegram_handoffs
+                    UPDATE conversation_handoffs
                     SET status = 'claimed', claimed_at = ?, updated_at = ?, error = NULL
                     WHERE status = 'ready' AND id IN ({placeholders})
                     """,
                     (now, now, *identifiers),
                 )
                 rows = database.execute(
-                    f"SELECT * FROM telegram_handoffs WHERE id IN ({placeholders})",
+                    f"SELECT * FROM conversation_handoffs WHERE id IN ({placeholders})",
                     identifiers,
                 ).fetchall()
         by_id = {str(row["id"]): _handoff(row) for row in rows}
@@ -221,7 +221,8 @@ class HandoffState:
         """Return handoffs committed by their source and waiting for conversation."""
         with self._connect() as database:
             row = database.execute(
-                "SELECT COUNT(*) AS count FROM telegram_handoffs WHERE status = 'ready'"
+                "SELECT COUNT(*) AS count FROM conversation_handoffs "
+                "WHERE status = 'ready'"
             ).fetchone()
         assert row is not None
         return int(row["count"])
@@ -252,7 +253,7 @@ class HandoffState:
         with self._connect() as database:
             cursor = database.execute(
                 f"""
-                UPDATE telegram_handoffs
+                UPDATE conversation_handoffs
                 SET status = ?, error = ?, updated_at = ?,
                     claimed_at = CASE WHEN ? THEN claimed_at ELSE NULL END,
                     completed_at = CASE WHEN ? THEN ? ELSE NULL END
@@ -276,7 +277,7 @@ class HandoffState:
         with self._connect() as database:
             rows = database.execute(
                 """
-                SELECT * FROM telegram_handoffs WHERE status = ?
+                SELECT * FROM conversation_handoffs WHERE status = ?
                 ORDER BY created_at, id
                 """,
                 (status,),

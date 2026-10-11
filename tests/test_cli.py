@@ -1115,10 +1115,6 @@ version = 1
 human_name = "Example User"
 vault = "{vault}"
 
-[telegram]
-bot_token = "private-telegram-token"
-allowed_user_id = 7
-
 [icloud]
 username = "{username}"
 app_password = "{password}"

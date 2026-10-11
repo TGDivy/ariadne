@@ -48,10 +48,6 @@ version = 1
 human_name = "Example"
 vault = "{vault}"
 
-[telegram]
-bot_token = "telegram-secret"
-allowed_user_id = 7
-
 {extra.replace("ROUTES", str(routes))}
 ''',
         encoding="utf-8",
@@ -118,7 +114,6 @@ routes = "ROUTES"
     )
     serialized = json.dumps(settings_payload(settings))
     assert "icloud-password" not in serialized
-    assert "telegram-secret" not in serialized
 
 
 def test_outlook_can_be_the_only_enabled_mail_account(tmp_path: Path) -> None:

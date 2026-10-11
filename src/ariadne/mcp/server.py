@@ -2,13 +2,13 @@
 
 from fastmcp import FastMCP
 
+from .conversation import register_tools as register_conversation_tools
 from .errors import install_safe_tool_error_handling
 from .handoff import register_tools as register_handoff_tools
 from .knowledge import register_tools as register_knowledge_tools
 from .mail import register_tools as register_mail_tools
 from .revisit import register_tools as register_revisit_tools
 from .stewardship import register_tools as register_stewardship_tools
-from .telegram import register_tools as register_telegram_tools
 
 
 def create_server() -> FastMCP:
@@ -16,14 +16,14 @@ def create_server() -> FastMCP:
     server = FastMCP(
         "Ariadne",
         instructions=(
-            "Private memory, Telegram, conversational background handoffs, "
+            "Private memory, the private conversation, background handoffs, "
             "turn-scoped mail decisions, and future wake-up capabilities for Iris."
         ),
         version="0.1.0",
         strict_input_validation=True,
     )
     install_safe_tool_error_handling(server)
-    register_telegram_tools(server)
+    register_conversation_tools(server)
     register_handoff_tools(server)
     register_mail_tools(server)
     register_knowledge_tools(server)

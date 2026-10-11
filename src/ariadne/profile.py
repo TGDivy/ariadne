@@ -42,17 +42,17 @@ NETWORK_DOMAINS = (
     "127.0.0.1",
 )
 
-TELEGRAM_PROFILE = TurnProfile(
-    name="telegram",
+CONVERSATION_PROFILE = TurnProfile(
+    name="conversation",
     model="gpt-5.6-luna",
     effort=ReasoningEffort.high,
     web_search="disabled",
-    instruction_documents=("base", "telegram", "knowledge"),
+    instruction_documents=("base", "conversation", "knowledge"),
     developer_documents=("grounding", "companion"),
     enabled_tools=(
-        "read_recent_telegram_messages",
-        "ask_telegram_question",
-        "request_telegram_file_delivery",
+        "read_recent_conversation",
+        "ask_question",
+        "share_files",
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
     ),
@@ -66,9 +66,7 @@ TELEGRAM_PROFILE = TurnProfile(
     allow_local_binding=True,
     mcp_environment_names=(
         "ARIADNE_PROFILE",
-        "TELEGRAM_BOT_TOKEN",
-        "TELEGRAM_ALLOWED_USER_ID",
-        "ARIADNE_TELEGRAM_STATE",
+        HANDOFF_STATE_ENVIRONMENT,
         REVISIT_STATE_ENVIRONMENT,
         KNOWLEDGE_ROOT_ENVIRONMENT,
         BROWSER_SOCKET_ENVIRONMENT,
@@ -83,8 +81,8 @@ MAIL_PROFILE = TurnProfile(
     instruction_documents=("base", "mail", "knowledge"),
     developer_documents=("grounding", "companion"),
     enabled_tools=(
-        "read_recent_telegram_messages",
-        "hand_off_to_telegram_conversation",
+        "read_recent_conversation",
+        "hand_off_to_conversation",
         "record_current_mail_decision",
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
@@ -97,7 +95,6 @@ MAIL_PROFILE = TurnProfile(
     allow_local_binding=True,
     mcp_environment_names=(
         "ARIADNE_PROFILE",
-        "TELEGRAM_ALLOWED_USER_ID",
         "ARIADNE_MAIL_JOB_ID",
         "ARIADNE_MAIL_ACCOUNT",
         "ARIADNE_MAIL_STATE",
@@ -117,8 +114,8 @@ STEWARDSHIP_PROFILE = TurnProfile(
     instruction_documents=("base", "stewardship", "knowledge"),
     developer_documents=("grounding", "companion"),
     enabled_tools=(
-        "read_recent_telegram_messages",
-        "hand_off_to_telegram_conversation",
+        "read_recent_conversation",
+        "hand_off_to_conversation",
         *STEWARDSHIP_TOOLS,
         *REVISIT_TOOLS,
         *KNOWLEDGE_TOOLS,
@@ -131,7 +128,6 @@ STEWARDSHIP_PROFILE = TurnProfile(
     allow_local_binding=True,
     mcp_environment_names=(
         "ARIADNE_PROFILE",
-        "TELEGRAM_ALLOWED_USER_ID",
         HANDOFF_STATE_ENVIRONMENT,
         ACTIVATION_KEY_ENVIRONMENT,
         ACTIVATION_SOURCE_ENVIRONMENT,
@@ -153,8 +149,8 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
         instruction_documents=("base", "revisit", "knowledge"),
         developer_documents=("grounding", "companion"),
         enabled_tools=(
-            "read_recent_telegram_messages",
-            "hand_off_to_telegram_conversation",
+            "read_recent_conversation",
+            "hand_off_to_conversation",
             *REVISIT_TOOLS,
             *KNOWLEDGE_TOOLS,
         ),
@@ -167,7 +163,6 @@ def _revisit_profile(attention: Attention) -> TurnProfile:
         allow_local_binding=True,
         mcp_environment_names=(
             "ARIADNE_PROFILE",
-            "TELEGRAM_ALLOWED_USER_ID",
             HANDOFF_STATE_ENVIRONMENT,
             ACTIVATION_KEY_ENVIRONMENT,
             ACTIVATION_SOURCE_ENVIRONMENT,
@@ -191,7 +186,7 @@ def profile_for_attention(attention: Attention) -> TurnProfile:
 PROFILES: dict[str, TurnProfile] = {
     profile.name: profile
     for profile in (
-        TELEGRAM_PROFILE,
+        CONVERSATION_PROFILE,
         MAIL_PROFILE,
         STEWARDSHIP_PROFILE,
         *REVISIT_PROFILES.values(),

@@ -67,7 +67,6 @@ WEB_SEARCH_CONTEXT_SIZE = "medium"
 MCP_TOOL_TIMEOUT_SECONDS = 16 * 60
 MCP_SERVER_NAME = "ariadne"
 BROWSER_MCP_SERVER_NAME = "ariadne_browser"
-TELEGRAM_MESSAGE_TOOL = "send_telegram_message"
 THREAD_STATE_VERSION = 1
 MAX_PERSISTED_THREAD_ID_LENGTH = 512
 
@@ -101,7 +100,7 @@ def _log_mcp_started(item: object, source: str) -> float | None:
 
 
 def _log_mcp_finished(item: object, source: str, started_at: float | None) -> None:
-    """Log an MCP outcome, including failed Telegram delivery details."""
+    """Log a privacy-safe MCP outcome."""
     if not isinstance(item, McpToolCallThreadItem):
         return
     if item.duration_ms is not None and item.duration_ms > 0:
@@ -135,15 +134,6 @@ def _log_mcp_finished(item: object, source: str, started_at: float | None) -> No
             failure,
             duration,
         )
-        if item.server == MCP_SERVER_NAME and item.tool == TELEGRAM_MESSAGE_TOOL:
-            request = json.dumps(item.arguments, ensure_ascii=False, default=repr)
-            error = item.error.message if item.error is not None else "unknown"
-            LOGGER.warning(
-                "Failed Telegram MCP request call_id=%s request=%s error=%s",
-                item.id,
-                request,
-                json.dumps(error, ensure_ascii=False),
-            )
     else:
         LOGGER.info(
             "Codex MCP call finished source=%s server=%s tool=%s call_id=%s "
