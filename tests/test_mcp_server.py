@@ -1,94 +1,51 @@
 import asyncio
 import json
-import sqlite3
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
-from telegram.error import BadRequest, EndPointNotFound
 
+from ariadne.conversation.log import ConversationLog
+from ariadne.conversation.models import MessageDraft
+from ariadne.conversation.questions import Question, QuestionStore
+from ariadne.conversation.shares import SharedFiles
 from ariadne.mail import MailState
 from ariadne.mcp import mcp
-from ariadne.mcp import telegram as telegram_tools
+from ariadne.mcp.conversation import ask_question, read_recent_conversation, share_files
 from ariadne.mcp.errors import DIAGNOSTIC_PREFIX
 from ariadne.mcp.mail import record_current_mail_decision
-from ariadne.mcp.telegram import (
-    ask_telegram_question,
-    read_recent_telegram_messages,
-    send_telegram_message,
-)
-from ariadne.telegram import outbound
-from ariadne.telegram.history import TelegramHistoryMessage, TelegramMessageStore
-from ariadne.telegram.questions import TelegramQuestion, TelegramQuestionStore
-
-
-class FakeBot:
-    def __init__(self, token: str) -> None:
-        self.token = token
-        self.reject_rich = False
-        self.missing_rich_endpoint = False
-        self.sent: list[dict[str, Any]] = []
-        self.api_calls: list[tuple[str, dict[str, Any]]] = []
-
-    async def __aenter__(self) -> "FakeBot":
-        return self
-
-    async def __aexit__(self, *_: object) -> None:
-        return None
-
-    async def send_message(self, **kwargs: Any) -> SimpleNamespace:
-        self.sent.append(kwargs)
-        return SimpleNamespace(message_id=100 + len(self.sent))
-
-    async def do_api_request(
-        self,
-        endpoint: str,
-        api_kwargs: dict[str, Any] | None = None,
-        **_: object,
-    ) -> SimpleNamespace:
-        arguments = api_kwargs or {}
-        if endpoint == "sendRichMessage" and self.missing_rich_endpoint:
-            raise EndPointNotFound("Rich Messages unavailable")
-        if endpoint == "sendRichMessage" and self.reject_rich:
-            raise BadRequest("Rich Messages unavailable")
-        self.api_calls.append((endpoint, arguments))
-        return SimpleNamespace(message_id=100 + len(self.api_calls))
 
 
 @pytest.fixture
-def telegram(monkeypatch, tmp_path: Path) -> FakeBot:
-    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "token-for-test")
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "7")
-    monkeypatch.setenv("ARIADNE_PROFILE", "mail")
-    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(tmp_path / "telegram.sqlite3"))
-    bot = FakeBot("token-for-test")
-    monkeypatch.setattr(telegram_tools, "Bot", lambda token: bot)
-    monkeypatch.setattr(outbound, "Bot", lambda token: bot)
-    return bot
+def state(monkeypatch, tmp_path: Path) -> Path:
+    path = tmp_path / "conversation.sqlite3"
+    monkeypatch.setenv("ARIADNE_CONVERSATION_STATE", str(path))
+    return path
 
 
-async def wait_for_question(store: TelegramQuestionStore) -> TelegramQuestion:
-    for _ in range(100):
-        question = store.pending(7)
-        if question is not None and question.message_id is not None:
-            return question
+async def presented_question(store: QuestionStore) -> Question:
+    """Play the conversation core's part: present the waiting question."""
+    for _ in range(200):
+        question = store.pending()
+        if question is not None:
+            presented = store.attach_message(question.question_id, 1)
+            assert presented is not None
+            return presented
         await asyncio.sleep(0.01)
-    raise AssertionError("The question card was not sent")
+    raise AssertionError("The question was never created")
 
 
 async def test_fastmcp_lists_every_capability_ariadne_offers() -> None:
     tools = await mcp.list_tools()
 
     assert [tool.name for tool in tools] == [
-        "send_telegram_message",
-        "read_recent_telegram_messages",
-        "ask_telegram_question",
-        "request_telegram_file_delivery",
-        "hand_off_to_telegram_conversation",
+        "read_recent_conversation",
+        "ask_question",
+        "share_files",
+        "hand_off_to_conversation",
         "record_current_mail_decision",
         "search_knowledge",
         "list_knowledge",
@@ -115,7 +72,7 @@ def test_a_normal_turn_has_no_mail_authority(monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("operation", "arguments"),
     [
-        ("send_telegram_message", {"text": " "}),
+        ("share_files", {"paths": []}),
         ("tool_that_does_not_exist", {}),
     ],
 )
@@ -164,77 +121,33 @@ def test_a_mail_turn_can_record_but_not_execute_its_decision(
     assert job.action is None
 
 
-async def test_a_message_from_iris_is_sent_as_rich_markdown(
-    telegram: FakeBot, tmp_path: Path
-) -> None:
-    message_ids = await send_telegram_message("The **latest** one is from June.")
-
-    assert message_ids == [101]
-    assert telegram.api_calls == [
-        (
-            "sendRichMessage",
-            {
-                "chat_id": 7,
-                "rich_message": {"markdown": "The **latest** one is from June."},
-            },
-        )
-    ]
-    history = TelegramMessageStore(tmp_path / "telegram.sqlite3").read(
-        7, since=datetime.min.replace(tzinfo=UTC)
-    )
-    assert [(item.speaker, item.source, item.text) for item in history.messages] == [
-        ("iris", "mail", "The **latest** one is from June.")
-    ]
-
-
-async def test_revisit_delivery_is_identified_as_a_wakeup(
-    telegram: FakeBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("ARIADNE_PROFILE", "revisit-light")
-
-    await send_telegram_message("Still worth packing your gels.")
-
-    history = TelegramMessageStore(tmp_path / "telegram.sqlite3").read(
-        7, since=datetime.min.replace(tzinfo=UTC)
-    )
-    assert history.messages[0].source == "wakeup"
-
-
-def test_recent_telegram_messages_exposes_bounded_filtered_history(
-    telegram: FakeBot, tmp_path: Path
-) -> None:
-    del telegram
-    state = TelegramMessageStore(tmp_path / "telegram.sqlite3")
+def test_recent_conversation_exposes_bounded_filtered_history(state: Path) -> None:
+    log = ConversationLog(state)
     start = datetime(2026, 8, 29, 16, tzinfo=UTC)
-    state.record(
-        TelegramHistoryMessage(
-            chat_id=7,
-            message_id=1,
-            sent_at=start,
+    log.append(
+        MessageDraft(
             speaker="human",
-            source="telegram",
-            content_type="text",
+            origin="direct",
+            kind="text",
             text="I have packed everything and sorted the bib",
+            sent_at=start,
         )
     )
-    state.record(
-        TelegramHistoryMessage(
-            chat_id=7,
-            message_id=2,
-            sent_at=start + timedelta(minutes=1),
+    log.append(
+        MessageDraft(
             speaker="iris",
-            source="mail",
-            content_type="text",
+            origin="proactive",
+            kind="text",
             text="Train booked.",
-            reply_to_message_id=1,
+            sent_at=start + timedelta(minutes=1),
         )
     )
 
-    result = read_recent_telegram_messages(
+    result = read_recent_conversation(
         start.isoformat(),
         before=(start + timedelta(hours=1)).isoformat(),
         speakers=["human"],
-        sources=["telegram"],
+        origins=["direct"],
         query="PACKED EVERYTHING",
         limit=1,
     )
@@ -245,11 +158,9 @@ def test_recent_telegram_messages_exposes_bounded_filtered_history(
                 "message_id": 1,
                 "sent_at": start.isoformat(),
                 "speaker": "human",
-                "source": "telegram",
-                "content_type": "text",
+                "origin": "direct",
+                "kind": "text",
                 "text": "I have packed everything and sorted the bib",
-                "reply_to_message_id": None,
-                "reactions": [],
             }
         ],
         "total": 1,
@@ -270,164 +181,79 @@ def test_recent_telegram_messages_exposes_bounded_filtered_history(
         ),
     ],
 )
-def test_recent_telegram_messages_rejects_ambiguous_time_bounds(
-    telegram: FakeBot, since: str, before: str | None, error: str
+def test_recent_conversation_rejects_ambiguous_time_bounds(
+    state: Path, since: str, before: str | None, error: str
 ) -> None:
-    del telegram
     with pytest.raises(ToolError, match=error):
-        read_recent_telegram_messages(since, before)
+        read_recent_conversation(since, before)
 
 
-async def test_a_message_beyond_the_classic_limit_stays_one_rich_message(
-    telegram: FakeBot,
-) -> None:
-    text = "x" * 4_097
+async def test_a_typed_answer_resumes_the_waiting_question_tool(state: Path) -> None:
+    task = asyncio.create_task(ask_question("Which environment?", ["Local", "Staging"]))
+    store = QuestionStore(state)
+    await presented_question(store)
 
-    message_ids = await send_telegram_message(text)
+    assert store.answer_text("Staging with a canary") is not None
 
-    assert message_ids == [101]
-    assert telegram.api_calls[0][1]["rich_message"] == {"markdown": text}
-
-
-async def test_an_empty_message_is_refused(telegram: FakeBot) -> None:
-    with pytest.raises(ToolError):
-        await send_telegram_message("   ")
-
-    assert telegram.sent == []
-    assert telegram.api_calls == []
-
-
-async def test_telegram_delivery_requires_an_explicit_destination(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
-    monkeypatch.delenv("TELEGRAM_ALLOWED_USER_ID", raising=False)
-
-    with pytest.raises(ToolError, match="not reachable"):
-        await send_telegram_message("Hello")
-
-
-async def test_rich_delivery_rejection_has_no_classic_transport_fallback(
-    telegram: FakeBot,
-) -> None:
-    telegram.reject_rich = True
-
-    with pytest.raises(ToolError, match="could not deliver"):
-        await send_telegram_message("**Still formatted**")
-
-    assert telegram.sent == []
-
-
-async def test_missing_rich_endpoint_has_no_classic_transport_fallback(
-    telegram: FakeBot,
-) -> None:
-    telegram.missing_rich_endpoint = True
-
-    with pytest.raises(ToolError, match="could not deliver"):
-        await send_telegram_message("**Still formatted**")
-
-    assert telegram.sent == []
-
-
-async def test_delivery_history_failure_reports_that_message_was_already_sent(
-    telegram: FakeBot, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    class FailingHistory:
-        def __init__(self, _path: Path) -> None:
-            pass
-
-        def initialize(self) -> None:
-            pass
-
-        def record(self, _message: TelegramHistoryMessage) -> None:
-            raise sqlite3.OperationalError("disk became read-only")
-
-    monkeypatch.setattr(telegram_tools, "TelegramMessageStore", FailingHistory)
-
-    with pytest.raises(
-        ToolError, match=r"delivered message ID\(s\) 101.*Do not resend"
-    ):
-        await send_telegram_message("Already sent once")
-
-    assert telegram.api_calls[0][0] == "sendRichMessage"
-
-
-async def test_a_typed_answer_resumes_the_waiting_question_tool(
-    telegram: FakeBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    state = tmp_path / "questions.sqlite3"
-    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(state))
-    store = TelegramQuestionStore(state)
-
-    waiting = asyncio.create_task(
-        ask_telegram_question(
-            "Which environment should I use?",
-            ["Staging", "Production"],
-        )
-    )
-    question = await wait_for_question(store)
-    store.answer_text(7, "Production with a canary")
-
-    result = await asyncio.wait_for(waiting, timeout=1)
-
-    assert result == {
+    assert await asyncio.wait_for(task, 2) == {
         "status": "answered",
-        "answer": "Production with a canary",
+        "answer": "Staging with a canary",
         "source": "text",
     }
-    assert question.message_id == 101
-    assert telegram.api_calls[0][0] == "sendRichMessage"
-    history = TelegramMessageStore(state).read(
-        7, since=datetime.min.replace(tzinfo=UTC)
+
+
+async def test_a_button_answer_resumes_the_waiting_question_tool(state: Path) -> None:
+    task = asyncio.create_task(ask_question("Which environment?", ["Local", "Staging"]))
+    store = QuestionStore(state)
+    question = await presented_question(store)
+
+    assert store.answer_choice(question.question_id, 1).outcome == "accepted"
+
+    assert (await asyncio.wait_for(task, 2))["answer"] == "Staging"
+
+
+async def test_a_second_question_cannot_wait_beside_the_first(state: Path) -> None:
+    first = asyncio.create_task(
+        ask_question("Which environment?", ["Local", "Staging"])
     )
-    assert [(item.speaker, item.text) for item in history.messages] == [
-        ("iris", "Which environment should I use?")
-    ]
+    await presented_question(QuestionStore(state))
 
+    with pytest.raises(ToolError, match="already waiting"):
+        await ask_question("And which region?", ["EU", "US"])
 
-async def test_a_button_answer_resumes_the_waiting_question_tool(
-    telegram: FakeBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    state = tmp_path / "questions.sqlite3"
-    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(state))
-    store = TelegramQuestionStore(state)
-
-    waiting = asyncio.create_task(
-        ask_telegram_question("Choose one", ["Local", "Staging", "Production"])
-    )
-    question = await wait_for_question(store)
-    selection = store.answer_choice(
-        question.question_id,
-        chat_id=7,
-        message_id=question.message_id or 0,
-        choice_index=2,
-    )
-
-    result = await asyncio.wait_for(waiting, timeout=1)
-
-    assert selection.outcome == "accepted"
-    assert result == {
-        "status": "answered",
-        "answer": "Production",
-        "source": "button",
-    }
-
-
-async def test_cancelling_the_tool_disables_its_pending_question(
-    telegram: FakeBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    state = tmp_path / "questions.sqlite3"
-    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(state))
-    store = TelegramQuestionStore(state)
-
-    waiting = asyncio.create_task(ask_telegram_question("Choose", ["A", "B"]))
-    question = await wait_for_question(store)
-    waiting.cancel()
-
+    first.cancel()
     with pytest.raises(asyncio.CancelledError):
-        await waiting
+        await first
+
+
+async def test_cancelling_the_tool_cancels_its_pending_question(state: Path) -> None:
+    task = asyncio.create_task(ask_question("Which environment?", ["Local", "Staging"]))
+    store = QuestionStore(state)
+    question = await presented_question(store)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
     cancelled = store.get(question.question_id)
-    assert cancelled is not None
-    assert cancelled.status == "cancelled"
-    assert telegram.api_calls[-1][0] == "editMessageText"
+    assert cancelled is not None and cancelled.status == "cancelled"
+
+
+def test_sharing_stages_only_readable_files_under_home(
+    state: Path, tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    report = tmp_path / "report.md"
+    report.write_text("# Report", encoding="utf-8")
+
+    result = share_files([str(report)], caption="Here it is")
+
+    assert result == {
+        "status": "shared",
+        "files": [{"filename": "report.md", "path": str(report.resolve())}],
+    }
+    (pending,) = SharedFiles(state).pending()
+    assert pending.paths == (report.resolve(),)
+    assert pending.caption == "Here it is"
+    with pytest.raises(ToolError, match="outside the allowed home"):
+        share_files(["/etc/hostname"])

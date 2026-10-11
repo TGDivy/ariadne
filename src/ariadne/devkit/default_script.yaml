@@ -1,0 +1,63 @@
+# Scripted replies for ariadne-dev-server. The first rule whose `match`
+# (a case-insensitive regular expression) appears in the turn input runs.
+# Steps: think, activity, say, ask, share, sleep, wait_for_stop, fail.
+# Text may use {input}, {steered}, and {answer} after an ask.
+delay: 0.03
+rules:
+  - match: "background handoffs"
+    steps:
+      - activity: read_recent_conversation
+      - say: >-
+          Quick update while you were away: the train company moved Saturday's
+          departure to 07:42. I updated the calendar, so the bib collection plan
+          still works.
+
+  - match: "\\[dev\\] question|which (one|option)"
+    steps:
+      - think: Checking what would suit you best
+      - ask:
+          prompt: Which dinner spot should I hold for Saturday?
+          choices: [Gostilna Sokol, Monstera, Somewhere quieter]
+      - say: "{answer} it is. I'll keep the other two as backups."
+
+  - match: "\\[dev\\] fail"
+    steps:
+      - think: Trying something that will not work
+      - fail: The scripted model failed on purpose.
+
+  - match: "\\[dev\\] stop"
+    steps:
+      - say:
+          phase: final
+          text: I'm going to keep talking until you press stop, so you can see what a stopped message looks like when it is cut off partway through
+          chunk: 4
+      - wait_for_stop: {}
+
+  - match: "\\[dev\\] share|share (it|the file)"
+    steps:
+      - activity: share_files
+      - share:
+          paths: [workspace/dinner-shortlist.md]
+          caption: The dinner shortlist, ready to forward.
+      - say: Shared the shortlist above.
+
+  - match: "\\[dev\\] long|take your time|research"
+    steps:
+      - think: Working out what matters for Saturday
+      - activity: search_knowledge
+      - activity: { tool: read_knowledge, seconds: 1.0 }
+      - say:
+          phase: commentary
+          text: Found three places near the old town that can seat six.
+      - sleep: 3
+      - think: Comparing reviews and walking distance
+      - activity: { tool: browser_navigate, seconds: 2.0 }
+      - say: >-
+          The second one fits a big group best and is a ten-minute walk from
+          the hostel. {steered}
+
+  - match: ".*"
+    steps:
+      - think: Thinking about what you said
+      - activity: search_knowledge
+      - say: "You said: {input}"

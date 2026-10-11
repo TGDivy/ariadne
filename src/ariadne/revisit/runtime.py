@@ -9,6 +9,8 @@ from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
+from openai_codex import AsyncCodex
+
 from ..codex import CodexConversation, CodexTurnSettings
 from ..codex.resolver import resolve_profile
 from ..config import RevisitSettings
@@ -51,6 +53,7 @@ class RevisitLoop:
         conversation_factory: ConversationFactory | None = None,
         clock: Callable[[], datetime] | None = None,
         handoffs: HandoffState | None = None,
+        codex_client: AsyncCodex | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = workspace
@@ -65,6 +68,7 @@ class RevisitLoop:
         self.state.initialize()
         self._stop = asyncio.Event()
         self._conversation_factory = conversation_factory
+        self._codex_client = codex_client
         self._clock = clock or (lambda: datetime.now(UTC))
         handoff_path = self.mcp_environment.get(HANDOFF_STATE_ENVIRONMENT)
         self.handoffs = handoffs or (
@@ -95,6 +99,7 @@ class RevisitLoop:
                 },
                 network_domains=self.network_domains,
             ),
+            client=self._codex_client,
             telemetry=self.telemetry,
         )
 
@@ -104,6 +109,10 @@ class RevisitLoop:
         revisit = self.state.claim_due(now=awakened_at)
         if revisit is None:
             return False
+        if self.handoffs is not None:
+            # An interrupted earlier attempt may have staged context about work
+            # that never committed; only this attempt may release a handoff.
+            self.handoffs.discard(revisit.id, "Superseded by a new attempt")
         started_at = time.monotonic()
         conversation: CodexConversation | None = None
         try:

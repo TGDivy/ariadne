@@ -294,24 +294,59 @@ async def test_runtime_wakes_once_and_discards_native_output(tmp_path: Path) -> 
     assert "<earlier_iris_note>" in prompt
 
 
+class StagingConversation(FakeConversation):
+    def __init__(self, handoffs: HandoffState, activation_key: str) -> None:
+        super().__init__()
+        self.handoffs = handoffs
+        self.activation_key = activation_key
+
+    async def stream_turn(self, prompt: str) -> Any:
+        self.prompts.append(prompt)
+        self.handoffs.stage(
+            activation_key=self.activation_key,
+            source="revisit",
+            body="The useful result",
+        )
+        if False:
+            yield None
+
+
 async def test_successful_revisit_releases_its_staged_handoff(tmp_path: Path) -> None:
     state = state_at(tmp_path)
     scheduled = state.schedule(
         due_at=instant(2_000), note="Check once", attention=Attention.light
     )
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=lambda: 1_000)
-    handoffs.stage(
-        activation_key=scheduled.id,
-        source="revisit",
-        body="The useful result",
-    )
-    loop = revisit_loop(tmp_path, state, FakeConversation(), handoffs)
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=lambda: 1_000)
+    conversation = StagingConversation(handoffs, scheduled.id)
+    loop = revisit_loop(tmp_path, state, conversation, handoffs)
 
     await loop.process_due()
 
     retained = handoffs.for_activation(scheduled.id)
     assert retained is not None
     assert retained.status == "ready"
+
+
+async def test_context_staged_by_an_interrupted_attempt_is_never_released(
+    tmp_path: Path,
+) -> None:
+    state = state_at(tmp_path)
+    scheduled = state.schedule(
+        due_at=instant(2_000), note="Check once", attention=Attention.light
+    )
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=lambda: 1_000)
+    handoffs.stage(
+        activation_key=scheduled.id,
+        source="revisit",
+        body="Written before the process stopped mid-turn",
+    )
+    loop = revisit_loop(tmp_path, state, FakeConversation(), handoffs)
+
+    await loop.process_due()
+
+    stale = handoffs.for_activation(scheduled.id)
+    assert stale is not None
+    assert stale.status == "discarded"
 
 
 async def test_runtime_retains_a_failed_execution_without_rerouting(
@@ -339,7 +374,7 @@ async def test_failed_revisit_discards_its_staged_handoff(tmp_path: Path) -> Non
     scheduled = state.schedule(
         due_at=instant(2_000), note="Check once", attention=Attention.light
     )
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=lambda: 1_000)
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=lambda: 1_000)
     handoffs.stage(
         activation_key=scheduled.id,
         source="revisit",
@@ -395,7 +430,7 @@ async def test_cancelled_revisit_discards_its_staged_handoff(tmp_path: Path) -> 
     scheduled = state.schedule(
         due_at=instant(2_000), note="Check once", attention=Attention.light
     )
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=lambda: 1_000)
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=lambda: 1_000)
     handoffs.stage(
         activation_key=scheduled.id,
         source="revisit",

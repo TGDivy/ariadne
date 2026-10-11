@@ -65,13 +65,13 @@ def test_background_prompts_specify_checks_and_interruptions() -> None:
     assert "important goal repeatedly stalls" in companion
     assert "A polished message is not a substitute" in companion
     assert "Search the wider mailbox" in mail
-    assert "read prior Telegram messages about the same subjects" in mail
+    assert "read prior conversation messages about the same subjects" in mail
     assert "For every dated commitment" in mail
     assert "create or update its durable event record and Calendar entry" in mail
     assert "travel crosses timezones" in mail
     assert "correct the workspace mail-routing rules" in mail
     assert "is not proof of urgency" in mail
-    assert "always call `read_recent_telegram_messages`" in revisit
+    assert "always call `read_recent_conversation`" in revisit
     assert "exact `since` and `before` values" in revisit
     assert "Read every knowledge record named or referenced" in revisit
     assert "do not interpret silence as disinterest" in revisit
@@ -82,7 +82,7 @@ def test_background_prompts_specify_checks_and_interruptions() -> None:
     assert "Learn" in stewardship
     assert "one coherent opportunity" in stewardship
     assert "Most cycles may finish silently" in stewardship
-    assert "hand_off_to_telegram_conversation" in stewardship
+    assert "hand_off_to_conversation" in stewardship
     assert "record_stewardship_outcome" in stewardship
     assert "Require Example User's confirmation before payment" in stewardship
     assert "reactions as uncertain feedback, never commands" in stewardship

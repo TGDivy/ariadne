@@ -30,16 +30,17 @@ from ariadne.codex.conversation import (
 )
 from ariadne.codex.models import CodexTurnSettings
 from ariadne.codex.resolver import resolve_profile
+from ariadne.conversation.database import STATE_ENVIRONMENT as CONVERSATION_STATE
+from ariadne.conversation.log import ConversationLog
 from ariadne.knowledge import KnowledgeMetadata
 from ariadne.knowledge.documents import render_document
 from ariadne.knowledge.paths import slug
 from ariadne.profile import (
+    CONVERSATION_PROFILE,
     MAIL_PROFILE,
     STEWARDSHIP_PROFILE,
-    TELEGRAM_PROFILE,
     profile_for_attention,
 )
-from ariadne.telegram.history import TelegramMessageStore
 
 from .fake_calendar import CALENDAR_ENVIRONMENT
 from .fake_knowledge import KNOWLEDGE_ENVIRONMENT
@@ -58,9 +59,7 @@ _REDACTED_ENVIRONMENT = (
     "ARIADNE_ICLOUD_APP_PASSWORD",
     "ARIADNE_CALENDAR_TIMEZONE",
     "ARIADNE_CALENDAR_DEFAULT",
-    "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_ALLOWED_USER_ID",
-    "ARIADNE_TELEGRAM_STATE",
+    "ARIADNE_CONVERSATION_STATE",
     "ARIADNE_REVISIT_STATE",
     "ARIADNE_STEWARDSHIP_STATE",
     "ARIADNE_STEWARDSHIP_CYCLE",
@@ -203,7 +202,7 @@ def _fake_mcp_overrides(
     enabled_tools: tuple[str, ...],
     calls: Path,
     knowledge: Path,
-    telegram: Path,
+    conversation: Path,
 ) -> tuple[str, ...]:
     return (
         f"mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(sys.executable)}",
@@ -218,10 +217,8 @@ def _fake_mcp_overrides(
         + json.dumps(str(calls)),
         f"mcp_servers.{MCP_SERVER_NAME}.env.{KNOWLEDGE_ENVIRONMENT}="
         + json.dumps(str(knowledge)),
-        f"mcp_servers.{MCP_SERVER_NAME}.env.TELEGRAM_ALLOWED_USER_ID="
-        + json.dumps("7"),
-        f"mcp_servers.{MCP_SERVER_NAME}.env.ARIADNE_TELEGRAM_STATE="
-        + json.dumps(str(telegram)),
+        f"mcp_servers.{MCP_SERVER_NAME}.env.{CONVERSATION_STATE}="
+        + json.dumps(str(conversation)),
     )
 
 
@@ -274,7 +271,7 @@ async def run_scenario(
         calls = root / "capability-calls.jsonl"
         knowledge = root / "knowledge.json"
         calendar = root / "calendar.json"
-        telegram = root / "telegram.sqlite3"
+        conversation_state = root / "conversation.sqlite3"
         scenario_bin = root / "bin"
         workspace.mkdir()
         _write_scenario(scenario, workspace)
@@ -305,9 +302,9 @@ async def run_scenario(
             ),
             encoding="utf-8",
         )
-        telegram_store = TelegramMessageStore(telegram)
-        for item in scenario.telegram:
-            telegram_store.record(item.stored(chat_id=7))
+        log = ConversationLog(conversation_state)
+        for item in scenario.conversation:
+            log.append(item.draft())
 
         _run_git("init", "--bare", str(origin), cwd=root)
         _run_git("init", "--initial-branch=main", cwd=workspace)
@@ -321,8 +318,8 @@ async def run_scenario(
         before = _snapshot(workspace)
         _write_fake_cli(scenario_bin)
 
-        if scenario.telegram_prompt is not None:
-            surface = TELEGRAM_PROFILE
+        if scenario.message is not None:
+            surface = CONVERSATION_PROFILE
         elif scenario.stewardship is not None:
             surface = STEWARDSHIP_PROFILE
         elif scenario.revisit is not None:
@@ -350,7 +347,7 @@ async def run_scenario(
                     profile.enabled_tools,
                     calls,
                     knowledge,
-                    telegram,
+                    conversation_state,
                 ),
                 cwd=str(workspace),
                 env={

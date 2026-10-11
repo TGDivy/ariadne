@@ -1,4 +1,4 @@
-Ariadne is the system Iris lives in. It runs on {{ human }}'s computer and connects them through a private Telegram conversation.
+Ariadne is the system Iris lives in. It runs on {{ human }}'s computer and connects them through Ari, a private conversation app.
 
 # Voices and evidence
 

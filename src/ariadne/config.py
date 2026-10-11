@@ -26,14 +26,12 @@ from pydantic import (
 
 from .browser.capability import SOCKET_ENVIRONMENT as BROWSER_SOCKET_ENVIRONMENT
 from .codex.models import CodexTurnSettings, WebSearchSetting
+from .conversation.database import STATE_ENVIRONMENT as CONVERSATION_STATE_ENVIRONMENT
+from .conversation.database import default_state_path as default_conversation_state
 from .profile import PROFILES, profile_for_attention
 from .revisit import STATE_ENVIRONMENT as REVISIT_STATE_ENVIRONMENT
 from .revisit import Attention
 from .stewardship import STATE_ENVIRONMENT as STEWARDSHIP_STATE_ENVIRONMENT
-from .telegram.questions import (
-    QUESTION_STATE_ENVIRONMENT,
-    default_question_state_path,
-)
 
 DEFAULT_CONFIG_PATH = Path("~/.config/ariadne/config.toml")
 CONFIG_PATH_ENVIRONMENT = "ARIADNE_CONFIG"
@@ -54,76 +52,96 @@ class ProfileOverrides(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
-class TelegramIdentity(BaseModel):
-    """Optional fields applied to the Telegram bot account on demand."""
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+RETIRED_TELEGRAM_MESSAGE = (
+    "[telegram] is retired: the private conversation now runs in the Ari app. "
+    "Remove the section and configure [app] instead."
+)
+
+
+def _expand_path(value: object) -> object:
+    if isinstance(value, str):
+        return Path(value.strip()).expanduser()
+    return value.expanduser() if isinstance(value, Path) else value
+
+
+class ConversationConfig(BaseModel):
+    """Private state for the one continuous conversation."""
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    name: str | None = Field(default=None, max_length=64)
-    description: str | None = Field(default=None, max_length=512)
-    short_description: str | None = Field(default=None, max_length=120)
-    profile_photo: Path | None = None
-
-    @field_validator("name", "description", "short_description", mode="before")
-    @classmethod
-    def empty_text_is_absent(cls, value: object) -> object:
-        return value.strip() or None if isinstance(value, str) else value
-
-    @field_validator("profile_photo", mode="before")
-    @classmethod
-    def expand_profile_photo(cls, value: object) -> object:
-        if isinstance(value, str):
-            return Path(value).expanduser() if value.strip() else None
-        return value.expanduser() if isinstance(value, Path) else value
-
-
-class TelegramConfig(BaseModel):
-    """Telegram connection and presentation configuration."""
-
-    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
-
-    bot_token: SecretStr
-    allowed_user_id: PositiveInt
-    state: Path = Field(default_factory=default_question_state_path)
-    identity: TelegramIdentity = Field(default_factory=TelegramIdentity)
-    voice_transcription_command: tuple[str, ...] | None = None
-    voice_transcription_timeout_seconds: int = Field(default=120, ge=1, le=600)
-
-    @field_validator("bot_token", mode="before")
-    @classmethod
-    def require_bot_token(cls, value: object) -> object:
-        if isinstance(value, SecretStr):
-            if not value.get_secret_value().strip():
-                raise ValueError("Telegram bot token must not be empty.")
-            return value
-        if isinstance(value, str):
-            value = value.strip()
-            if not value:
-                raise ValueError("Telegram bot token must not be empty.")
-        return value
+    state: Path = Field(default_factory=default_conversation_state)
 
     @field_validator("state", mode="before")
     @classmethod
-    def expand_state_path(cls, value: object) -> object:
-        if isinstance(value, str):
-            return Path(value).expanduser()
-        return value.expanduser() if isinstance(value, Path) else value
+    def expand_state(cls, value: object) -> object:
+        return _expand_path(value)
 
-    @field_validator("voice_transcription_command", mode="before")
+
+class AppDevice(BaseModel):
+    """One paired phone, identified only by the hash of its bearer token."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{0,31}$")
+    name: str = Field(min_length=1, max_length=64)
+    token_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class AppConfig(BaseModel):
+    """The local HTTPS-proxied API that the Ari app talks to."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    host: str = "127.0.0.1"
+    port: int = Field(default=8737, ge=1, le=65535)
+    public_url: AnyHttpUrl | None = None
+    agent_name: str = Field(default="Iris", min_length=1, max_length=64)
+    avatar: Path | None = None
+    attachments: Path = Field(
+        default_factory=lambda: Path("~/.ariadne/attachments").expanduser()
+    )
+    max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
+    max_document_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
+    devices: tuple[AppDevice, ...] = ()
+
+    @field_validator("host", mode="before")
     @classmethod
-    def normalize_voice_command(cls, value: object) -> object:
-        if value is None:
+    def require_loopback(cls, value: object) -> object:
+        # Reachability comes from a private proxy such as Tailscale Funnel; the
+        # API itself must never listen on a public interface.
+        if isinstance(value, str) and value.strip() not in LOOPBACK_HOSTS:
+            raise ValueError("The app API must bind to a loopback address.")
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("agent_name", mode="before")
+    @classmethod
+    def strip_agent_name(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("avatar", mode="before")
+    @classmethod
+    def expand_avatar(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
             return None
-        if not isinstance(value, (list, tuple)):
-            raise ValueError("voice_transcription_command must be an argument list.")
-        command = tuple(str(argument).strip() for argument in value)
-        if not command or any(not argument for argument in command):
-            raise ValueError("voice_transcription_command cannot contain empty values.")
-        if sum(argument.count("{input}") for argument in command) != 1:
-            raise ValueError(
-                "voice_transcription_command needs exactly one {input} placeholder."
-            )
-        return command
+        return _expand_path(value)
+
+    @field_validator("attachments", mode="before")
+    @classmethod
+    def expand_attachments(cls, value: object) -> object:
+        return _expand_path(value)
+
+    @model_validator(mode="after")
+    def validate_devices(self) -> AppConfig:
+        if self.avatar is not None and not self.avatar.is_file():
+            raise ValueError("The app avatar must point to a readable image file.")
+        identifiers = [device.id for device in self.devices]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("App device ids must be unique.")
+        hashes = [device.token_sha256 for device in self.devices]
+        if len(set(hashes)) != len(hashes):
+            raise ValueError("App device token hashes must be unique.")
+        return self
 
 
 class ICloudConfig(BaseModel):
@@ -566,7 +584,8 @@ class Settings(BaseModel):
     vault: DirectoryPath
     workspace: DirectoryPath | None = None
     personality: Path | None = None
-    telegram: TelegramConfig
+    conversation: ConversationConfig = Field(default_factory=ConversationConfig)
+    app: AppConfig = Field(default_factory=AppConfig)
     icloud: ICloudConfig = Field(default_factory=ICloudConfig)
     outlook: OutlookConfig = Field(default_factory=OutlookConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
@@ -577,6 +596,13 @@ class Settings(BaseModel):
     stewardship: StewardshipConfig = Field(default_factory=StewardshipConfig)
     telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     profiles: dict[str, ProfileOverrides] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_sections(cls, value: object) -> object:
+        if isinstance(value, Mapping) and "telegram" in value:
+            raise ValueError(RETIRED_TELEGRAM_MESSAGE)
+        return value
 
     @field_validator("human_name", mode="before")
     @classmethod
@@ -659,14 +685,6 @@ class Settings(BaseModel):
         return None
 
     @property
-    def telegram_bot_token(self) -> str:
-        return self.telegram.bot_token.get_secret_value()
-
-    @property
-    def allowed_user_id(self) -> int:
-        return self.telegram.allowed_user_id
-
-    @property
     def health_network_domains(self) -> tuple[str, ...]:
         if not self.health.enabled or self.health.api_url is None:
             return ()
@@ -684,7 +702,7 @@ class Settings(BaseModel):
 
     @property
     def codex_turn_settings(self) -> CodexTurnSettings:
-        return self.turn_settings("telegram")
+        return self.turn_settings("conversation")
 
     @property
     def mail_turn_settings(self) -> CodexTurnSettings:
@@ -701,9 +719,7 @@ class Settings(BaseModel):
     @property
     def mcp_environment(self) -> dict[str, str]:
         environment = {
-            "TELEGRAM_BOT_TOKEN": self.telegram_bot_token,
-            "TELEGRAM_ALLOWED_USER_ID": str(self.allowed_user_id),
-            QUESTION_STATE_ENVIRONMENT: str(self.telegram.state.resolve()),
+            CONVERSATION_STATE_ENVIRONMENT: str(self.conversation.state.resolve()),
             REVISIT_STATE_ENVIRONMENT: str(self.revisits.state.resolve()),
             STEWARDSHIP_STATE_ENVIRONMENT: str(self.stewardship.state.resolve()),
         }
@@ -857,33 +873,28 @@ def load_settings(
 
 def settings_payload(settings: Settings) -> dict[str, Any]:
     """Return effective configuration with secrets replaced, never serialized."""
-    identity = settings.telegram.identity
     return {
         "version": settings.version,
         "human_name": settings.human_name,
         "vault": str(settings.vault),
         "workspace": str(settings.agent_workspace),
         "personality": str(settings.personality) if settings.personality else None,
-        "telegram": {
-            "bot_token": "<redacted>",
-            "allowed_user_id": settings.allowed_user_id,
-            "state": str(settings.telegram.state),
-            "voice_transcription_command": (
-                list(settings.telegram.voice_transcription_command)
-                if settings.telegram.voice_transcription_command is not None
-                else None
+        "conversation": {"state": str(settings.conversation.state)},
+        "app": {
+            "host": settings.app.host,
+            "port": settings.app.port,
+            "public_url": (
+                str(settings.app.public_url) if settings.app.public_url else None
             ),
-            "voice_transcription_timeout_seconds": (
-                settings.telegram.voice_transcription_timeout_seconds
-            ),
-            "identity": {
-                "name": identity.name,
-                "description": identity.description,
-                "short_description": identity.short_description,
-                "profile_photo": (
-                    str(identity.profile_photo) if identity.profile_photo else None
-                ),
-            },
+            "agent_name": settings.app.agent_name,
+            "avatar": str(settings.app.avatar) if settings.app.avatar else None,
+            "attachments": str(settings.app.attachments),
+            "max_image_bytes": settings.app.max_image_bytes,
+            "max_document_bytes": settings.app.max_document_bytes,
+            "devices": [
+                {"id": device.id, "name": device.name, "token_sha256": "<redacted>"}
+                for device in settings.app.devices
+            ],
         },
         "icloud": {
             "username": settings.icloud.username,

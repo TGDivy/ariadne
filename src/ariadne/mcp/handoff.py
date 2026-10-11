@@ -18,10 +18,10 @@ from ..handoff import (
 )
 
 
-def hand_off_to_telegram_conversation(text: str) -> dict[str, str]:
-    """Stage free-form context for the continuing Telegram Iris.
+def hand_off_to_conversation(text: str) -> dict[str, str]:
+    """Stage free-form context for the continuing conversation Iris.
 
-    This does not send Telegram prose. The originating job releases the staged
+    This does not send prewritten messages. The originating job releases the staged
     context only after all of its private work commits successfully. Calling it
     again in the same activation replaces the still-staged context.
     """
@@ -50,4 +50,4 @@ def hand_off_to_telegram_conversation(text: str) -> dict[str, str]:
 
 def register_tools(server: FastMCP) -> None:
     """Register the background handoff capability."""
-    server.tool(hand_off_to_telegram_conversation)
+    server.tool(hand_off_to_conversation)

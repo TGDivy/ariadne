@@ -16,7 +16,9 @@ dependencies = [
     "pydantic>=2.13.4",
     "pypdf>=6.0.0",
     "pyyaml>=6.0.2",
-    "python-telegram-bot>=22.8",
+    "starlette>=1.6.0",
+    "uvicorn>=0.52.4",
+    "websockets>=17.0.1",
 ]
 
 [project.scripts]
@@ -25,6 +27,8 @@ ariadne-knowledge = "ariadne.scripts.knowledge:main"
 ariadne-stewardship = "ariadne.scripts.stewardship:main"
 ariadne-browser = "ariadne.browser.cli:main"
 ariadne-browser-mcp = "ariadne.browser.mcp:main"
+ariadne-app = "ariadne.app.pairing:main"
+ariadne-dev-server = "ariadne.devkit.server:main"
 
 [build-system]
 requires = ["hatchling"]

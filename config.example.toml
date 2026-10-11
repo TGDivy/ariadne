@@ -4,20 +4,24 @@ vault = "~/ariadne-thread"
 # Optional: where Codex starts shell and file work. Defaults to `vault`.
 # workspace = "~/ariadne-workspace"
 
-[telegram]
-bot_token = ""
-allowed_user_id = 0
-state = "~/.local/state/ariadne/telegram.sqlite3"
-# Optional argv-only command. `{input}` is replaced with the private OGG path;
-# the command must write only the UTF-8 transcript to stdout.
-# voice_transcription_command = ["whisper-transcribe", "{input}"]
-# voice_transcription_timeout_seconds = 120
+[conversation]
+state = "~/.local/state/ariadne/conversation.sqlite3"
 
-[telegram.identity]
-name = "Iris"
-description = "Iris runs on your own machine and follows The Thread wherever it leads — a private chat, an open-ended mission, no fixed destination."
-short_description = "Somewhere between a rainbow and a labyrinth."
-# profile_photo = "~/.config/ariadne/iris.jpg"
+# The Ari app talks to this local API through a private HTTPS proxy such as
+# Tailscale Funnel. It must listen on a loopback address.
+[app]
+host = "127.0.0.1"
+port = 8737
+agent_name = "Iris"
+# public_url = "https://your-machine.your-tailnet.ts.net"
+# avatar = "~/.config/ariadne/iris.png"
+attachments = "~/.ariadne/attachments"
+
+# Run `ariadne-app pair` and paste the entry it prints here.
+# [[app.devices]]
+# id = "iphone"
+# name = "iPhone"
+# token_sha256 = "..."
 
 [icloud]
 # username = "YOUR_ICLOUD_ADDRESS"
@@ -88,7 +92,7 @@ export_interval_seconds = 60
 # authorization = "Basic YOUR_TOKEN"
 
 # Profile overrides are optional. Omitted values come from src/ariadne/profile.py.
-# [profiles.telegram]
+# [profiles.conversation]
 # model = "gpt-5.6-luna"
 # effort = "high"
 # web_search = "disabled"

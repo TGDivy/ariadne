@@ -492,7 +492,7 @@ def make_loop(
 async def test_runtime_success_releases_staged_handoff(tmp_path: Path) -> None:
     clock = MutableClock(instant("2026-09-11T10:00:00+01:00"))
     state = make_state(tmp_path, clock)
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=clock.seconds)
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=clock.seconds)
     conversation = FakeConversation(
         on_turn=lambda: handoffs.stage(
             activation_key="cycle-1",
@@ -519,7 +519,7 @@ async def test_runtime_failure_is_reported_delayed_and_discards_handoff(
 ) -> None:
     clock = MutableClock(instant("2026-09-11T10:00:00+01:00"))
     state = make_state(tmp_path, clock, "cycle-1", "retry")
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=clock.seconds)
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=clock.seconds)
 
     def stage() -> None:
         handoffs.stage(
@@ -551,7 +551,7 @@ async def test_runtime_cancellation_releases_cycle_and_discards_handoff(
 ) -> None:
     clock = MutableClock(instant("2026-09-11T10:00:00+01:00"))
     state = make_state(tmp_path, clock)
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=clock.seconds)
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=clock.seconds)
 
     def stage() -> None:
         handoffs.stage(
@@ -583,7 +583,7 @@ def test_runtime_startup_discards_an_interrupted_handoff(tmp_path: Path) -> None
         waking_end=time(21),
     )
     assert cycle is not None
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3", clock=clock.seconds)
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3", clock=clock.seconds)
     handoffs.stage(
         activation_key=cycle.id,
         source="stewardship",

@@ -23,10 +23,10 @@ from ariadne.behavior.runner import (
     _write_scenario,
     render_report,
 )
+from ariadne.conversation.log import ConversationLog
 from ariadne.knowledge.validation import validate_repository
 from ariadne.mcp import mcp as production_mcp
 from ariadne.mcp import server as production_server
-from ariadne.telegram.history import TelegramMessageStore
 
 
 def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
@@ -55,9 +55,9 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
 
     for scenario in SCENARIOS:
         prompt = scenario.turn_input(tmp_path)
-        if scenario.telegram_prompt is not None:
-            assert prompt == scenario.telegram_prompt
-            assert scenario.profile_name == "telegram"
+        if scenario.message is not None:
+            assert prompt == scenario.message
+            assert scenario.profile_name == "conversation"
         elif scenario.stewardship is not None:
             assert "today's one open-ended stewardship opportunity" in prompt
             assert "Reflect → Dream → Choose → Act → Learn" in prompt
@@ -81,14 +81,14 @@ def test_catalog_has_unique_production_shaped_scenarios(tmp_path: Path) -> None:
     assert len(SCENARIOS[1].calendar) == 1
     assert len(SCENARIOS[2].calendar) == 3
     assert len(SCENARIOS[3].calendar) == 1
-    assert len(SCENARIOS[3].telegram) == 1
-    assert SCENARIOS[4].telegram_prompt is not None
-    assert SCENARIOS[5].telegram_prompt is not None
-    assert SCENARIOS[6].telegram_prompt is not None
-    assert SCENARIOS[7].telegram_prompt is not None
-    # The message-rhythm scenarios are direct Telegram turns; the rest are the
-    # daily stewardship pulse.
-    assert all(scenario.telegram_prompt is not None for scenario in SCENARIOS[8:11])
+    assert len(SCENARIOS[3].conversation) == 1
+    assert SCENARIOS[4].message is not None
+    assert SCENARIOS[5].message is not None
+    assert SCENARIOS[6].message is not None
+    assert SCENARIOS[7].message is not None
+    # The message-rhythm scenarios are direct conversation turns; the rest are
+    # the daily stewardship pulse.
+    assert all(scenario.message is not None for scenario in SCENARIOS[8:11])
     assert all(scenario.stewardship is not None for scenario in SCENARIOS[11:])
 
 
@@ -125,7 +125,7 @@ def test_model_process_does_not_inherit_service_secrets(
     redacted = _redacted_environment()
 
     assert redacted["GITHUB_PERSONAL_ACCESS_TOKEN"] == ""
-    assert redacted["TELEGRAM_BOT_TOKEN"] == ""
+    assert redacted["ARIADNE_CONVERSATION_STATE"] == ""
     assert "UNRELATED_VALUE" not in redacted
 
 
@@ -161,10 +161,9 @@ async def test_fake_capabilities_keep_the_production_contract() -> None:
     fake = {tool.name: tool for tool in await fake_mcp.mcp.list_tools()}
 
     assert tuple(fake) == (
-        "send_telegram_message",
-        "read_recent_telegram_messages",
-        "request_telegram_file_delivery",
-        "hand_off_to_telegram_conversation",
+        "read_recent_conversation",
+        "share_files",
+        "hand_off_to_conversation",
         "record_stewardship_outcome",
         "record_current_mail_decision",
         "search_knowledge",
@@ -211,8 +210,8 @@ async def test_fake_capabilities_record_calls(
     calls = tmp_path / "calls.jsonl"
     monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
 
-    assert await fake_mcp.send_telegram_message("Race booked 😄") == [1001]
-    assert fake_mcp.hand_off_to_telegram_conversation("Internal context") == {
+    assert fake_mcp.share_files(["/tmp/plan.md"])["status"] == "shared"
+    assert fake_mcp.hand_off_to_conversation("Internal context") == {
         "status": "staged",
         "handoff_id": "handoff_scenario",
         "activation_key": "scenario",
@@ -223,32 +222,30 @@ async def test_fake_capabilities_record_calls(
 
     assert result["status"] == "recorded"
     assert [json.loads(line)["tool"] for line in calls.read_text().splitlines()] == [
-        "send_telegram_message",
-        "hand_off_to_telegram_conversation",
+        "share_files",
+        "hand_off_to_conversation",
         "record_current_mail_decision",
     ]
 
 
-def test_fake_recent_telegram_history_is_seeded_and_readable(
+def test_fake_recent_conversation_is_seeded_and_readable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls = tmp_path / "calls.jsonl"
-    state = tmp_path / "telegram.sqlite3"
+    state = tmp_path / "conversation.sqlite3"
     scenario = SCENARIOS[3]
-    store = TelegramMessageStore(state)
-    for item in scenario.telegram:
-        store.record(item.stored(chat_id=7))
+    log = ConversationLog(state)
+    stored = [log.append(item.draft()) for item in scenario.conversation]
     monkeypatch.setenv(fake_mcp.STATE_ENVIRONMENT, str(calls))
-    monkeypatch.setenv("TELEGRAM_ALLOWED_USER_ID", "7")
-    monkeypatch.setenv("ARIADNE_TELEGRAM_STATE", str(state))
+    monkeypatch.setenv("ARIADNE_CONVERSATION_STATE", str(state))
 
-    found = fake_mcp.read_recent_telegram_messages(
+    found = fake_mcp.read_recent_conversation(
         "2026-08-29T17:00:00+01:00", speakers=["human"]
     )
 
     assert found["total"] == 1
-    assert found["messages"] == [scenario.telegram[0].stored(7).public_payload()]
-    assert json.loads(calls.read_text())["tool"] == "read_recent_telegram_messages"
+    assert found["messages"] == [stored[0].history_payload()]
+    assert json.loads(calls.read_text())["tool"] == "read_recent_conversation"
 
 
 async def test_fake_knowledge_is_seeded_and_mutable(
@@ -364,19 +361,19 @@ def test_report_is_plain_reviewable_evidence() -> None:
             "reasoning_output_tokens": 10,
             "total_tokens": 120,
         },
-        enabled_capabilities=("send_telegram_message",),
+        enabled_capabilities=("share_files",),
         timeline=(TimelineEntry("activity", "Reading context…"),),
         messages=(RecordedMessage("final_answer", "Done."),),
         capability_attempts=(
             {
                 "server": "ariadne",
-                "tool": "send_telegram_message",
+                "tool": "share_files",
                 "status": "completed",
                 "error": None,
             },
         ),
         capability_calls=(
-            {"tool": "send_telegram_message", "arguments": {"text": "Hi"}},
+            {"tool": "share_files", "arguments": {"paths": ["/tmp/plan.md"]}},
         ),
         calendar_events=(
             {
@@ -399,8 +396,8 @@ def test_report_is_plain_reviewable_evidence() -> None:
     assert "reasoning output tokens `10`" in rendered
     assert "**activity:** Reading context…" in rendered
     assert "### final_answer\n\nDone." in rendered
-    assert "`send_telegram_message`" in rendered
-    assert "`send_telegram_message`: completed" in rendered
+    assert "`share_files`" in rendered
+    assert "`share_files`: completed" in rendered
     assert "## Calendar after turn" in rendered
     assert "**Windsor Trail Run**" in rendered
     assert "abc123 Update plan" in rendered

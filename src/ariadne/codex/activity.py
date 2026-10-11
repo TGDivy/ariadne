@@ -20,7 +20,6 @@ from openai_codex.generated.v2_all import (
 
 MCP_SERVER_NAME = "ariadne"
 BROWSER_MCP_SERVER_NAME = "ariadne_browser"
-TELEGRAM_TOOLS = ("send_telegram_message", "ask_telegram_question")
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,12 +59,11 @@ _REVISIT_ACTIVITY = {
     ),
 }
 _LOCAL_ACTIVITY = {
-    "read_recent_telegram_messages": _activity(
+    "read_recent_conversation": _activity(
         "Reading recent messages…", "Using recent context…"
     ),
-    "request_telegram_file_delivery": _activity(
-        "Preparing files…", "Checking the files…"
-    ),
+    "ask_question": _activity("Waiting for your answer…", "Using your answer…"),
+    "share_files": _activity("Sharing files…", "Checking the files…"),
     "record_current_mail_decision": _activity(
         "Triaging mail…", "Checking the mail decision…"
     ),
@@ -322,8 +320,6 @@ def describe_activity(item: object) -> ActivityDescription | None:
             return _BROWSER_ACTIVITY.get(item.tool) or _activity(
                 "Using the private browser…", "Reviewing the page…"
             )
-        if item.server == MCP_SERVER_NAME and item.tool in TELEGRAM_TOOLS:
-            return None
         if item.server == MCP_SERVER_NAME:
             return (
                 _KNOWLEDGE_ACTIVITY.get(item.tool)

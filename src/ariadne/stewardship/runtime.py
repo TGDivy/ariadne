@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from openai_codex import AsyncCodex
 from openai_codex.generated.v2_all import MessagePhase
 
 from ..codex import AgentMessageCompleted, CodexConversation, CodexTurnSettings
@@ -65,6 +66,7 @@ class StewardshipLoop:
         conversation_factory: ConversationFactory | None = None,
         clock: Callable[[], datetime] | None = None,
         recover_running: bool = True,
+        codex_client: AsyncCodex | None = None,
     ) -> None:
         self.settings = settings
         self.workspace = workspace
@@ -88,6 +90,7 @@ class StewardshipLoop:
                     cycle_id, "Stewardship process stopped before cycle completion"
                 )
         self._conversation_factory = conversation_factory
+        self._codex_client = codex_client
         self._clock = clock or (lambda: datetime.now(UTC))
         self._timezone = ZoneInfo(settings.timezone)
         self._stop = asyncio.Event()
@@ -148,6 +151,7 @@ class StewardshipLoop:
                 },
                 network_domains=self.network_domains,
             ),
+            client=self._codex_client,
             telemetry=self.telemetry,
         )
 

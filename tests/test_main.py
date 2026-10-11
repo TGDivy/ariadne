@@ -6,7 +6,8 @@ from zoneinfo import ZoneInfo
 
 from ariadne.__main__ import main
 from ariadne.config import Settings
-from ariadne.service import configure_logging, status_timezone
+from ariadne.runtime import status_timezone
+from ariadne.service import configure_logging
 
 
 def test_configure_logging_suppresses_http_client_request_logs() -> None:
@@ -36,9 +37,11 @@ def test_config_show_is_valid_json_and_redacts_secrets(
 version = 1
 human_name = "Example User"
 vault = "{vault}"
-[telegram]
-bot_token = "super-secret-token"
-allowed_user_id = 7
+
+[[app.devices]]
+id = "iphone"
+name = "iPhone"
+token_sha256 = "{"a" * 64}"
 ''',
         encoding="utf-8",
     )
@@ -49,8 +52,9 @@ allowed_user_id = 7
     main()
 
     output = capsys.readouterr().out
-    assert json.loads(output)["telegram"]["bot_token"] == "<redacted>"
-    assert "super-secret-token" not in output
+    devices = json.loads(output)["app"]["devices"]
+    assert devices == [{"id": "iphone", "name": "iPhone", "token_sha256": "<redacted>"}]
+    assert "a" * 64 not in output
 
 
 def test_status_timezone_prefers_the_first_configured_local_zone(
@@ -65,7 +69,6 @@ def test_status_timezone_prefers_the_first_configured_local_zone(
                 "version": 1,
                 "human_name": "Example User",
                 "vault": str(vault),
-                "telegram": {"bot_token": "token", "allowed_user_id": 7},
                 **{section: {"timezone": zone} for section, zone in zones.items()},
             }
         )

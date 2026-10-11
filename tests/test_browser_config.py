@@ -10,7 +10,7 @@ from ariadne.browser.capability import SOCKET_ENVIRONMENT, TOOLS
 from ariadne.codex import _mcp_config_overrides
 from ariadne.codex.resolver import resolve_profile
 from ariadne.config import load_settings, settings_payload
-from ariadne.profile import TELEGRAM_PROFILE
+from ariadne.profile import CONVERSATION_PROFILE
 
 
 def write_config(tmp_path: Path, browser: str) -> Path:
@@ -22,10 +22,6 @@ def write_config(tmp_path: Path, browser: str) -> Path:
 version = 1
 human_name = "Example User"
 vault = "{vault}"
-
-[telegram]
-bot_token = "token"
-allowed_user_id = 7
 
 {browser}
 ''',
@@ -68,7 +64,7 @@ takeover_url = "https://browser.private.example/view"
 def test_disabled_browser_does_not_add_a_dead_mcp_server(tmp_path: Path) -> None:
     settings = load_settings(write_config(tmp_path, ""), environ={})
     profile = resolve_profile(
-        TELEGRAM_PROFILE,
+        CONVERSATION_PROFILE,
         workspace=settings.agent_workspace,
         human=settings.human_name,
         mcp_environment=settings.mcp_environment,
@@ -98,7 +94,7 @@ headless = true
     )
     settings = load_settings(config, environ={})
     profile = resolve_profile(
-        TELEGRAM_PROFILE,
+        CONVERSATION_PROFILE,
         workspace=settings.agent_workspace,
         human=settings.human_name,
         mcp_environment=settings.mcp_environment,

@@ -35,7 +35,7 @@ from ariadne.mail import (
     restore_folder_to_inbox,
 )
 from ariadne.mail.runtime import _enter_idle
-from ariadne.profile import MAIL_PROFILE, TELEGRAM_PROFILE
+from ariadne.profile import CONVERSATION_PROFILE, MAIL_PROFILE
 from ariadne.prompts.mail_evidence import render_mail_evidence
 from ariadne.scripts.mail_route_lint import render_report
 from ariadne.telemetry import Telemetry
@@ -540,14 +540,15 @@ async def test_successful_mail_job_releases_its_staged_handoff(tmp_path: Path) -
         {1: message("review@example.com", "Trip review", message_id="<review>")}
     )
     state: MailState
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3")
 
     def conversation(job_id: str) -> CodexConversation:
+        # The turn stages its handoff while it runs, after the attempt began.
+        handoffs.stage(activation_key=job_id, source="mail", body="Useful result")
         return cast(CodexConversation, DecidingConversation(state, job_id))
 
     processor, state = queued_processor(tmp_path, client, conversation)
     job_id = MailState.job_id("INBOX", 10, 1)
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3")
-    handoffs.stage(activation_key=job_id, source="mail", body="Useful result")
     processor.handoffs = handoffs
 
     await processor.process_available()
@@ -646,7 +647,7 @@ async def test_failed_mail_job_discards_its_staged_handoff(tmp_path: Path) -> No
         lambda _job_id: cast(CodexConversation, FailingConversation()),
     )
     job_id = MailState.job_id("INBOX", 10, 1)
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3")
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3")
     handoffs.stage(activation_key=job_id, source="mail", body="Uncommitted result")
     processor.handoffs = handoffs
 
@@ -677,7 +678,7 @@ async def test_cancelled_mail_job_discards_its_staged_handoff(tmp_path: Path) ->
         lambda _job_id: cast(CodexConversation, CancelledConversation()),
     )
     job_id = MailState.job_id("INBOX", 10, 1)
-    handoffs = HandoffState(tmp_path / "telegram.sqlite3")
+    handoffs = HandoffState(tmp_path / "conversation.sqlite3")
     handoffs.stage(activation_key=job_id, source="mail", body="Uncommitted result")
     processor.handoffs = handoffs
 
@@ -1086,7 +1087,7 @@ def test_enter_idle_preserves_genuine_failures() -> None:
 def test_mail_tool_is_enabled_only_for_job_scoped_conversations(tmp_path: Path) -> None:
     normal = _mcp_config_overrides(
         resolve_profile(
-            TELEGRAM_PROFILE,
+            CONVERSATION_PROFILE,
             workspace=tmp_path,
             settings=TURN_SETTINGS,
             human="Example User",

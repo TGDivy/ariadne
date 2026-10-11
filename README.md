@@ -8,7 +8,7 @@
 [![CI](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/TGDivy/ariadne/actions/workflows/ci.yml)
 [![Python 3.13+](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 
-**A private, local-first companion system that connects a capable agent to one person through Telegram.**
+**A private, local-first companion system that connects a capable agent to one person through a private app.**
 
 [How it works](#how-it-works) · [Quick start](#quick-start) · [Guides](#guides)
 
@@ -23,17 +23,17 @@
 
 Most assistants start from zero every time. Ariadne is built around a different idea: a companion should be able to carry useful context forward, notice a meaningful loose end, and help close a small loop without taking ownership away from the person it serves.
 
-It runs on the owner's machine and connects through a private Telegram conversation. Personal knowledge remains in a separate, owner-controlled *Thread* repository; Ariadne gives the agent a small, explicit set of capabilities for working with it.
+It runs on the owner's machine and connects to Ari, a private iPhone app. Personal knowledge remains in a separate, owner-controlled *Thread* repository; Ariadne gives the agent a small, explicit set of capabilities for working with it.
 
 ## How it works
 
-You talk to Iris in a private Telegram conversation. Ariadne runs on your machine; the agent uses first-class capabilities for conversational actions and a compact, discoverable CLI for broader personal-data queries such as Mail, Calendar, and Ithaca health history. Your *Thread* remains a separate, owner-controlled Git repository.
+You talk to Iris in Ari, a private iPhone app. Ariadne runs on your machine; the agent uses first-class capabilities for conversational actions and a compact, discoverable CLI for broader personal-data queries such as Mail, Calendar, and Ithaca health history. Your *Thread* remains a separate, owner-controlled Git repository.
 
 ## What is here today
 
 | Surface | What it enables |
 | --- | --- |
-| **Private conversation** | Rich Telegram messages, reply context, attachment handling, questions, reactions, and conversation continuity. |
+| **Private conversation** | One continuous conversation over a resumable event stream: streaming replies, steering, stop, questions, attachments, reactions, and continuity across restarts. |
 | **Durable context** | Searchable, linked personal records with Git-backed change history. |
 | **Follow-through** | One-off scheduled revisits that can re-check a concrete open loop at an appropriate level of attention. |
 | **Proactive stewardship** | An opt-in daily creative cycle that can reflect across current context, complete safe private work, or deliberately stay silent. |
@@ -44,7 +44,7 @@ Read the fuller [architecture and boundary notes](docs/architecture.md) for the 
 
 ## Quick start
 
-You need [uv](https://docs.astral.sh/uv/), a locally authenticated Codex installation, a Telegram bot token, and a private Git-backed Thread repository.
+You need [uv](https://docs.astral.sh/uv/), a locally authenticated Codex installation, a private Git-backed Thread repository, and a private HTTPS route to the machine (such as Tailscale Funnel).
 
 ```bash
 git clone https://github.com/TGDivy/ariadne.git
@@ -54,7 +54,8 @@ uv sync --locked
 mkdir -p ~/.config/ariadne
 cp config.example.toml ~/.config/ariadne/config.toml
 chmod 600 ~/.config/ariadne/config.toml
-# Edit the private config: bot token, allowed Telegram user, Thread path, and optional agent workspace.
+# Edit the private config: Thread path and optional agent workspace.
+uv run ariadne-app pair   # paste the printed [[app.devices]] entry into the config
 
 uv run ariadne config check
 uv run ariadne serve
@@ -73,7 +74,7 @@ Start with the guide that matches what you need:
 <details>
 <summary>Reference guides</summary>
 
-- [Telegram live chat](docs/telegram-live-chat.md) — rich-message behaviour, state, delivery, and manual testing.
+- [Ari app API](docs/app-api.md) — pairing, commands, the resumable event stream, and the dev server.
 - [Knowledge capability](docs/knowledge-capability.md) — the durable knowledge model and its capability contract.
 - [Behaviour scenarios](docs/behaviour-scenarios.md) — replayable, isolated judgement checks for companion behaviour.
 - [Companion direction](docs/companion-direction.md) — product intent and principles.

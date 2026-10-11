@@ -7,6 +7,12 @@ from datetime import datetime, time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from ariadne.conversation.models import (
+    MessageDraft,
+    MessageKind,
+    MessageOrigin,
+    Speaker,
+)
 from ariadne.mail import MailRoute, parse_metadata
 from ariadne.prompts.activations import (
     build_mail_turn_prompt,
@@ -18,12 +24,6 @@ from ariadne.revisit import Attention
 from ariadne.stewardship import (
     StewardshipCycle,
     StewardshipSnapshot,
-)
-from ariadne.telegram.history import (
-    TelegramContentType,
-    TelegramHistoryMessage,
-    TelegramMessageSource,
-    TelegramSpeaker,
 )
 
 
@@ -155,27 +155,22 @@ class ScenarioStewardship:
 
 
 @dataclass(frozen=True, slots=True)
-class ScenarioTelegramMessage:
-    """One permanent Telegram message visible to a behaviour scenario."""
+class ScenarioMessage:
+    """One permanent conversation message visible to a behaviour scenario."""
 
-    message_id: int
     sent_at: datetime
-    speaker: TelegramSpeaker
-    source: TelegramMessageSource
+    speaker: Speaker
+    origin: MessageOrigin
     text: str
-    content_type: TelegramContentType = "text"
-    reply_to_message_id: int | None = None
+    kind: MessageKind = "text"
 
-    def stored(self, chat_id: int) -> TelegramHistoryMessage:
-        return TelegramHistoryMessage(
-            chat_id=chat_id,
-            message_id=self.message_id,
-            sent_at=self.sent_at,
+    def draft(self) -> MessageDraft:
+        return MessageDraft(
             speaker=self.speaker,
-            source=self.source,
-            content_type=self.content_type,
+            origin=self.origin,
+            kind=self.kind,
             text=self.text,
-            reply_to_message_id=self.reply_to_message_id,
+            sent_at=self.sent_at,
         )
 
 
@@ -192,9 +187,9 @@ class BehaviorScenario:
     knowledge: tuple[ScenarioKnowledge, ...]
     calendar: tuple[ScenarioCalendarEvent, ...]
     review_questions: tuple[str, ...]
-    telegram: tuple[ScenarioTelegramMessage, ...] = ()
+    conversation: tuple[ScenarioMessage, ...] = ()
     revisit: ScenarioRevisit | None = None
-    telegram_prompt: str | None = None
+    message: str | None = None
     stewardship: ScenarioStewardship | None = None
 
     def __post_init__(self) -> None:
@@ -203,7 +198,7 @@ class BehaviorScenario:
         triggers = (
             self.email is not None,
             self.revisit is not None,
-            self.telegram_prompt is not None,
+            self.message is not None,
             self.stewardship is not None,
         )
         if sum(triggers) != 1:
@@ -211,8 +206,8 @@ class BehaviorScenario:
 
     @property
     def profile_name(self) -> str:
-        if self.telegram_prompt is not None:
-            return "telegram"
+        if self.message is not None:
+            return "conversation"
         if self.stewardship is not None:
             return "stewardship"
         return (
@@ -223,8 +218,8 @@ class BehaviorScenario:
 
     def turn_input(self, workspace: Path, *, human: str = "Divy") -> str:
         """Render the same user input or Ariadne activation used in production."""
-        if self.telegram_prompt is not None:
-            return self.telegram_prompt
+        if self.message is not None:
+            return self.message
         if self.stewardship is not None:
             return self.stewardship.prompt()
         if self.revisit is not None:
